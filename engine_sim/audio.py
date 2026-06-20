@@ -271,6 +271,8 @@ class Synthesizer:
             "eq_high": 0.0,       # dB
             "cyl_spread": 0.5,    # how much each cylinder's pitch/level differs
             "master": 0.6,        # master output volume
+            "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
+            "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
         }
 
         self._build_audio()
@@ -309,6 +311,7 @@ class Synthesizer:
             # post low-pass is recomputed every block from the exhaust valve
             self._lp_zi = np.zeros(2)
             self._lowboost_zi = np.zeros(2)     # low-end boost when valve is shut
+            self._spatial_zi = np.zeros(2)      # spatial distance darkening
             self._helm_zi = np.zeros(2)
             # intake / induction path: cool-air airbox resonance + roll-off
             self._intake_bp = _peaking(150.0, 1.1, 7.0, sr)
@@ -532,11 +535,30 @@ class Synthesizer:
             sig *= self._gain
         else:
             sig *= 3.5
+        # --- spatial distance: far away = darker + quieter (the pad's Y axis) -
+        d = 1.0 - self.params["spatial_y"]      # 0 near .. 1 far
+        if _HAVE_SCIPY and d > 0.02:
+            sr = self.sample_rate
+            cut = min(max(14000.0 - 11500.0 * d, 600.0), sr * 0.45)
+            b, a = butter(2, cut / (sr / 2), btype="low")
+            sig, self._spatial_zi = lfilter(b, a, sig, zi=self._spatial_zi)
+        sig = sig * (1.0 / (1.0 + 1.7 * d))
+
         return np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
 
     # ------------------------------------------------------------ callback
     def _callback(self, outdata, frames, time_info, status):
-        outdata[:] = self._render_block(frames)[:, None]
+        mono = self._render_block(frames)
+        nch = outdata.shape[1]
+        if nch >= 2:
+            # equal-power stereo pan from the spatial pad's X axis
+            ang = self.params["spatial_x"] * (math.pi * 0.5)
+            outdata[:, 0] = mono * math.cos(ang)
+            outdata[:, 1] = mono * math.sin(ang)
+            if nch > 2:
+                outdata[:, 2:] = 0.0
+        else:
+            outdata[:, 0] = mono
 
     # ----------------------------------------------------------- lifecycle
     def start(self):
@@ -553,9 +575,15 @@ class Synthesizer:
                 pass
         if self._device is not None:
             attempts.append(("shared", dict(
+                device=self._device, samplerate=self.sample_rate, channels=2,
+                blocksize=BLOCK, latency="low")))
+            attempts.append(("shared-mono", dict(
                 device=self._device, samplerate=self.sample_rate, channels=1,
                 blocksize=BLOCK, latency="low")))
         attempts.append(("default", dict(
+            device=None, samplerate=SAMPLE_RATE, channels=2, blocksize=BLOCK,
+            latency="low")))
+        attempts.append(("default-mono", dict(
             device=None, samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK,
             latency="low")))
 

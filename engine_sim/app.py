@@ -324,11 +324,11 @@ class App:
         self.synth.params.update(FIRING_VOICES[self.voice_idx][1])
 
     def _build_mixer(self):
-        """Lay out the audio-mixer slider tracks over the left panel."""
+        """Lay out the audio-mixer slider tracks + the spatial XY pad."""
         panel = pygame.Rect(24, 24, 620, 632)
-        x = panel.x + 210
-        w = panel.right - 34 - x
-        y = panel.y + 32
+        x = panel.x + 196
+        w = (panel.x + 400) - x          # shorter tracks -> room for the pad
+        y = panel.y + 30
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
@@ -336,6 +336,14 @@ class App:
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
             y += 35
+        self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
+
+    def _set_pad(self, pos):
+        r = self._pad_rect
+        px = (pos[0] - r.x) / r.width
+        py = (pos[1] - r.y) / r.height          # top = far, bottom = near
+        self.synth.params["spatial_x"] = min(max(px, 0.0), 1.0)
+        self.synth.params["spatial_y"] = min(max(py, 0.0), 1.0)
 
     def _set_slider(self, s, mx):
         t = s["track"]
@@ -366,11 +374,15 @@ class App:
                             cb()
                             break
                 elif self.mixer_open:
-                    for s in self._sliders:
-                        if s["track"].inflate(12, 26).collidepoint(e.pos):
-                            self._drag = s
-                            self._set_slider(s, e.pos[0])
-                            break
+                    if self._pad_rect.collidepoint(e.pos):
+                        self._drag = "pad"
+                        self._set_pad(e.pos)
+                    else:
+                        for s in self._sliders:
+                            if s["track"].inflate(12, 26).collidepoint(e.pos):
+                                self._drag = s
+                                self._set_slider(s, e.pos[0])
+                                break
                 else:
                     for b in self._buttons:
                         if b["rect"].collidepoint(e.pos):
@@ -379,7 +391,10 @@ class App:
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
-                self._set_slider(self._drag, e.pos[0])
+                if self._drag == "pad":
+                    self._set_pad(e.pos)
+                else:
+                    self._set_slider(self._drag, e.pos[0])
             elif e.type == pygame.KEYDOWN:
                 if e.key in (pygame.K_ESCAPE, pygame.K_q):
                     self.running = False
@@ -535,6 +550,28 @@ class App:
             pygame.draw.rect(self.screen, ACCENT, fill, border_radius=3)
             hx = t.x + int(t.width * norm)
             pygame.draw.circle(self.screen, INK, (hx, t.centery), 8)
+
+        # --- spatial audio XY pad (drag the dot = position in the room) ------
+        pr = self._pad_rect
+        self.screen.blit(self.font_small.render("SPATIAL  (drag)", True, INK),
+                         (pr.x, pr.y - 20))
+        pygame.draw.rect(self.screen, (30, 33, 40), pr, border_radius=8)
+        pygame.draw.rect(self.screen, (70, 76, 90), pr, width=1, border_radius=8)
+        pygame.draw.line(self.screen, (48, 52, 62),
+                         (pr.centerx, pr.y + 6), (pr.centerx, pr.bottom - 6))
+        pygame.draw.line(self.screen, (48, 52, 62),
+                         (pr.x + 6, pr.centery), (pr.right - 6, pr.centery))
+        self.screen.blit(self.font_small.render("L", True, DIM), (pr.x + 5, pr.centery - 8))
+        self.screen.blit(self.font_small.render("R", True, DIM), (pr.right - 14, pr.centery - 8))
+        self.screen.blit(self.font_small.render("far", True, DIM), (pr.centerx - 9, pr.y + 3))
+        self.screen.blit(self.font_small.render("near", True, DIM),
+                         (pr.centerx - 13, pr.bottom - 16))
+        sx = self.synth.params["spatial_x"]
+        sy = self.synth.params["spatial_y"]
+        dx = pr.x + int(sx * pr.width)
+        dy = pr.y + int(sy * pr.height)
+        pygame.draw.circle(self.screen, ACCENT, (dx, dy), 9)
+        pygame.draw.circle(self.screen, INK, (dx, dy), 9, 1)
 
     def _draw_engine_panel(self, rect):
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
