@@ -128,6 +128,16 @@ class Engine:
     turbo_lag: float = 0.6           # spool time constant (s) for turbo
     anti_lag: bool = False           # bangs/crackle + whoosh on overrun
 
+    # head / valvetrain / engine type ----------------------------------------
+    # Unequal-length exhaust headers delay one bank's pulses, creating the
+    # classic Subaru boxer rumble (even firing, uneven *sound*).
+    header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
+    valvetrain: str = "dohc"         # dohc | sohc | ohv -> breathing + tick
+    valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
+    is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
+    has_gpf: bool = False            # came with a gasoline particulate filter
+    has_cat: bool = True             # came with a catalytic converter
+
     @property
     def total_displacement(self) -> float:
         return sum(c.displacement for c in self.cylinders)

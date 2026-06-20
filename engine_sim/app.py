@@ -152,6 +152,7 @@ class App:
         dt = self.sim.drivetrain
         dev = self.devices[self.device_idx][0]
         rate = SAMPLE_RATES[self.rate_idx]
+        sy = self.synth
         return [
             ("Demo cars ▾", self._menu_demo, None, 0),
             ("Load car…", self.load_car_dialog, None, 0),
@@ -161,12 +162,13 @@ class App:
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
             ("Auto" if dt.auto else "Manual", lambda: setattr(dt, "auto", not dt.auto),
              lambda: dt.auto, 1),
-            ("Cabin", lambda: setattr(self.synth, "cabin", not self.synth.cabin),
-             lambda: self.synth.cabin, 1),
-            ("Gear whine", lambda: setattr(self.synth, "straight_cut",
-                                           not self.synth.straight_cut),
-             lambda: self.synth.straight_cut, 1),
-            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 1),
+            ("Cabin", lambda: setattr(sy, "cabin", not sy.cabin),
+             lambda: sy.cabin, 1),
+            ("Gear whine", lambda: setattr(sy, "straight_cut", not sy.straight_cut),
+             lambda: sy.straight_cut, 1),
+            ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
+            ("Cat", lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
+            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
         ]
 
     def _rebuild_toolbar(self, panel):

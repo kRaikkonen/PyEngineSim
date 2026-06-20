@@ -281,6 +281,8 @@ class Synthesizer:
 
         self.cabin = False        # interior (in-cabin) muffling effect
         self.straight_cut = False # straight-cut gearbox whine on/off
+        self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
+        self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._prev_throttle = 0.0 # for blow-off-valve detection
@@ -301,6 +303,11 @@ class Synthesizer:
             self._channel_of = [0] * eng.num_cylinders
         else:
             self._channel_of = [0 if c.bank_angle_deg < 0 else 1 for c in eng.cylinders]
+        # Unequal-length headers: delay one bank's pulses a few crank-degrees so
+        # the even firing arrives UNEVENLY -> the Subaru boxer rumble.
+        hu = eng.header_unequal_deg
+        self._header_offset = [hu if c.bank_angle_deg < 0 else 0.0
+                               for c in eng.cylinders]
         # TWO waveguides per channel: a short primary runner (high resonance) and
         # the full system length (low resonance) -> several pipe resonances at
         # different frequencies, like a real exhaust.
@@ -374,6 +381,19 @@ class Synthesizer:
 
         # in-loop treble damping, also scaled shut by the valve
         fc = (2000.0 + 7000.0 * eng.exhaust_openness) * (0.4 + 0.6 * valve)
+        # a rotary 'braps' brighter and raspier than a piston engine
+        if eng.is_rotary:
+            self._post_fc *= 1.35
+            fc *= 1.4
+        # 2-valve heads breathe worse up top -> a touch darker than 4-valve
+        if eng.valves_per_cyl <= 2:
+            self._post_fc *= 0.82
+        # exhaust after-treatment: a cat muffles a little, a GPF a lot
+        if self.cat:
+            self._post_fc *= 0.85
+        if self.gpf:
+            self._post_fc *= 0.6
+            fc *= 0.75
         lp_a = math.exp(-2 * math.pi * fc / sr)
         # Helmholtz muffler/chamber resonance
         A, V = eng.muffler_neck_area_m2, eng.muffler_volume_m3
@@ -412,7 +432,7 @@ class Synthesizer:
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
                 amp_j = self._jit[j] * max(1.0 + 0.55 * spread * self._cyl_amp[j], 0.1)
-                phi = np.mod(crank + off, 720.0)
+                phi = np.mod(crank + off + self._header_offset[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
                 ramp = np.clip(d / self.params["attack_deg"], 0.0, 1.0)

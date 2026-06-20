@@ -86,12 +86,14 @@ def vw_ea888_i4() -> Engine:
         flywheel_inertia=0.24,
         redline_rpm=6800,
         idle_rpm=850,
-        heat_release_k=7.0,              # stands in for turbo boost (fat torque)
+        heat_release_k=6.5,
         ve_peak_frac=0.45,               # turbo: torque peaks low and stays flat
         ve_width_frac=0.8,
+        induction="turbo", boost_bar=1.1, turbo_lag=0.4,
         exhaust_tone=100.0,
         exhaust_primary_m=0.42, exhaust_total_m=1.9, exhaust_radius_m=0.022,
         exhaust_channels=1, exhaust_openness=0.58, muffler_volume_m3=0.0028,
+        has_gpf=True,                            # modern EU emissions
         gear_ratios=[3.36, 2.09, 1.47, 1.10, 0.93, 0.76],   # Golf R 6-speed
         final_drive=4.43,
         vehicle_mass=1500.0, wheel_radius=0.31, clutch_capacity=420.0,
@@ -290,6 +292,7 @@ def ferrari_f2004_v10() -> Engine:
         exhaust_tone=185.0,              # very high F1 shriek
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
         exhaust_channels=1, exhaust_openness=0.98, muffler_volume_m3=0.0008,
+        has_cat=False,                           # open race exhaust, no cat/GPF
         gear_ratios=[2.50, 1.95, 1.60, 1.36, 1.18, 1.04, 0.92],  # close F1 7-speed
         final_drive=4.20,
         vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,
@@ -321,6 +324,7 @@ def dodge_hellcat_v8() -> Engine:
         exhaust_primary_m=0.75, exhaust_total_m=2.2, exhaust_radius_m=0.029,
         exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.0035,
         induction="roots", boost_bar=0.8, blower_ratio=9.0,
+        valvetrain="ohv", valves_per_cyl=2,      # pushrod 2-valve HEMI
         gear_ratios=[2.97, 2.07, 1.43, 1.00, 0.84, 0.57], final_drive=2.62,
         vehicle_mass=2020.0, wheel_radius=0.34, clutch_capacity=900.0,
     )
@@ -373,9 +377,70 @@ def bmw_s58() -> Engine:
         exhaust_primary_m=0.48, exhaust_total_m=1.9, exhaust_radius_m=0.025,
         exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0028,
         induction="turbo", boost_bar=1.2, turbo_lag=0.32, anti_lag=False,
+        has_gpf=True,                            # modern EU emissions
         gear_ratios=[4.11, 2.32, 1.54, 1.18, 0.94, 0.76, 0.63, 0.51],
         final_drive=3.15, vehicle_mass=1780.0, wheel_radius=0.33,
         clutch_capacity=700.0,
+    )
+
+
+def mazda_rx7_rotary() -> Engine:
+    """Mazda RX-7 FD — 13B-REW 1.3 L twin-turbo TWO-ROTOR Wankel.
+
+    A 2-rotor fires twice per eccentric-shaft revolution (like a 4-cylinder's
+    firing rate), but brap's far brighter/raspier — no valvetrain, peripheral
+    port overlap.  Modelled as a 4-pulse even-fire with is_rotary brightness.
+    ~280 hp, revs to ~8000.
+    """
+    offsets = _even_offsets(4)
+    cylinders = [
+        Cylinder(bore=mm(70), stroke=mm(80), rod_length=mm(120),
+                 compression_ratio=9.0, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="Mazda RX-7 FD 13B rotary (twin-turbo)",
+        cylinders=cylinders,
+        flywheel_inertia=0.13, redline_rpm=8000, idle_rpm=850,
+        heat_release_k=4.6, ve_peak_frac=0.72, ve_width_frac=0.7,
+        closed_map_fraction=0.16,
+        exhaust_tone=120.0,
+        exhaust_primary_m=0.45, exhaust_total_m=1.7, exhaust_radius_m=0.024,
+        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.002,
+        is_rotary=True,
+        induction="turbo", boost_bar=0.8, turbo_lag=0.45,
+        gear_ratios=[3.48, 2.02, 1.39, 1.00, 0.72], final_drive=4.10,
+        vehicle_mass=1310.0, wheel_radius=0.31, clutch_capacity=420.0,
+    )
+
+
+def subaru_22b() -> Engine:
+    """Subaru Impreza 22B STi — 2.2 L turbo flat-four (EJ22).
+
+    The boxer's UNEQUAL-LENGTH headers delay one bank's pulses, so even firing
+    arrives unevenly = the iconic Subaru rumble/burble.  86.9.... firing 1-3-2-4,
+    ~8:1 CR, ~7000 rpm, ~280 hp, ~0.9 bar.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 2, 4])
+    cylinders = []
+    for i in range(4):
+        bank = -90.0 if i < 2 else 90.0          # horizontally opposed
+        cylinders.append(
+            Cylinder(bore=mm(96.9), stroke=mm(75.0), rod_length=mm(131),
+                     compression_ratio=8.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Subaru 22B STi 2.2 turbo flat-4",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=7000, idle_rpm=820,
+        heat_release_k=4.4, ve_width_frac=0.72, closed_map_fraction=0.17,
+        exhaust_tone=74.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.003,
+        header_unequal_deg=28.0,                 # the boxer-rumble delay
+        induction="turbo", boost_bar=0.9, turbo_lag=0.5,
+        gear_ratios=[3.45, 2.06, 1.45, 1.09, 0.82], final_drive=4.44,
+        vehicle_mass=1270.0, wheel_radius=0.31, clutch_capacity=480.0,
     )
 
 
@@ -393,6 +458,8 @@ PRESETS = [
     ("8", "Hellcat", dodge_hellcat_v8),
     ("9", "2JZ",    toyota_2jz_supra),
     ("0", "S58",    bmw_s58),
+    ("rx7", "RX-7 rotary", mazda_rx7_rotary),
+    ("22b", "Subaru 22B", subaru_22b),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
