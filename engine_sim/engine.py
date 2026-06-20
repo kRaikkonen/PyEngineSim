@@ -119,6 +119,15 @@ class Engine:
     muffler_neck_area_m2: float = 0.0020
     muffler_neck_len_m: float = 0.08
 
+    # forced induction -------------------------------------------------------
+    # "na" naturally aspirated | "roots" positive-displacement supercharger
+    # (Hellcat whine) | "centrifugal" supercharger | "turbo" turbocharger
+    induction: str = "na"
+    boost_bar: float = 0.0           # peak boost above atmospheric (bar)
+    blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
+    turbo_lag: float = 0.6           # spool time constant (s) for turbo
+    anti_lag: bool = False           # bangs/crackle + whoosh on overrun
+
     @property
     def total_displacement(self) -> float:
         return sum(c.displacement for c in self.cylinders)

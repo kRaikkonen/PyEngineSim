@@ -296,6 +296,89 @@ def ferrari_f2004_v10() -> Engine:
     )
 
 
+def dodge_hellcat_v8() -> Engine:
+    """Dodge Challenger SRT Hellcat — 6.2 L supercharged HEMI V8.
+
+    Roots/twin-screw positive-displacement blower (~0.8 bar) — the iconic
+    rpm-tracking supercharger WHINE.  92.... 103.9 x 90.9 mm, cross-plane,
+    firing 1-8-4-3-6-5-7-2, ~6200 rpm, ~707 hp.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 8, 4, 3, 6, 5, 7, 2])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(103.9), stroke=mm(90.9), rod_length=mm(155),
+                     compression_ratio=9.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Dodge Hellcat 6.2 supercharged V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.45, redline_rpm=6200, idle_rpm=720,
+        heat_release_k=2.5, ve_width_frac=0.75, closed_map_fraction=0.20,
+        friction_static=7.0, starter_torque=180.0,
+        exhaust_tone=52.0,
+        exhaust_primary_m=0.75, exhaust_total_m=2.2, exhaust_radius_m=0.029,
+        exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.0035,
+        induction="roots", boost_bar=0.8, blower_ratio=9.0,
+        gear_ratios=[2.97, 2.07, 1.43, 1.00, 0.84, 0.57], final_drive=2.62,
+        vehicle_mass=2020.0, wheel_radius=0.34, clutch_capacity=900.0,
+    )
+
+
+def toyota_2jz_supra() -> Engine:
+    """Toyota Supra 2JZ-GTE — 3.0 L twin-turbo inline-six.
+
+    86 x 86 mm, firing 1-5-3-6-2-4, ~8.5:1 CR, ~7000 rpm.  Turbo spool + a big
+    blow-off-valve 'pshhh' on lift.  ~1.0 bar.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 5, 3, 6, 2, 4])
+    cylinders = [
+        Cylinder(bore=mm(86), stroke=mm(86), rod_length=mm(142),
+                 compression_ratio=8.5, cycle_offset_deg=offsets[i])
+        for i in range(6)
+    ]
+    return Engine(
+        name="Toyota Supra 2JZ-GTE 3.0 twin-turbo I6",
+        cylinders=cylinders,
+        flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=800,
+        heat_release_k=4.6, ve_width_frac=0.75, closed_map_fraction=0.17,
+        exhaust_tone=88.0,
+        exhaust_primary_m=0.5, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.003,
+        induction="turbo", boost_bar=1.0, turbo_lag=0.55,
+        gear_ratios=[3.83, 2.36, 1.69, 1.31, 1.00, 0.79], final_drive=3.13,
+        vehicle_mass=1560.0, wheel_radius=0.32, clutch_capacity=520.0,
+    )
+
+
+def bmw_s58() -> Engine:
+    """BMW S58 — 3.0 L twin-turbo inline-six (M3/M4 Competition).
+
+    84 x 90 mm, firing 1-5-3-6-2-4, ~9.3:1 CR, ~7200 rpm, ~510 hp.  Modern
+    fast-spooling twin-turbo, ~1.2 bar.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 5, 3, 6, 2, 4])
+    cylinders = [
+        Cylinder(bore=mm(84), stroke=mm(90), rod_length=mm(145),
+                 compression_ratio=9.3, cycle_offset_deg=offsets[i])
+        for i in range(6)
+    ]
+    return Engine(
+        name="BMW S58 3.0 twin-turbo I6 (M3/M4)",
+        cylinders=cylinders,
+        flywheel_inertia=0.24, redline_rpm=7200, idle_rpm=750,
+        heat_release_k=5.2, ve_width_frac=0.75, closed_map_fraction=0.16,
+        exhaust_tone=92.0,
+        exhaust_primary_m=0.48, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0028,
+        induction="turbo", boost_bar=1.2, turbo_lag=0.32, anti_lag=False,
+        gear_ratios=[4.11, 2.32, 1.54, 1.18, 0.94, 0.76, 0.63, 0.51],
+        final_drive=3.15, vehicle_mass=1780.0, wheel_radius=0.33,
+        clutch_capacity=700.0,
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -307,6 +390,9 @@ PRESETS = [
     ("5", "LFA",    lexus_lfa),
     ("6", "V12",    lamborghini_murcielago),
     ("7", "F2004",  ferrari_f2004_v10),
+    ("8", "Hellcat", dodge_hellcat_v8),
+    ("9", "2JZ",    toyota_2jz_supra),
+    ("0", "S58",    bmw_s58),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

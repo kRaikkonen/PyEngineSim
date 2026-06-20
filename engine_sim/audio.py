@@ -273,11 +273,18 @@ class Synthesizer:
             "master": 0.6,        # master output volume
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
             "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
+            "boost_vol": 0.5,     # supercharger whine / turbo whistle / BOV level
+            "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
         }
 
         self._build_audio()
 
         self.cabin = False        # interior (in-cabin) muffling effect
+        self.straight_cut = False # straight-cut gearbox whine on/off
+        self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
+        self._gearbox_phase = 0.0 # gearbox whine oscillator phase
+        self._prev_throttle = 0.0 # for blow-off-valve detection
+        self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
         self._stream = None
         self.latency_ms = 0.0
@@ -503,6 +510,10 @@ class Synthesizer:
                                                 n, zi=self._intake_lp_zi)
                 sig = sig + intake_gain * n
 
+        # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
+        if dps > 1e-12:
+            sig = sig + self._induction_audio(frames)
+
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
             if abs(P["eq_low"]) > 0.1:
@@ -547,6 +558,65 @@ class Synthesizer:
         return np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
 
     # ------------------------------------------------------------ callback
+    # --------------------------------------------------- forced induction
+    def _whine(self, freq, frames, harmonics, phase_attr="_whine_phase"):
+        """A continuous tonal oscillator (sum of harmonics) at ``freq`` Hz."""
+        sr = self.sample_rate
+        ph0 = getattr(self, phase_attr)
+        inc = 2.0 * math.pi * freq / sr
+        ph = ph0 + inc * np.arange(frames)
+        sig = np.zeros(frames, dtype=np.float64)
+        for h, a in harmonics:
+            sig += a * np.sin(h * ph)
+        setattr(self, phase_attr, (ph0 + inc * frames) % (2.0 * math.pi))
+        return sig
+
+    def _induction_audio(self, frames):
+        """Supercharger whine / turbo whistle + BOV, and straight-cut gearbox
+        whine — the forced-induction and transmission character on top of the
+        engine note."""
+        sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
+        P = self.params
+        rpm = sim.rpm
+        out = np.zeros(frames, dtype=np.float64)
+        bv = P["boost_vol"]
+        bfrac = min(sim.boost / max(eng.boost_bar, 0.05), 1.0) if eng.boost_bar else 0.0
+
+        if bv > 1e-3 and eng.induction in ("roots", "centrifugal") and bfrac > 0.01:
+            ratio = (eng.blower_ratio if eng.blower_ratio > 0 else 9.0)
+            if eng.induction == "centrifugal":
+                ratio *= 2.5                                  # higher-pitched
+                harm = [(1, 1.0), (2, 0.25)]
+            else:
+                harm = [(1, 1.0), (2, 0.5), (3, 0.28)]        # rich roots whine
+            f = (rpm / 60.0) * ratio
+            if 20.0 < f < sr * 0.45:
+                out += (bv * bfrac * 0.5) * self._whine(f, frames, harm)
+
+        if bv > 1e-3 and eng.induction == "turbo":
+            if bfrac > 0.02:
+                f = 900.0 + bfrac * 5200.0                    # whistle rises with boost
+                amp = bv * bfrac * 0.30
+                out += amp * self._whine(min(f, sr * 0.45), frames, [(1, 1.0)])
+                out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
+            # blow-off valve: throttle snaps shut while on boost -> 'pshhh'
+            if (self._prev_throttle - sim.throttle) > 0.25 and sim.boost > 0.15:
+                self._bov_env = 1.0
+            if self._bov_env > 1e-3:
+                env = np.exp(-np.arange(frames) / (sr * 0.09)) * self._bov_env
+                out += (bv * 0.9) * self._rng.standard_normal(frames) * env
+                self._bov_env *= math.exp(-frames / (sr * 0.13))
+        self._prev_throttle = sim.throttle
+
+        gv = P["gearbox_vol"]
+        dt = sim.drivetrain
+        if (self.straight_cut and gv > 1e-3 and dt.gear > 0 and dt.clutch > 0.3):
+            f = (rpm / 60.0) * 6.0                            # mesh whine ~ rpm
+            if 30.0 < f < sr * 0.45:
+                out += (gv * 0.4) * self._whine(
+                    f, frames, [(1, 1.0), (2, 0.4)], phase_attr="_gearbox_phase")
+        return out
+
     def _callback(self, outdata, frames, time_info, status):
         mono = self._render_block(frames)
         nch = outdata.shape[1]

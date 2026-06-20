@@ -58,6 +58,7 @@ class Simulator:
         self.external_load = 0.0        # N*m resisting torque (e.g. a dyno)
         self._fuel_cut = False          # rev-limiter state (with hysteresis)
         self._shift_cut = False         # ignition cut during a gearshift
+        self.boost = 0.0                # forced-induction boost (bar gauge)
         self._idle_trim = engine.idle_air_base  # idle-governor air, 0..~0.3
 
         # --- telemetry (updated every step) ---
@@ -86,7 +87,28 @@ class Simulator:
         """
         t = self._effective_throttle()
         idle_map = self.engine.closed_map_fraction * P_ATM
-        return idle_map + t * (P_ATM - idle_map)
+        return idle_map + t * (P_ATM - idle_map) + self.boost * 1.0e5
+
+    def _update_boost(self, dt: float):
+        """Advance the forced-induction boost (bar) for the current engine."""
+        eng = self.engine
+        ind = eng.induction
+        if ind == "na" or eng.boost_bar <= 0.0:
+            self.boost = 0.0
+            return
+        thr = self._effective_throttle()
+        rf = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
+        if ind == "roots":                       # positive-displacement: ~instant
+            target = eng.boost_bar * thr * min(max(rf / 0.25, 0.25), 1.0)
+            rate = min(dt * 18.0, 1.0)
+        elif ind == "centrifugal":               # rises with rpm^2, ~instant
+            target = eng.boost_bar * thr * (rf * rf)
+            rate = min(dt * 14.0, 1.0)
+        else:                                     # turbo: spools with lag
+            target = eng.boost_bar * thr * min(max((rf - 0.12) / 0.5, 0.0), 1.0)
+            tau = eng.turbo_lag if target > self.boost else 0.18
+            rate = min(dt / max(tau, 0.02), 1.0)
+        self.boost += (target - self.boost) * rate
 
     def _update_idle_governor(self, h: float):
         """Integral controller that trims idle air to hold ``idle_rpm`` when the
@@ -224,6 +246,8 @@ class Simulator:
         shifting = self.drivetrain.is_shifting
         self._shift_cut = shifting
         shift_target = self.drivetrain.shift_target_omega() if shifting else 0.0
+
+        self._update_boost(dt)
 
         # Sub-step so the crank never advances more than ~3 deg per integration
         # step; this keeps the sharp combustion torque pulse well resolved.

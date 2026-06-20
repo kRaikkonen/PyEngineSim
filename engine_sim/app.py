@@ -81,6 +81,8 @@ SLIDER_DEFS = [
     ("src_reverb", "Explosion reverb", 0.0, 0.6),
     ("reverb", "Reverb (space)", 0.0, 0.5),
     ("cyl_spread", "Cylinder spread", 0.0, 1.0),
+    ("boost_vol", "Boost / whine vol", 0.0, 1.2),
+    ("gearbox_vol", "Gearbox whine vol", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -161,6 +163,9 @@ class App:
              lambda: dt.auto, 1),
             ("Cabin", lambda: setattr(self.synth, "cabin", not self.synth.cabin),
              lambda: self.synth.cabin, 1),
+            ("Gear whine", lambda: setattr(self.synth, "straight_cut",
+                                           not self.synth.straight_cut),
+             lambda: self.synth.straight_cut, 1),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 1),
         ]
 
@@ -328,14 +333,14 @@ class App:
         panel = pygame.Rect(24, 24, 620, 632)
         x = panel.x + 196
         w = (panel.x + 400) - x          # shorter tracks -> room for the pad
-        y = panel.y + 30
+        y = panel.y + 28
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 35
+            y += 31
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
@@ -677,6 +682,11 @@ class App:
             ("AIRFLOW", f"{t['scfm']:5.0f} SCFM"),
             ("EXHAUST O2", f"{t['o2_pct']:5.1f} %"),
         ]
+        eng = self.sim.engine
+        if eng.induction != "na":
+            kind = {"roots": "S/C", "centrifugal": "C/F", "turbo": "TURBO"}.get(
+                eng.induction, eng.induction)
+            rows.append(("BOOST", f"{self.sim.boost:4.2f} bar   ({kind})"))
         for label, val in rows:
             self.screen.blit(self.font_small.render(label, True, DIM), (x, y))
             self.screen.blit(self.font_small.render(val, True, INK), (x + 110, y))
