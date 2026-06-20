@@ -6,13 +6,22 @@ you can drive, and a fully **physics-driven, real-time audio synthesizer** with 
 live mixing console. Inspired by AngeTheGreat's
 [Engine Simulator](https://github.com/ange-yaghi/engine-sim).
 
-```
-py run.py              # default engine
-py run.py --engine 7   # 1=911 H6  2=EA888 I4  3=Coyote V8  4=458
-                       # 5=LFA V10  6=Murcielago V12  7=F2004 F1 V10
-```
+## Quick start
+
+**Windows, no Python needed** — download/clone this folder, then:
+
+1. Double-click **`install.bat`** once (downloads a self-contained portable
+   Python + the libraries into `python_embeded\`, ComfyUI-style, ~2 min).
+2. Double-click **`run.bat`** to play.
+
+**With your own Python:** `pip install -r requirements.txt` then `py run.py`.
 
 ## Controls
+
+The top **toolbar buttons** pick the car and sound — **Demo cars ▾** (the 7
+built-ins), **Load car… / Load EQ…** (native file picker for your own `.json`
+configs), **Save…**, **output device ▾**, sample rate, **Auto/Manual**, **Cabin**
+and **Forza** mode. The rest is keyboard:
 
 | Key | Action |
 | :---: | :--- |
@@ -22,13 +31,9 @@ py run.py --engine 7   # 1=911 H6  2=EA888 I4  3=Coyote V8  4=458
 | `Z` / `X` | Shift down / up (paddle — tap, no clutch needed) |
 | `Shift` | Hold to ride the clutch (launches / stalls) |
 | `T` | Auto / manual gearbox |
-| `1`–`7` | Load engine (or click a chip) |
 | `V` | Cycle firing-pulse timbre (voice) |
 | `I` | Cabin (interior) sound on/off |
 | `C` | Open the audio mixer (drag the sliders) |
-| `F2` | Save current engine + audio to a `.json` config |
-| `F3` | Cycle through saved audio (EQ) presets |
-| `F4` / `F5` | Output device / sample rate (44.1 ↔ 48 kHz) |
 | `M` · `Esc` | Mute · quit |
 
 **Engines** (each with real bore/stroke, redline, firing order, gearbox and
@@ -36,18 +41,23 @@ exhaust geometry): Porsche 911 3.8 flat-six, VW/Audi EA888 2.0T, Ford Coyote 5.0
 V8, Ferrari 458 flat-plane V8, Lexus LFA 4.8 V10, Lamborghini Murciélago 6.5 V12,
 Ferrari F2004 3.0 F1 V10 (18 500 rpm).
 
-**Start it:** hold **S** to crank, ignition on (**A**), release **S** when it
-catches. **Drive it:** tap **X** to upshift (paddle-shift), or **T** for auto and
-just hold **↑**.
+## Forza telemetry mode
+
+Click **Forza** to play the selected engine's sound at the **live rpm a running
+Forza Horizon / Motorsport broadcasts** (Horizon 4/5/6 and Motorsport 7/2023) —
+no gears, pure rpm. In the game: *Settings → HUD/Gameplay → Data Out = On*, set
+the Data Out IP to this PC and the port to **5300**.
+
+> Forza is a sandboxed Store app, so sending to `127.0.0.1` on the same PC is
+> blocked — use this machine's **LAN IP** as the Data Out IP instead.
 
 ## Audio mixer & configs
 
 Press **C** for the live console: fire/bang level + power-chord drive, body,
 firing pitch, attack softness, fizz, the two physical pipe resonances, intake
 roar, explosion + room reverb, per-cylinder spread and a 3-band EQ — all real
-time. **F2** saves the current engine and sound as editable `.json` files under
-`configs/`; saved engines reappear as selectable presets, saved sounds cycle with
-**F3**.
+time. **Save…** writes the current engine and sound as editable `.json` files;
+**Load car… / Load EQ…** open them again through a native file dialog.
 
 ## What it actually simulates
 

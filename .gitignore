@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 
+# portable Python bundle (~240 MB) — rebuilt by install.bat, not committed
+python_embeded/
+get-pip.py
+
 # audio renders / scratch
 *.wav
 chk_*.png

@@ -20,11 +20,34 @@ import pygame
 
 from .simulator import Simulator
 from .audio import Synthesizer, list_output_devices
+from .telemetry import ForzaTelemetry, FORZA_PORT
 from . import presets
 from . import config
-from .units import nm_to_lbft, nm_to_hp_at
+from .units import nm_to_lbft, nm_to_hp_at, rpm_to_rads
 
 SAMPLE_RATES = [44100, 48000]
+
+
+def _open_file_dialog(title, initialdir, save=False, default=""):
+    """Native OS open/save file dialog via tkinter -> path or None."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        kw = dict(title=title, initialdir=initialdir,
+                  filetypes=[("JSON config", "*.json"), ("All files", "*.*")])
+        if save:
+            path = filedialog.asksaveasfilename(defaultextension=".json",
+                                                initialfile=default, **kw)
+        else:
+            path = filedialog.askopenfilename(**kw)
+        root.destroy()
+        return path or None
+    except Exception as exc:
+        print(f"[dialog] {exc}")
+        return None
 
 # --- palette -----------------------------------------------------------------
 BG = (18, 20, 24)
@@ -97,6 +120,10 @@ class App:
         self.audio_presets = config.list_audio_configs()
         self.audio_idx = -1
 
+        # Forza telemetry mode: drive the sound from a real game's broadcast rpm
+        self.telemetry = None
+        self.telemetry_mode = False
+
         if preset_key not in presets.ALL:
             preset_key = presets.PRESETS[0][0]
         self.current_key = preset_key
@@ -111,8 +138,68 @@ class App:
         self._chip_rects = {}     # preset selector hit-boxes, keyed by preset key
         self.mixer_open = False   # audio console overlay (press C)
         self._drag = None         # slider currently being dragged
+        self._buttons = []        # toolbar buttons (rebuilt each frame)
+        self._open_menu = None    # active dropdown {items, rect, item_rects}
         self._build_mixer()
         self.running = True
+
+    # ------------------------------------------------------------- toolbar
+    def _toolbar_defs(self):
+        """Button definitions: (label, callback, active_fn_or_None, row)."""
+        dt = self.sim.drivetrain
+        dev = self.devices[self.device_idx][0]
+        rate = SAMPLE_RATES[self.rate_idx]
+        return [
+            ("Demo cars ▾", self._menu_demo, None, 0),
+            ("Load car…", self.load_car_dialog, None, 0),
+            ("Load EQ…", self.load_eq_dialog, None, 0),
+            ("Save…", self.save_dialog, None, 0),
+            (f"Out: {dev} ▾", self._menu_device, None, 1),
+            (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
+            ("Auto" if dt.auto else "Manual", lambda: setattr(dt, "auto", not dt.auto),
+             lambda: dt.auto, 1),
+            ("Cabin", lambda: setattr(self.synth, "cabin", not self.synth.cabin),
+             lambda: self.synth.cabin, 1),
+            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 1),
+        ]
+
+    def _rebuild_toolbar(self, panel):
+        defs = self._toolbar_defs()
+        rows = {}
+        for label, cb, active, row in defs:
+            rows.setdefault(row, []).append((label, cb, active))
+        self._buttons = []
+        y = panel.y + 12
+        for ri in sorted(rows):
+            x = panel.x + 14
+            for label, cb, active in rows[ri]:
+                w = self.font_small.size(label)[0] + 20
+                self._buttons.append({"label": label, "cb": cb, "active": active,
+                                      "rect": pygame.Rect(x, y, w, 26)})
+                x += w + 6
+            y += 32
+        self._toolbar_bottom = y
+
+    def _menu_demo(self):
+        items = [(label, (lambda k=key: self.load_engine(k)))
+                 for key, label, _f in presets.PRESETS]
+        self._open_menu_for(items, self._buttons[0]["rect"])
+
+    def _menu_device(self):
+        items = [(lbl, (lambda i=i: self.set_device(i)))
+                 for i, (lbl, _idx) in enumerate(self.devices)]
+        # the device button is the first on row 1
+        anchor = next(b["rect"] for b in self._buttons if b["label"].startswith("Out:"))
+        self._open_menu_for(items, anchor)
+
+    def _open_menu_for(self, items, anchor_rect):
+        w = max(self.font_small.size(lbl)[0] for lbl, _ in items) + 28
+        w = max(w, anchor_rect.width)
+        h = len(items) * 26 + 8
+        rect = pygame.Rect(anchor_rect.x, anchor_rect.bottom + 3, w, h)
+        item_rects = [pygame.Rect(rect.x + 4, rect.y + 4 + i * 26, w - 8, 24)
+                      for i in range(len(items))]
+        self._open_menu = {"items": items, "rect": rect, "item_rects": item_rects}
 
     # ----------------------------------------------------------- audio device
     def _make_synth(self, start=True):
@@ -156,18 +243,77 @@ class App:
         self.audio_presets = config.list_audio_configs()
         self._flash(f"Saved engine + audio: {eng.name}")
 
-    def cycle_audio_preset(self):
-        self.audio_presets = config.list_audio_configs()
-        if not self.audio_presets:
-            self._flash("No saved audio presets")
+    def save_dialog(self):
+        eng = self.sim.engine
+        path = _open_file_dialog("Save engine + audio config", config.ENGINE_DIR,
+                                 save=True, default=config._safe_name(eng.name))
+        if not path:
             return
-        self.audio_idx = (self.audio_idx + 1) % len(self.audio_presets)
-        label, path = self.audio_presets[self.audio_idx]
-        data = config.load_audio(path)
+        config.save_engine(eng, path)
+        # save the audio alongside, with an _audio suffix
+        import os
+        base, _ = os.path.splitext(path)
+        config.save_audio(self.synth.params, base + "_audio.json",
+                          self.voice_idx, self.synth.cabin)
+        self._flash(f"Saved: {os.path.basename(path)}")
+
+    def load_car_dialog(self):
+        path = _open_file_dialog("Load engine config (.json)", config.ENGINE_DIR)
+        if not path:
+            return
+        try:
+            eng = config.load_engine(path)
+        except Exception as exc:
+            self._flash(f"Load failed: {exc}")
+            return
+        self.current_key = None
+        self.sim = Simulator(eng)
+        self._make_synth(start=True)
+        self._disp_torque = 0.0
+        import os
+        self._flash(f"Loaded engine: {os.path.basename(path)}")
+
+    def load_eq_dialog(self):
+        path = _open_file_dialog("Load audio / EQ config (.json)", config.AUDIO_DIR)
+        if not path:
+            return
+        try:
+            data = config.load_audio(path)
+        except Exception as exc:
+            self._flash(f"Load failed: {exc}")
+            return
         self.synth.params.update(data.get("params", {}))
         self.synth.cabin = bool(data.get("cabin", False))
         self.voice_idx = int(data.get("voice", 0)) % len(FIRING_VOICES)
-        self._flash(f"Audio preset: {label}")
+        import os
+        self._flash(f"Loaded audio: {os.path.basename(path)}")
+
+    def set_device(self, idx):
+        if 0 <= idx < len(self.devices):
+            self.device_idx = idx
+            self._make_synth()
+            self._flash(f"Output: {self.devices[idx][0]}")
+
+    def toggle_telemetry(self):
+        """Forza telemetry mode: play the selected engine sound at the rpm a
+        running Forza Horizon / Motorsport broadcasts over UDP (no gears)."""
+        if self.telemetry_mode:
+            if self.telemetry:
+                self.telemetry.stop()
+            self.telemetry = None
+            self.telemetry_mode = False
+            self.sim.throttle = 0.0
+            self._flash("Telemetry mode OFF")
+            return
+        self.telemetry = ForzaTelemetry(FORZA_PORT)
+        if not self.telemetry.start():
+            self._flash(f"Telemetry: cannot open UDP :{FORZA_PORT} "
+                        f"({self.telemetry.error})")
+            self.telemetry = None
+            return
+        self.telemetry_mode = True
+        self.sim.ignition_on = True
+        self._flash(f"Telemetry ON — Forza Data Out -> this PC :{FORZA_PORT}")
 
     def _flash(self, msg):
         self._status = msg
@@ -206,20 +352,29 @@ class App:
 
     # ----------------------------------------------------------------- input
     def handle_events(self):
+        self._rebuild_toolbar(pygame.Rect(24, 24, 620, 632))
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 self.running = False
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
-                if self.mixer_open:
+                if self._open_menu is not None:
+                    m = self._open_menu
+                    self._open_menu = None
+                    for (lbl, cb), r in zip(m["items"], m["item_rects"]):
+                        if r.collidepoint(e.pos):
+                            cb()
+                            break
+                elif self.mixer_open:
                     for s in self._sliders:
                         if s["track"].inflate(12, 26).collidepoint(e.pos):
                             self._drag = s
                             self._set_slider(s, e.pos[0])
                             break
                 else:
-                    for key, box in self._chip_rects.items():
-                        if box.collidepoint(e.pos):
-                            self.load_engine(key)
+                    for b in self._buttons:
+                        if b["rect"].collidepoint(e.pos):
+                            b["cb"]()
+                            break
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
@@ -234,14 +389,6 @@ class App:
                     self._apply_voice()
                 elif e.key == pygame.K_i:
                     self.synth.cabin = not self.synth.cabin
-                elif e.key == pygame.K_F2:
-                    self.save_configs()
-                elif e.key == pygame.K_F3:
-                    self.cycle_audio_preset()
-                elif e.key == pygame.K_F4:
-                    self.cycle_device()
-                elif e.key == pygame.K_F5:
-                    self.toggle_rate()
                 elif e.key == pygame.K_a:
                     self.sim.ignition_on = not self.sim.ignition_on
                 elif e.key == pygame.K_m:
@@ -254,8 +401,6 @@ class App:
                         self.sim.drivetrain.shift_down()
                 elif e.key == pygame.K_t:
                     self.sim.drivetrain.auto = not self.sim.drivetrain.auto
-                elif e.unicode in presets.ALL:
-                    self.load_engine(e.unicode)
 
         keys = pygame.key.get_pressed()
         self.sim.starter_engaged = keys[pygame.K_s]
@@ -275,15 +420,46 @@ class App:
 
     # --------------------------------------------------------------- update
     def update(self, dt):
-        self.sim.drivetrain.auto_control(
-            self.sim.rpm, self.sim.throttle, self.sim.engine.redline_rpm, dt)
-        self.sim.step(dt)
-        # Show indicated (combustion) torque — the engine's output capacity.
-        # Net brake torque averages to ~0 whenever rpm is steady, so it makes a
-        # poor gauge for free revving; gas torque is the lively, meaningful one.
-        self._disp_torque += (self.sim.gas_torque - self._disp_torque) * 0.08
+        if self.telemetry_mode:
+            self._update_telemetry(dt)
+        else:
+            self.sim.drivetrain.auto_control(
+                self.sim.rpm, self.sim.throttle, self.sim.engine.redline_rpm, dt)
+            self.sim.step(dt)
+            # Show indicated (combustion) torque — the engine's output capacity.
+            self._disp_torque += (self.sim.gas_torque - self._disp_torque) * 0.08
         if self._status_t > 0.0:
             self._status_t -= dt
+
+    def _update_telemetry(self, dt):
+        """Drive the engine speed straight from the Forza broadcast (no physics,
+        no gears) — the audio synth then plays the selected engine at that rpm."""
+        tm = self.telemetry
+        if tm is not None and tm.is_live():
+            # scale the sound's redline/idle to the real car so the variable
+            # exhaust valve and tach map across the right rpm range
+            eng = self.sim.engine
+            if tm.max_rpm > 1000.0:
+                eng.redline_rpm = tm.max_rpm
+            if 200.0 < tm.idle_rpm < eng.redline_rpm:
+                eng.idle_rpm = tm.idle_rpm
+            if tm.throttle_valid:
+                self.sim.throttle = tm.throttle
+            else:
+                # FH6 / unknown packet: derive 'throttle' from rpm so the
+                # variable exhaust valve still opens as the car revs
+                span = max(tm.max_rpm - tm.idle_rpm, 1.0)
+                self.sim.throttle = min(max((tm.rpm - tm.idle_rpm) / span, 0.0), 1.0)
+            target = rpm_to_rads(max(tm.rpm, 0.0))
+            # light smoothing between 60 Hz packets so the pitch glides cleanly
+            self.sim.omega += (target - self.sim.omega) * min(22.0 * dt, 1.0)
+        else:
+            # not connected yet: idle quietly
+            self.sim.throttle = 0.0
+            idle = rpm_to_rads(self.sim.engine.idle_rpm)
+            self.sim.omega += (idle - self.sim.omega) * min(3.0 * dt, 1.0)
+        self.sim.crank_angle += self.sim.omega * dt
+        self._disp_torque = 0.0
 
     # ----------------------------------------------------------- draw: parts
     def draw(self):
@@ -294,7 +470,45 @@ class App:
         else:
             self._draw_engine_panel(left)
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
+        if self._open_menu is not None:
+            self._draw_menu()
         pygame.display.flip()
+
+    def _draw_button(self, b, mouse):
+        r = b["rect"]
+        active = b["active"]() if b["active"] else False
+        hot = r.collidepoint(mouse)
+        if active:
+            fill, txt = ACCENT, BG
+        elif hot:
+            fill, txt = (56, 62, 74), INK
+        else:
+            fill, txt = (40, 44, 52), INK
+        pygame.draw.rect(self.screen, fill, r, border_radius=6)
+        if not active:
+            pygame.draw.rect(self.screen, (70, 76, 90), r, width=1, border_radius=6)
+        surf = self.font_small.render(b["label"], True, txt)
+        self.screen.blit(surf, (r.x + 10, r.y + 5))
+
+    def _draw_toolbar(self):
+        mouse = pygame.mouse.get_pos()
+        for b in self._buttons:
+            self._draw_button(b, mouse)
+
+    def _draw_menu(self):
+        m = self._open_menu
+        mouse = pygame.mouse.get_pos()
+        pygame.draw.rect(self.screen, (30, 33, 40), m["rect"].inflate(4, 4),
+                         border_radius=8)
+        pygame.draw.rect(self.screen, (80, 88, 104), m["rect"], width=1,
+                         border_radius=8)
+        for (lbl, _cb), r in zip(m["items"], m["item_rects"]):
+            if r.collidepoint(mouse):
+                pygame.draw.rect(self.screen, ACCENT, r, border_radius=4)
+                col = BG
+            else:
+                col = INK
+            self.screen.blit(self.font_small.render(lbl, True, col), (r.x + 8, r.y + 4))
 
     def _draw_mixer(self, rect):
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
@@ -327,27 +541,34 @@ class App:
         eng = sim.engine
         n = eng.num_cylinders
 
-        # Modular preset selector — click a chip or press its number key.
-        self._draw_preset_bar(rect)
+        # toolbar of buttons (engine/EQ load, device, modes) at the top
+        self._rebuild_toolbar(rect)
+        self._draw_toolbar()
+        ty = self._toolbar_bottom + 4
 
         title = self.font.render(eng.name, True, INK)
-        self.screen.blit(title, (rect.x + 18, rect.y + 48))
+        self.screen.blit(title, (rect.x + 18, ty))
         voice = FIRING_VOICES[self.voice_idx][0]
-        cab = "   ·   CABIN (I)" if self.synth.cabin else ""
+        cab = "   ·   cabin" if self.synth.cabin else ""
         self.screen.blit(self.font_small.render(f"firing voice: {voice}  (V){cab}",
-                                                True, ACCENT), (rect.x + 18, rect.y + 72))
+                                                True, ACCENT), (rect.x + 18, ty + 24))
 
-        self._draw_telemetry(rect)
+        self._draw_telemetry(rect, ty + 48)
 
-        # audio output device + sample rate, and the transient save/load status
-        dev = self.devices[self.device_idx][0]
-        rate = self.synth.sample_rate if self.synth else 0
-        self.screen.blit(self.font_small.render(
-            f"audio out: {dev}  ·  {rate} Hz   (F4 device  F5 rate)", True, DIM),
-            (rect.x + 26, rect.y + 240))
+        # Forza telemetry mode banner + transient save/load status
+        by = ty + 178
+        if self.telemetry_mode:
+            tm = self.telemetry
+            if tm is not None and tm.is_live():
+                txt = f"FORZA  LIVE   {tm.rpm:5.0f} rpm   (redline {tm.max_rpm:.0f})"
+                col = GOOD
+            else:
+                txt = f"FORZA  waiting for Data Out on UDP :{FORZA_PORT}"
+                col = WARN
+            self.screen.blit(self.font_small.render(txt, True, col), (rect.x + 26, by))
         if self._status_t > 0.0:
-            self.screen.blit(self.font_small.render(self._status, True, GOOD),
-                             (rect.x + 26, rect.y + 262))
+            self.screen.blit(self.font_small.render(self._status, True, ACCENT),
+                             (rect.x + 26, by + 18))
 
         # Layout: one column per cylinder.
         top = rect.y + 92
@@ -405,13 +626,12 @@ class App:
             label = self.font_small.render(f"{i+1}", True, DIM)
             self.screen.blit(label, (cx - 4, bottom + 8))
 
-    def _draw_telemetry(self, rect):
-        """Physical engine readouts (manifold pressure, VE, AFR, airflow, O2),
-        drawn in the empty space above the cylinders."""
+    def _draw_telemetry(self, rect, top_y):
+        """Physical engine readouts (manifold pressure, VE, AFR, airflow, O2)."""
         t = self.sim.telemetry()
-        x, y = rect.x + 26, rect.y + 96
+        x, y = rect.x + 26, top_y
         self.screen.blit(self.font_small.render("TELEMETRY", True, DIM), (x, y))
-        y += 22
+        y += 21
         rows = [
             ("MANIFOLD", f"{t['map_kpa']:5.0f} kPa  ({t['vacuum_inhg']:+.0f} inHg)"),
             ("VOL. EFF.", f"{t['ve_pct']:5.0f} %"),
@@ -422,7 +642,7 @@ class App:
         for label, val in rows:
             self.screen.blit(self.font_small.render(label, True, DIM), (x, y))
             self.screen.blit(self.font_small.render(val, True, INK), (x + 110, y))
-            y += 22
+            y += 21
 
     def _draw_preset_bar(self, rect):
         """Selectable engine chips (wrap to more rows for cfg engines)."""
@@ -498,9 +718,9 @@ class App:
 
         # --- help ---
         help_lines = [
-            "A ignition  S starter  Up throttle  Down brake  T auto",
-            "Z/X shift  Shift clutch  V voice  I cabin  C mixer  M mute",
-            "F2 save cfg  F3 audio preset  1-7 engine  Esc quit",
+            "A ignition   S starter   Up throttle   Down brake",
+            "Z/X shift   Shift clutch   T auto   V voice   I cabin",
+            "C mixer   M mute   ·   top buttons: cars / EQ / device / Forza",
         ]
         hy = rect.bottom - 62
         for line in help_lines:

@@ -1,4 +1,5 @@
+# PyEngineSim dependencies
 numpy>=1.24
 pygame-ce>=2.4
-scipy>=1.10           ; sharpens the audio filters (recommended)
-sounddevice>=0.4      ; optional — audio is skipped automatically if unavailable
+scipy>=1.10
+sounddevice>=0.4
