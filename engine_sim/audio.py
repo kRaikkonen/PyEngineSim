@@ -218,7 +218,7 @@ class Synthesizer:
 
     def __init__(self, simulator, sample_rate: int = None, device=None):
         self.sim = simulator
-        self.volume = 0.6
+        self.volume = 1.0   # mute switch (M): 1.0 on, 0.0 muted
         self.enabled = _HAVE_SD
 
         if device is not None:
@@ -270,6 +270,7 @@ class Synthesizer:
             "eq_mid": 0.0,        # dB
             "eq_high": 0.0,       # dB
             "cyl_spread": 0.5,    # how much each cylinder's pitch/level differs
+            "master": 0.6,        # master output volume
         }
 
         self._build_audio()
@@ -531,7 +532,7 @@ class Synthesizer:
             sig *= self._gain
         else:
             sig *= 3.5
-        return np.tanh(sig * (self.volume * 1.5)).astype(np.float32)
+        return np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
 
     # ------------------------------------------------------------ callback
     def _callback(self, outdata, frames, time_info, status):

@@ -67,6 +67,7 @@ FPS = 60
 # Audio-mixer sliders: (param key, label, min, max).  These bind to
 # Synthesizer.params and are dragged live in the in-app console (press C).
 SLIDER_DEFS = [
+    ("master", "MASTER volume", 0.0, 1.2),
     ("dry", "Firing / bang", 0.0, 1.6),
     ("body", "Body (thickness)", 0.0, 2.0),
     ("drive", "Drive (solid)", 0.0, 1.0),
@@ -327,14 +328,14 @@ class App:
         panel = pygame.Rect(24, 24, 620, 632)
         x = panel.x + 210
         w = panel.right - 34 - x
-        y = panel.y + 38
+        y = panel.y + 32
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
                 "key": key, "label": label, "min": vmin, "max": vmax,
-                "track": pygame.Rect(x, y + 6, w, 6), "row_y": y,
+                "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 38
+            y += 35
 
     def _set_slider(self, s, mx):
         t = s["track"]
@@ -392,7 +393,7 @@ class App:
                 elif e.key == pygame.K_a:
                     self.sim.ignition_on = not self.sim.ignition_on
                 elif e.key == pygame.K_m:
-                    self.synth.volume = 0.0 if self.synth.volume > 0 else 0.6
+                    self.synth.volume = 0.0 if self.synth.volume > 0 else 1.0
                 elif e.key == pygame.K_x:
                     if not self.sim.drivetrain.auto:
                         self.sim.drivetrain.shift_up()
@@ -708,25 +709,25 @@ class App:
         self._status_dot(rect.x + 28, y, "CLUTCH IN", dt.clutch < 0.5, ACCENT, DIM)
         self._status_dot(rect.x + 230, y, "IN GEAR", dt.gear > 0, GOOD, DIM)
 
-        # --- throttle bar ---
+        # --- controls reference (two tidy columns) ---
         y += 26
-        bar = pygame.Rect(rect.x + 28, y, rect.width - 56, 12)
-        pygame.draw.rect(self.screen, (44, 48, 56), bar, border_radius=6)
-        fill = bar.copy()
-        fill.width = int(bar.width * sim.throttle)
-        pygame.draw.rect(self.screen, ACCENT, fill, border_radius=6)
-
-        # --- help ---
-        help_lines = [
-            "A ignition   S starter   Up throttle   Down brake",
-            "Z/X shift   Shift clutch   T auto   V voice   I cabin",
-            "C mixer   M mute   ·   top buttons: cars / EQ / device / Forza",
+        pygame.draw.line(self.screen, (44, 48, 56),
+                         (rect.x + 28, y - 6), (rect.right - 28, y - 6))
+        self.screen.blit(self.font_small.render("CONTROLS", True, DIM),
+                         (rect.x + 28, y))
+        pairs = [
+            ("A", "ignition"), ("S", "starter"),
+            ("Up/Dn", "gas / brake"), ("Z X", "shift"),
+            ("Shift", "clutch"), ("T", "auto box"),
+            ("V", "voice"), ("I", "cabin"),
+            ("C", "mixer"), ("M / Esc", "mute / quit"),
         ]
-        hy = rect.bottom - 62
-        for line in help_lines:
-            self.screen.blit(self.font_small.render(line, True, DIM),
-                             (rect.x + 28, hy))
-            hy += 18
+        cols = [rect.x + 28, rect.x + 212]
+        for i, (k, act) in enumerate(pairs):
+            cx = cols[i % 2]
+            ry = y + 22 + (i // 2) * 15
+            self.screen.blit(self.font_small.render(k, True, ACCENT), (cx, ry))
+            self.screen.blit(self.font_small.render(act, True, DIM), (cx + 64, ry))
 
     def _draw_tach(self, cx, cy, r, rpm, redline):
         # Sweep from 225deg down to -45deg (270deg span).
