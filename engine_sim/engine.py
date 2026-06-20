@@ -106,6 +106,13 @@ class Engine:
     vehicle_mass: float = 1250.0     # kg
     wheel_radius: float = 0.31       # m
     clutch_capacity: float = 340.0   # N*m the clutch can transmit
+    # transmission type sets the *shift feel*:
+    #   "dct"    dual-clutch  -> fast, seamless, rev-matched (no kick)
+    #   "single" single-clutch automated manual (Aventador ISR, F1 'box) ->
+    #            one clutch must open & slam shut, hard torque interruption + KICK
+    #   "at"     torque-converter automatic -> soft, slushy, overlapping, no kick
+    #   "manual" H-pattern (drives like single-clutch in auto mode)
+    gearbox_type: str = "dct"
 
     # exhaust acoustics -> physically-tuned pipe resonance (audio) -------------
     # The exhaust note's pitch is set by the pipe length and the HOT-gas speed
@@ -126,6 +133,8 @@ class Engine:
     boost_bar: float = 0.0           # peak boost above atmospheric (bar)
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
     turbo_lag: float = 0.6           # spool time constant (s) for turbo
+    turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)
+    turbo_spool_width: float = 0.5   # rpm frac over which boost ramps to full
     anti_lag: bool = False           # bangs/crackle + whoosh on overrun
 
     # head / valvetrain / engine type ----------------------------------------

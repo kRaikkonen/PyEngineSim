@@ -444,6 +444,166 @@ def subaru_22b() -> Engine:
     )
 
 
+def lamborghini_huracan_v10() -> Engine:
+    """Lamborghini Huracan — 5.2 L naturally-aspirated 90-deg V10 (Audi/Lambo).
+
+    84.5 x 92.8 mm, ~12.7:1 CR, ~8500 rpm, ~610 hp.  High-revving NA screamer
+    with the raspy V10 voice.  DOHC 4-valve.
+    """
+    offsets = _even_offsets(10)
+    cylinders = []
+    for i in range(10):
+        bank = -45.0 if i < 5 else 45.0          # 90-deg V
+        cylinders.append(
+            Cylinder(bore=mm(84.5), stroke=mm(92.8), rod_length=mm(150),
+                     compression_ratio=12.7, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Lamborghini Huracan 5.2 V10",
+        cylinders=cylinders,
+        flywheel_inertia=0.21, redline_rpm=8500, idle_rpm=950,
+        closed_map_fraction=0.15,
+        heat_release_k=3.7, ve_peak_frac=0.7, ve_width_frac=0.62,
+        friction_static=8.0, friction_quad=6.0e-5, starter_torque=180.0,
+        exhaust_tone=112.0,
+        exhaust_primary_m=0.6, exhaust_total_m=2.0, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        gear_ratios=[3.13, 2.41, 1.81, 1.46, 1.19, 0.97, 0.84], final_drive=4.77,
+        vehicle_mass=1422.0, wheel_radius=0.34, clutch_capacity=620.0,
+        gearbox_type="dct",      # 7-speed dual-clutch — seamless
+    )
+
+
+def lamborghini_aventador_v12() -> Engine:
+    """Lamborghini Aventador — 6.5 L naturally-aspirated 60-deg V12 (L539).
+
+    95 x 76.4 mm, ~11.8:1 CR, ~8500 rpm, ~700 hp.  The big NA V12 howl — fuller
+    and smoother than the V10, twelve even 60-deg pulses.  DOHC 4-valve.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -30.0 if i < 6 else 30.0          # 60-deg V
+        cylinders.append(
+            Cylinder(bore=mm(95), stroke=mm(76.4), rod_length=mm(148),
+                     compression_ratio=11.8, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Lamborghini Aventador 6.5 V12",
+        cylinders=cylinders,
+        flywheel_inertia=0.30, redline_rpm=8500, idle_rpm=900,
+        heat_release_k=3.75, ve_peak_frac=0.68, ve_width_frac=0.62,
+        friction_static=10.0, starter_torque=200.0,
+        # Hard, bright, raspy top-end — the Aventador's signature metallic howl.
+        # Short primaries + open, near-unmuffled pipe set it apart from the
+        # deeper Murcielago/Zonda and the smoother LaFerrari.
+        exhaust_tone=84.0,
+        exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.0235,
+        exhaust_channels=2, exhaust_openness=0.95, muffler_volume_m3=0.0012,
+        gear_ratios=[2.93, 2.15, 1.66, 1.32, 1.06, 0.86, 0.72], final_drive=3.91,
+        vehicle_mass=1575.0, wheel_radius=0.35, clutch_capacity=720.0,
+        gearbox_type="single",   # ISR single-clutch — the brutal Aventador kick
+    )
+
+
+def ferrari_laferrari_v12() -> Engine:
+    """Ferrari LaFerrari — 6.3 L naturally-aspirated 65-deg V12 (F140 FE).
+
+    94 x 75.2 mm, ~13.5:1 CR, ~9000 rpm, ~800 hp (ICE only).  The ultimate NA
+    Ferrari V12 scream — even higher-revving than the Lambos.  DOHC 4-valve.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -32.5 if i < 6 else 32.5          # 65-deg V
+        cylinders.append(
+            Cylinder(bore=mm(94), stroke=mm(75.2), rod_length=mm(147),
+                     compression_ratio=13.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Ferrari LaFerrari 6.3 V12",
+        cylinders=cylinders,
+        flywheel_inertia=0.26, redline_rpm=9000, idle_rpm=950,
+        closed_map_fraction=0.14,
+        heat_release_k=3.7, ve_peak_frac=0.74, ve_width_frac=0.6,
+        friction_static=10.0, starter_torque=200.0,
+        exhaust_tone=70.0,
+        exhaust_primary_m=0.62, exhaust_total_m=2.1, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0022,
+        gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.71,
+        vehicle_mass=1585.0, wheel_radius=0.34, clutch_capacity=750.0,
+        gearbox_type="dct",      # 7-speed dual-clutch — seamless
+    )
+
+
+def ferrari_f40_v8() -> Engine:
+    """Ferrari F40 — 2.9 L twin-turbo 90-deg V8 (F120A), huge turbo lag.
+
+    82 x 69.5 mm, low 7.8:1 CR for boost, ~7750 rpm, ~478 hp.  Twin IHI turbos
+    that stay asleep below ~3500 rpm then slam in — the classic 80s lag.  We
+    recreate that with a *late* spool threshold + a long lag time-constant.
+    Flat-plane crank.  DOHC 4-valve.
+    """
+    offsets = _even_offsets(8)
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0          # 90-deg V8, flat-plane
+        cylinders.append(
+            Cylinder(bore=mm(82), stroke=mm(69.5), rod_length=mm(124),
+                     compression_ratio=7.8, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Ferrari F40 2.9 twin-turbo V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.16, redline_rpm=7750, idle_rpm=950,
+        heat_release_k=2.1, ve_peak_frac=0.62, ve_width_frac=0.6,
+        closed_map_fraction=0.17, idle_air_base=0.22,
+        friction_static=7.0, starter_torque=160.0,
+        exhaust_tone=98.0,
+        exhaust_primary_m=0.55, exhaust_total_m=1.9, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.85, muffler_volume_m3=0.0026,
+        induction="turbo", boost_bar=1.1,
+        turbo_lag=1.3,            # long spool — the famous lag
+        turbo_spool_frac=0.42,    # ~3250 rpm before any boost
+        turbo_spool_width=0.32,   # then a sharp rush to full
+        gear_ratios=[2.92, 2.10, 1.57, 1.25, 1.04], final_drive=3.42,
+        vehicle_mass=1100.0, wheel_radius=0.33, clutch_capacity=520.0,
+        gearbox_type="manual",   # gated 5-speed manual — jerky in auto mode
+    )
+
+
+def pagani_zonda_v12() -> Engine:
+    """Pagani Zonda — 7.3 L naturally-aspirated 60-deg V12 (Mercedes-AMG M297).
+
+    91.5 x 92.4 mm, ~10.5:1 CR, ~6700 rpm, ~650 hp / huge torque.  The big-bore
+    AMG V12: lower-revving and torquier than the Ferrari/Lambo screamers — a
+    deep, brutal voice.  SOHC 4-valve.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -30.0 if i < 6 else 30.0          # 60-deg V
+        cylinders.append(
+            Cylinder(bore=mm(91.5), stroke=mm(92.4), rod_length=mm(152),
+                     compression_ratio=10.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Pagani Zonda 7.3 V12",
+        cylinders=cylinders,
+        flywheel_inertia=0.34, redline_rpm=6700, idle_rpm=720,
+        idle_air_base=0.23,
+        heat_release_k=4.1, ve_peak_frac=0.6, ve_width_frac=0.58,
+        friction_static=11.0, starter_torque=220.0,
+        valvetrain="sohc",
+        exhaust_tone=50.0,
+        exhaust_primary_m=0.80, exhaust_total_m=2.6, exhaust_radius_m=0.031,
+        exhaust_channels=2, exhaust_openness=0.78, muffler_volume_m3=0.0048,
+        gear_ratios=[3.00, 2.04, 1.52, 1.18, 0.95, 0.79], final_drive=3.36,
+        vehicle_mass=1250.0, wheel_radius=0.34, clutch_capacity=820.0,
+        gearbox_type="manual",   # Cima 6-speed manual — jerky in auto mode
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -460,6 +620,11 @@ PRESETS = [
     ("0", "S58",    bmw_s58),
     ("rx7", "RX-7 rotary", mazda_rx7_rotary),
     ("22b", "Subaru 22B", subaru_22b),
+    ("hura", "Huracan V10", lamborghini_huracan_v10),
+    ("aven", "Aventador V12", lamborghini_aventador_v12),
+    ("lafe", "LaFerrari V12", ferrari_laferrari_v12),
+    ("f40", "F40 twin-turbo V8", ferrari_f40_v8),
+    ("zonda", "Zonda V12", pagani_zonda_v12),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

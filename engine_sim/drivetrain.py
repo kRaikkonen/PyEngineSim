@@ -30,12 +30,14 @@ class Drivetrain:
             self.wheel_radius = engine.wheel_radius
             self.mass = engine.vehicle_mass
             self.clutch_capacity = engine.clutch_capacity
+            self.gearbox_type = engine.gearbox_type
         else:
             self.ratios = [3.45, 2.10, 1.42, 1.03, 0.82]
             self.final_drive = 3.9
             self.wheel_radius = 0.31
             self.mass = 1250.0
             self.clutch_capacity = 340.0
+            self.gearbox_type = "dct"
 
         self.gear = 0                     # 0 = neutral, 1..len(ratios)
         self.clutch = 1.0                 # engagement, 0 (in) .. 1 (out/engaged)
@@ -45,6 +47,10 @@ class Drivetrain:
         self._shift_timer = 0.0           # brief clutch lift during an auto shift
         self._blip_timer = 0.0            # paddle-shift clutch blip (manual)
         self._pending_gear = None         # gear to engage once the clutch lifts
+        self._auto_shifting = False       # a phased auto shift is in progress
+        self._shift_phase = 0             # 0 idle | 1 declutch | 2 rev-match | 3 re-engage
+        self._shift_elapsed = 0.0         # watchdog so a shift can never hang
+        self._shift_lock = 0.0            # post-shift lockout (anti-hunting)
         self.brake = 0.0                  # 0..1 brake pedal
         self.max_brake_decel = 9.0        # m/s^2 at full brake
 
@@ -73,15 +79,42 @@ class Drivetrain:
             self._blip_timer = 0.22
 
     def _apply_pending(self):
-        """Engage the queued gear only once the clutch is lifted, so the ratio
-        never changes while it's coupled (that is what jolts a shift)."""
-        if self._pending_gear is not None and self.clutch < 0.3:
+        """Engage the queued gear only once the clutch is essentially lifted, so
+        the ratio never changes while it's still transmitting torque (that is
+        what jolts a shift)."""
+        if self._pending_gear is not None and self.clutch < 0.08:
             self.gear = self._pending_gear
             self._pending_gear = None
 
     @property
     def is_shifting(self) -> bool:
-        return self._blip_timer > 0.0 or self._shift_timer > 0.0
+        # Fuel-cut + rev-match apply only while declutched/matching (phases 1-2).
+        # In phase 3 the clutch is re-engaging with the engine already matched,
+        # so combustion resumes and torque feeds in *through* the clutch — no
+        # snap-on torque step.
+        return (self._blip_timer > 0.0 or self._shift_timer > 0.0
+                or (self._auto_shifting and self._shift_phase < 3))
+
+    @property
+    def rev_matching(self) -> bool:
+        """Whether the simulator should actively rev-match the engine to the
+        target gear.  A DCT/AT does (seamless); a single-clutch / manual 'box
+        does NOT — the engine keeps its momentum and the clutch yanks it into
+        line as it slams shut, which IS the Aventador-style shift kick."""
+        if self._blip_timer > 0.0 or self._shift_timer > 0.0:
+            return True
+        if self._auto_shifting and self._shift_phase < 3:
+            return self.gearbox_type not in ("single", "manual")
+        return False
+
+    def _matched_rpm(self, gear: int) -> float:
+        """Engine rpm the given gear would turn at the current road speed (with
+        the clutch locked).  Used for shift decisions so a *slipping* launch
+        can't fool the logic with a sky-high free-revving engine speed."""
+        if gear < 1 or gear > self.num_gears:
+            return 0.0
+        ratio = self.ratios[gear - 1] * self.final_drive
+        return (self.v / self.wheel_radius) * ratio * 9.5492966
 
     def shift_target_omega(self) -> float:
         """Engine speed (rad/s) that matches the wheels in the gear we are
@@ -115,55 +148,119 @@ class Drivetrain:
         self._apply_pending()
 
     # --------------------------------------------------------------- auto
+    def _ease_clutch(self, target: float, dt: float, rate: float):
+        """Move the clutch toward ``target`` at a first-order ``rate`` (1/s)."""
+        self.clutch += (target - self.clutch) * min(rate * dt, 1.0)
+        self.clutch = min(max(self.clutch, 0.0), 1.0)
+
+    # Per-transmission shift personality:
+    #   (declutch_rate, match_tol_frac, match_timeout, reengage_rate, lock)
+    #   DCT  : snappy open, wait for a clean match, smooth feed-in  -> seamless
+    #   single: snap open, only PARTLY match, then SLAM shut        -> the kick
+    #   AT   : ease off the converter, full match, slow soft feed   -> slushy
+    _SHIFT_PROFILES = {
+        "dct":    (11.0, 0.018, 0.40, 3.4, 0.55),
+        "single": (16.0, 0.075, 0.18, 30.0, 0.45),
+        "manual": (16.0, 0.075, 0.18, 30.0, 0.45),
+        "at":     (5.5,  0.030, 0.45, 1.9, 0.70),
+    }
+
+    def _begin_shift(self, new_gear: int):
+        self._pending_gear = new_gear
+        self._auto_shifting = True
+        self._shift_phase = 1
+        self._shift_elapsed = 0.0
+
+    def _run_auto_shift(self, rpm, redline, dt):
+        """Phased torque-cut shift (declutch -> swap -> rev-match -> re-engage),
+        with the timing/feel taken from the gearbox type.
+
+        DCT fully rev-matches before a smooth feed-in (no kick).  A single-clutch
+        'box only partly matches then slams the clutch shut with the engine still
+        a little off — that residual slip is the Aventador-style kick.  An AT
+        eases the converter and feeds back in slowly for the slushy shift.
+        """
+        dc_rate, tol_frac, timeout, re_rate, lock = self._SHIFT_PROFILES.get(
+            self.gearbox_type, self._SHIFT_PROFILES["dct"])
+        self._shift_elapsed += dt
+        if self._shift_phase == 1:                 # declutch, then swap gear
+            self._ease_clutch(0.0, dt, dc_rate)
+            self._apply_pending()                  # swaps only once clutch < 0.08
+            if self._pending_gear is None:
+                self._shift_phase = 2
+        elif self._shift_phase == 2:               # hold clutch out, let revs match
+            self._ease_clutch(0.0, dt, dc_rate)
+            tgt_rpm = self.shift_target_omega() * 9.5492966   # rad/s -> rpm
+            tol = max(110.0, tol_frac * redline)
+            if tgt_rpm < 60.0 or abs(rpm - tgt_rpm) < tol or self._shift_elapsed > timeout:
+                self._shift_phase = 3
+        else:                                      # re-engage (feed-in or slam)
+            self._ease_clutch(1.0, dt, re_rate)
+            if self.clutch > 0.92 or self._shift_elapsed > 0.85:
+                self._auto_shifting = False
+                self._shift_phase = 0
+                self._shift_lock = lock            # settle before the next shift
+
     def auto_control(self, rpm, throttle, redline, dt):
         """Drive the clutch and gear selection like an automatic / DCT.
 
         Pulls away from rest by feathering the clutch, upshifts near the
-        redline and downshifts when the revs fall, lifting the clutch briefly
-        for each shift so the engine speed steps cleanly between gears.
+        redline and downshifts when the revs fall.  Each shift runs the phased
+        rev-matched sequence in :meth:`_run_auto_shift` so the engine speed
+        steps cleanly between gears with no lurch.
         """
         if not self.auto:
             return
+
+        # --- mid-shift: hand off entirely to the phased state machine ---
+        if self._auto_shifting:
+            self._run_auto_shift(rpm, redline, dt)
+            return
+
+        if self._shift_lock > 0.0:
+            self._shift_lock -= dt
+
         up = 0.93 * redline
-        down = 0.55 * redline
+        down = 0.50 * redline
         launching = self.v < 6.0          # still slipping the clutch off the line
         locked = self.clutch > 0.9
 
-        if self._shift_timer > 0.0:
-            # mid-shift: clutch out briefly so the revs step between gears
-            self._shift_timer -= dt
-            target = 0.0
-        elif throttle < 0.04 and self.v < 0.5:
+        if throttle < 0.04 and self.v < 0.5:
             # stopped, off throttle: decouple (idle, no stall, no creep)
             if self.gear > 1:
                 self.gear = 1
-            target = 0.0
+            self._ease_clutch(0.0, dt, 7.0)
+            return
+
+        if self.gear == 0 and throttle > 0.04:
+            self.gear = 1
+
+        # Only start a shift once the clutch is LOCKED, the car is rolling, and
+        # we are not in the brief post-shift lockout (which stops hunting).
+        # Decisions use the *wheel-matched* rpm, not the raw engine rpm, so a
+        # still-slipping launch can't trigger a bogus upshift.
+        if locked and not launching and self._shift_lock <= 0.0:
+            cur = self._matched_rpm(self.gear)
+            if (cur > up and self.gear < self.num_gears
+                    and self._matched_rpm(self.gear + 1) > down * 1.1):
+                self._begin_shift(self.gear + 1)
+                self._run_auto_shift(rpm, redline, dt)
+                return
+            elif cur < down and self.gear > 1:
+                self._begin_shift(self.gear - 1)
+                self._run_auto_shift(rpm, redline, dt)
+                return
+
+        if launching and throttle > 0.04:
+            # Launch controller: feather the clutch to hold the engine near a
+            # launch rpm, progressively locking as the car gathers speed.
+            launch_rpm = 0.45 * redline
+            err = (rpm - launch_rpm) / redline
+            target = min(max(0.15 + 2.5 * err + self.v / 6.0, 0.0), 1.0)
         else:
-            if self.gear == 0 and throttle > 0.04:
-                self.gear = 1
-            # Only change gear once the clutch is LOCKED and the car is rolling,
-            # so a slipping launch (engine free-revving) can't blast up the box.
-            if locked and not launching and self._pending_gear is None:
-                if rpm > up and self.gear < self.num_gears:
-                    self._pending_gear = self.gear + 1
-                    self._shift_timer = 0.18
-                elif rpm < down and self.gear > 1:
-                    self._pending_gear = self.gear - 1
-                    self._shift_timer = 0.16
-
-            if launching and throttle > 0.04:
-                # Launch controller: feather the clutch to hold the engine near
-                # a launch rpm, progressively locking as the car gathers speed.
-                launch_rpm = 0.45 * redline
-                err = (rpm - launch_rpm) / redline
-                target = min(max(0.15 + 2.5 * err + self.v / 6.0, 0.0), 1.0)
-            else:
-                target = 1.0
-
+            target = 1.0
         rate = 7.0 if target < self.clutch else 2.0   # disengage fast, engage smooth
-        self.clutch += (target - self.clutch) * min(rate * dt, 1.0)
-        self.clutch = min(max(self.clutch, 0.0), 1.0)
-        self._apply_pending()
+        self._ease_clutch(target, dt, rate)
 
     # ------------------------------------------------------------- physics
     def _engine_side_clutch_torque(self, engine_omega: float) -> float:

@@ -105,7 +105,8 @@ class Simulator:
             target = eng.boost_bar * thr * (rf * rf)
             rate = min(dt * 14.0, 1.0)
         else:                                     # turbo: spools with lag
-            target = eng.boost_bar * thr * min(max((rf - 0.12) / 0.5, 0.0), 1.0)
+            spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
+            target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0)
             tau = eng.turbo_lag if target > self.boost else 0.18
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate
@@ -245,7 +246,8 @@ class Simulator:
         # target gear (so an upshift falls instead of bouncing the limiter).
         shifting = self.drivetrain.is_shifting
         self._shift_cut = shifting
-        shift_target = self.drivetrain.shift_target_omega() if shifting else 0.0
+        rev_matching = self.drivetrain.rev_matching
+        shift_target = self.drivetrain.shift_target_omega() if rev_matching else 0.0
 
         self._update_boost(dt)
 
@@ -275,8 +277,8 @@ class Simulator:
                 new_omega = 0.0
             self.omega = new_omega
 
-            # Rev-match toward the target gear speed while shifting.
-            if shifting and shift_target > 5.0:
+            # Rev-match toward the target gear speed while shifting (DCT/AT).
+            if rev_matching and shift_target > 5.0:
                 self.omega += (shift_target - self.omega) * min(9.0 * h, 1.0)
 
             self.crank_angle += self.omega * h

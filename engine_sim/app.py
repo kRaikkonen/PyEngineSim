@@ -64,6 +64,9 @@ FLASH = (255, 168, 60)
 WIDTH, HEIGHT = 1100, 680
 FPS = 60
 
+# Friendly transmission labels for the HUD (sets the auto-shift feel).
+_GBX_LABEL = {"dct": "DCT", "single": "single-clutch", "at": "AT", "manual": "manual"}
+
 # Audio-mixer sliders: (param key, label, min, max).  These bind to
 # Synthesizer.params and are dragged live in the in-app console (press C).
 SLIDER_DEFS = [
@@ -738,7 +741,8 @@ class App:
             ("TORQUE", f"{tq:6.0f} Nm  ({nm_to_lbft(tq):.0f} lb-ft)", INK),
             ("POWER", f"{hp:6.0f} hp", INK),
             ("THROTTLE", f"{sim.throttle*100:5.0f} %", INK),
-            ("GEAR", f"{dt.gear_name:>3}  {'AUTO' if dt.auto else 'MANUAL'}", GOOD),
+            ("GEAR", f"{dt.gear_name:>3}  {'AUTO' if dt.auto else 'MANUAL'}"
+                     f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
             ("SPEED", f"{dt.speed_kmh:6.0f} km/h", INK),
         ]
         for label, value, col in rows:
