@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# audio renders / scratch
+*.wav
+chk_*.png
+shot_*.png
+
+# user-saved configs (keep the dirs, ignore the saved presets)
+configs/engines/*.json
+configs/audio/*.json
+!configs/**/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db

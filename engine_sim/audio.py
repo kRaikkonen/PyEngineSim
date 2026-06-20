@@ -1,0 +1,584 @@
+"""
+Real-time engine audio — pure physics, no recordings.
+
+The sound is generated the way the real machine makes it:
+
+  1. EXCITATION (the 'vocal cords').  Each cylinder, when its exhaust valve
+     opens, releases a blowdown pressure pulse whose strength comes from the gas
+     model (:meth:`Simulator.blowdown_pressure`).  Summed at the cylinders' firing
+     phases, with turbulence noise gated by the pulses, that is the raw exhaust
+     waveform — real pulse shape, real load/rpm dynamics, rev-limit cuts and all.
+
+  2. RESONANCE (the 'throat').  The pulses ring the exhaust pipe.  A pipe is an
+     acoustic delay line: a pulse travels at the speed of sound, reflects at the
+     open end, and re-circulates — a feedback comb filter.  We tune that comb's
+     delay from the real pipe length and the HOT-gas speed of sound
+     (:meth:`Simulator.exhaust_sound_speed`, ~470-670 m/s, *not* 343), so the
+     resonant pitch is physical and slides up with load.  An open end inverts the
+     pulse (negative feedback), giving the odd-harmonic quarter-wave 'hollow'
+     exhaust character.  A Helmholtz biquad adds the muffler/chamber resonance.
+
+This is more physics-driven than the original Engine Simulator, which convolves
+the (also physics-derived) excitation with a *recorded* impulse-response .wav.
+Here every resonance parameter is computed from geometry and gas properties.
+
+Audio is optional (needs ``sounddevice``); ``scipy`` sharpens the filters.
+"""
+
+from __future__ import annotations
+
+import math
+import os
+import threading
+
+import numpy as np
+
+try:
+    import sounddevice as sd
+    _HAVE_SD = True
+except Exception:                       # pragma: no cover
+    _HAVE_SD = False
+
+try:
+    from scipy.signal import lfilter, butter
+    _HAVE_SCIPY = True
+except Exception:                       # pragma: no cover
+    _HAVE_SCIPY = False
+
+from .engine import P_ATM
+
+SAMPLE_RATE = 44100
+BLOCK = 256
+
+# Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
+VALVE_OPEN = 505.0
+VALVE_CLOSE = 715.0
+BLOWDOWN_TAU = 22.0
+
+
+def _peaking(f0, Q, gain_db, sr):
+    """RBJ peaking-EQ biquad -> (b, a)."""
+    A = 10 ** (gain_db / 40.0)
+    w0 = 2 * math.pi * f0 / sr
+    alpha = math.sin(w0) / (2 * Q)
+    cw = math.cos(w0)
+    b = np.array([1 + alpha * A, -2 * cw, 1 - alpha * A])
+    a = np.array([1 + alpha / A, -2 * cw, 1 - alpha / A])
+    return b / a[0], a / a[0]
+
+
+def _bandpass(f0, Q, sr):
+    """RBJ constant-peak-gain band-pass biquad -> (b, a). Used to pull a tunable
+    resonant 'body' tone out of the firing pulses."""
+    w0 = 2 * math.pi * f0 / sr
+    alpha = math.sin(w0) / (2 * Q)
+    cw = math.cos(w0)
+    b = np.array([alpha, 0.0, -alpha])
+    a = np.array([1 + alpha, -2 * cw, 1 - alpha])
+    return b / a[0], a / a[0]
+
+
+def _select_output():
+    """Pick the lowest-latency output device (prefers WASAPI). -> (idx, sr)."""
+    if not _HAVE_SD:
+        return None, SAMPLE_RATE
+    for want in ("WASAPI", "WDM-KS", "DirectSound"):
+        for ha in sd.query_hostapis():
+            if want in ha["name"]:
+                dev = ha["default_output_device"]
+                if dev is not None and dev >= 0:
+                    try:
+                        return dev, int(sd.query_devices(dev)["default_samplerate"])
+                    except Exception:
+                        pass
+    return None, SAMPLE_RATE
+
+
+def list_output_devices():
+    """Selectable output devices -> [(label, index_or_None)].  'Auto' first,
+    then the WASAPI (and other) physical outputs, de-duplicated by name."""
+    devices = [("Auto (best)", None)]
+    if not _HAVE_SD:
+        return devices
+    seen = set()
+    try:
+        for want in ("WASAPI", "DirectSound", "MME"):
+            for i, d in enumerate(sd.query_devices()):
+                if d["max_output_channels"] <= 0:
+                    continue
+                ha = sd.query_hostapis(d["hostapi"])["name"]
+                if want not in ha:
+                    continue
+                name = d["name"]
+                if name in seen:
+                    continue
+                seen.add(name)
+                short = name if len(name) <= 28 else name[:27] + "…"
+                devices.append((f"{short}", i))
+    except Exception:
+        pass
+    return devices
+
+
+class ExhaustWaveguide:
+    """A lossy feedback-comb model of one exhaust pipe (digital waveguide).
+
+    ``y[n] = x[n] + s*g*LP(y[n-D])`` — a delay line of D samples fed back with
+    gain g through a one-pole low-pass (the pipe's treble loss).  D is the
+    round-trip travel time, so the comb resonates at the pipe's standing-wave
+    frequencies; s=-1 models the inverting open-end reflection (odd harmonics).
+
+    The block is processed in segments of length <=D so the recursion stays
+    vectorised (each segment's delayed samples are already known) — no per-sample
+    Python loop, and D may change every block as the gas temperature changes.
+    """
+
+    def __init__(self, max_delay=1200):
+        self.maxD = max_delay
+        self._hist = np.zeros(max_delay, dtype=np.float64)
+        self._lp_zi = np.zeros(1)
+
+    def process(self, x, D, g, s, lp_a):
+        N = len(x)
+        D = int(min(max(D, 4), self.maxD))
+        ext = np.empty(self.maxD + N, dtype=np.float64)
+        ext[:self.maxD] = self._hist
+        base = self.maxD
+        sg = s * g
+        use_lp = _HAVE_SCIPY and lp_a > 0.0
+        if use_lp:
+            b = [1.0 - lp_a]
+            a = [1.0, -lp_a]
+        p = 0
+        while p < N:
+            seg = min(D, N - p)
+            d0 = base + p - D
+            delayed = ext[d0:d0 + seg]
+            if use_lp:
+                delayed, self._lp_zi = lfilter(b, a, delayed, zi=self._lp_zi)
+            ext[base + p:base + p + seg] = x[p:p + seg] + sg * delayed
+            p += seg
+        self._hist = ext[-self.maxD:].copy()
+        return ext[base:].copy()
+
+
+class _Comb:
+    """Schroeder feedback comb (delay >= block, so fully vectorised)."""
+    def __init__(self, D, g):
+        self.D, self.g = D, g
+        self._y = np.zeros(D, dtype=np.float64)
+
+    def process(self, x):
+        N = len(x)
+        delayed = self._y[:N]
+        out = x + self.g * delayed
+        self._y = np.concatenate([self._y[N:], out])
+        return out
+
+
+class _Allpass:
+    """Schroeder all-pass diffuser (delay >= block)."""
+    def __init__(self, D, g):
+        self.D, self.g = D, g
+        self._x = np.zeros(D, dtype=np.float64)
+        self._y = np.zeros(D, dtype=np.float64)
+
+    def process(self, x):
+        N = len(x)
+        dx, dy = self._x[:N], self._y[:N]
+        out = -self.g * x + dx + self.g * dy
+        self._x = np.concatenate([self._x[N:], x])
+        self._y = np.concatenate([self._y[N:], out])
+        return out
+
+
+class Reverb:
+    """A small Schroeder reverb (parallel combs + series all-passes) for the
+    sense of the car being in a space rather than an anechoic void."""
+    def __init__(self, sr, mix=0.16, room=1.0, feedback=0.78):
+        sc = sr / 44100.0 * room                 # room < 1 = smaller/shorter space
+        self.mix = mix
+        self._combs = [_Comb(max(int(d * sc), BLOCK + 1), feedback)
+                       for d in (1557, 1617, 1491, 1422)]
+        self._aps = [_Allpass(max(int(d * sc), BLOCK + 1), 0.5)
+                     for d in (556, 441)]
+
+    def process(self, x):
+        acc = np.zeros(len(x), dtype=np.float64)
+        for c in self._combs:
+            acc += c.process(x)
+        acc /= len(self._combs)
+        for ap in self._aps:
+            acc = ap.process(acc)
+        return (1.0 - self.mix) * x + self.mix * acc
+
+
+class Synthesizer:
+    """Streams physics-driven engine audio from a live :class:`Simulator`."""
+
+    def __init__(self, simulator, sample_rate: int = None, device=None):
+        self.sim = simulator
+        self.volume = 0.6
+        self.enabled = _HAVE_SD
+
+        if device is not None:
+            self._device = device
+            try:
+                native_sr = int(sd.query_devices(device)["default_samplerate"])
+            except Exception:
+                native_sr = SAMPLE_RATE
+        else:
+            self._device, native_sr = _select_output()
+        self.sample_rate = sample_rate or native_sr
+
+        cyls = simulator.engine.cylinders
+        ncyl = len(cyls)
+        self._offsets = np.array([c.cycle_offset_deg for c in cyls], dtype=np.float64)
+        self._audio_crank = 0.0
+
+        # Fixed per-cylinder 'personality' (runner-length / build differences):
+        # each cylinder fires with a slightly different pitch and loudness, which
+        # is what gives a multi-cylinder exhaust its rich, layered waveform.
+        rngf = np.random.default_rng(20240517)
+        self._cyl_tau = rngf.uniform(-1.0, 1.0, ncyl)   # decay -> pop pitch/brightness
+        self._cyl_amp = rngf.uniform(-1.0, 1.0, ncyl)   # loudness
+
+        self._rng = np.random.default_rng()
+        self._jit = np.ones(ncyl)
+        self._level = 0.05
+        self._gain = 1.0
+        self.agc_enabled = True   # off (fixed gain) for isolated-pop auditioning
+
+        # Live, user-adjustable mix (the in-app audio console drives these).
+        # Akrapovic-style: keep the firing 'bang' + low body strong, keep pipe
+        # resonance modest (too much = the 'plastic tube' ring), de-drone.
+        self.params = {
+            "dry": 1.6,          # combustion bang level
+            "res1": 0.10,         # primary pipe resonance (runner)
+            "res2": 0.24,         # secondary pipe resonance (full system)
+            "crack": 0.12,        # attack snap (explosion punch)
+            "attack_deg": 9.0,    # onset softness (deg): bigger = blunter attack
+            "body": 1.60,         # thickness / low-end of each firing (浑厚)
+            "drive": 0.40,        # saturation -> tight, solid 'power chord' grip
+            "firing_pitch": 90.0,  # Hz, pitch of that firing body
+            "pulse_tau": 22.0,    # blowdown decay (deg) -> firing timbre/brightness
+            "turbulence": 0.2,    # gas-rush noise on each firing
+            "src_reverb": 0.48,   # reverb on the explosion itself (pre-pipe)
+            "reverb": 0.4,       # spatial reverb mix (post, room)
+            "intake": 0.22,       # induction roar level (was a bit windy)
+            "eq_low": 0.0,        # dB
+            "eq_mid": 0.0,        # dB
+            "eq_high": 0.0,       # dB
+            "cyl_spread": 0.5,    # how much each cylinder's pitch/level differs
+        }
+
+        self._build_audio()
+
+        self.cabin = False        # interior (in-cabin) muffling effect
+        self._lock = threading.Lock()
+        self._stream = None
+        self.latency_ms = 0.0
+        self.mode = "off"
+        self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
+
+    # --------------------------------------------------------- rate-dependent
+    def _build_audio(self):
+        eng = self.sim.engine
+        sr = self.sample_rate
+        # how many separate exhaust channels, and which channel each cylinder is on
+        self._nchan = max(1, int(eng.exhaust_channels))
+        if self._nchan == 1:
+            self._channel_of = [0] * eng.num_cylinders
+        else:
+            self._channel_of = [0 if c.bank_angle_deg < 0 else 1 for c in eng.cylinders]
+        # TWO waveguides per channel: a short primary runner (high resonance) and
+        # the full system length (low resonance) -> several pipe resonances at
+        # different frequencies, like a real exhaust.
+        self._wg = [(ExhaustWaveguide(), ExhaustWaveguide()) for _ in range(self._nchan)]
+        self._reverb = Reverb(sr)
+        # A short reverb on the explosion ITSELF, before the pipe — so the
+        # waveguide resonates an already-reverberant bang (chamber/port acoustics).
+        self._src_verb = [Reverb(sr, room=0.4, feedback=0.55)
+                          for _ in range(self._nchan)]
+
+        # fixed post filters (state carried across blocks)
+        if _HAVE_SCIPY:
+            self._hp = butter(2, 55.0 / (sr / 2), btype="high")
+            self._hp_zi = np.zeros(max(len(self._hp[0]), len(self._hp[1])) - 1)
+            # post low-pass is recomputed every block from the exhaust valve
+            self._lp_zi = np.zeros(2)
+            self._lowboost_zi = np.zeros(2)     # low-end boost when valve is shut
+            self._helm_zi = np.zeros(2)
+            # intake / induction path: cool-air airbox resonance + roll-off
+            self._intake_bp = _peaking(150.0, 1.1, 7.0, sr)
+            self._intake_lp = butter(2, 1300.0 / (sr / 2), btype="low")
+            self._intake_bp_zi = np.zeros(2)
+            self._intake_lp_zi = np.zeros(max(len(self._intake_lp[0]),
+                                               len(self._intake_lp[1])) - 1)
+            # firing 'body' = a 1-3-5 major chord (3 band-passes) + 3-band EQ
+            self._chord_zi = [np.zeros(2), np.zeros(2), np.zeros(2)]
+            self._eq_lo_zi = np.zeros(2)
+            self._eq_mid_zi = np.zeros(2)
+            self._eq_hi_zi = np.zeros(2)
+            # cabin effect: muffle the highs (hearing it from inside the car)
+            self._cabin_lp = butter(2, 2400.0 / (sr / 2), btype="low")
+            self._cabin_zi = np.zeros(max(len(self._cabin_lp[0]),
+                                          len(self._cabin_lp[1])) - 1)
+        self._audio_crank = 0.0
+
+    def _rebuild_for_rate(self, sr: int):
+        if sr == self.sample_rate and getattr(self, "_wg", None):
+            return
+        self.sample_rate = sr
+        self._build_audio()
+
+    # ------------------------------------------------- physical resonance setup
+    def _resonance_params(self):
+        """Everything tuning the pipe resonance, DERIVED FROM PHYSICS."""
+        sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
+        c = sim.exhaust_sound_speed()                  # hot-gas speed of sound
+        # Round-trip travel = 2L (down and back); the inverting open-end (s=-1)
+        # then makes the comb a quarter-wave resonator at odd multiples of
+        # fs/(2D) = c/(4*L_eff) -- exactly the open-closed pipe fundamental.
+        rad = eng.exhaust_radius_m
+        l_primary = eng.exhaust_primary_m + 0.61 * rad
+        l_total = eng.exhaust_total_m + 0.61 * rad
+        D1 = round(2.0 * l_primary * sr / c)           # high resonance (runner)
+        D2 = round(2.0 * l_total * sr / c)             # low resonance (full system)
+        # feedback gain from radiation + wall loss (more open -> rings longer,
+        # sharper/higher-Q teeth = metallic, not a damped 'plastic' tube)
+        g = min(0.84 + 0.15 * eng.exhaust_openness, 0.992)
+
+        # VARIABLE EXHAUST VALVE: it opens with rpm + throttle.  Closed (idle /
+        # light load) the gas takes the long muffled path -> dark, bassy, lumpy;
+        # wide open (high rpm / hard throttle) it's a short straight pipe ->
+        # bright, screaming.  This rpm-dependent brightness is the whole reason a
+        # low idle sounds nothing like a redline pull.
+        rpm_frac = min(self.sim.rpm / max(eng.redline_rpm, 1.0), 1.0)
+        # mostly rpm-driven (throttle just nudges it open a bit)
+        drive = min(rpm_frac + 0.30 * min(max(self.sim.throttle, 0.0), 1.0), 1.0)
+        valve = min(max((drive - 0.28) / 0.45, 0.0), 1.0)
+        self._valve = valve
+        self._post_fc = 1600.0 + 9600.0 * valve     # muffled 1.6 kHz .. bright 11 kHz
+
+        # in-loop treble damping, also scaled shut by the valve
+        fc = (2000.0 + 7000.0 * eng.exhaust_openness) * (0.4 + 0.6 * valve)
+        lp_a = math.exp(-2 * math.pi * fc / sr)
+        # Helmholtz muffler/chamber resonance
+        A, V = eng.muffler_neck_area_m2, eng.muffler_volume_m3
+        r_neck = math.sqrt(A / math.pi)
+        l_h = eng.muffler_neck_len_m + 1.7 * r_neck
+        f_helm = (c / (2 * math.pi)) * math.sqrt(A / (V * l_h))
+        f_helm = min(max(f_helm, 40.0), 400.0)
+        return D1, D2, g, lp_a, f_helm
+
+    # ------------------------------------------------------- synthesis core
+    def _render_block(self, frames: int) -> np.ndarray:
+        sim = self.sim
+        omega = sim.omega
+        dps = math.degrees(omega) / self.sample_rate
+
+        D1, D2, g, lp_a, f_helm = self._resonance_params()
+        s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
+
+        # --- per-channel excitation, sampled from the physics ---------------
+        chans = [np.zeros(frames, dtype=np.float64) for _ in range(self._nchan)]
+        fizz_chans = [np.zeros(frames, dtype=np.float64) for _ in range(self._nchan)]
+        if dps > 1e-12:
+            idx = np.arange(frames)
+            crank = self._audio_crank + dps * idx
+            p_open = sim.blowdown_pressure() - 1.05 * P_ATM
+            strength = math.copysign(math.sqrt(abs(p_open)), p_open) / math.sqrt(6 * P_ATM)
+            self._jit += (1.0 + 0.12 * (self._rng.random(len(self._jit)) - 0.5)
+                          - self._jit) * 0.25
+
+            # Cylinder spread ~3x stronger than before, and bigger still at low
+            # rpm (valve shut), where the spaced pops make each cylinder's own
+            # character clearly audible -> coarse, grainy low-rpm lumpiness.
+            spread = self.params["cyl_spread"] * (1.0 + 1.4 * (1.0 - self._valve))
+            base_tau = self.params["pulse_tau"]
+            for j, off in enumerate(self._offsets):
+                # this cylinder's own decay (pitch) and loudness
+                tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
+                amp_j = self._jit[j] * max(1.0 + 0.55 * spread * self._cyl_amp[j], 0.1)
+                phi = np.mod(crank + off, 720.0)
+                d = phi - VALVE_OPEN
+                inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
+                ramp = np.clip(d / self.params["attack_deg"], 0.0, 1.0)
+                ramp = 0.5 - 0.5 * np.cos(ramp * math.pi)   # blunt (soft) attack
+                decay = np.exp(-np.clip(d, 0.0, None) / tau_j)
+                close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
+                chans[self._channel_of[j]] += np.where(inwin, ramp * decay * close, 0.0) * amp_j
+
+            # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
+            # noise gated by the pulse), so each gets its OWN mixer slider.
+            for ci in range(self._nchan):
+                e = chans[ci] * strength
+                noise = self._rng.standard_normal(frames)
+                chans[ci] = 0.55 * e                      # clean bang -> pipe + dry
+                fizz_chans[ci] = e * noise + 0.03 * noise  # fizz, scaled later
+        self._audio_crank = (self._audio_crank + dps * frames) % 720.0
+
+        # --- mix the DRY combustion pulses with the WET pipe resonance -------
+        # The pipe rings ON TOP of the bangs, it does not replace them: dry =
+        # the explosion you hear at the valve, wet = the pipe colouring it,
+        # crack = the sharp leading edge of each pulse (the combustion snap).
+        P = self.params
+        dry = np.zeros(frames, dtype=np.float64)
+        wet = np.zeros(frames, dtype=np.float64)
+        for ci in range(self._nchan):
+            # Reverb the explosion at the source, then that reverberant bang is
+            # what both the dry mix and the PIPE (waveguide) downstream receive.
+            self._src_verb[ci].mix = P["src_reverb"]
+            src = self._src_verb[ci].process(chans[ci])
+            dry += src
+            wg_primary, wg_total = self._wg[ci]
+            # two pipe resonances at different frequencies (runner + full system)
+            wet += (P["res1"] * wg_primary.process(src, D1, g, s, lp_a)
+                    + P["res2"] * wg_total.process(src, D2, g * 0.96, s, lp_a))
+        inv = 1.0 / self._nchan
+        dry *= inv
+        wet *= inv
+        crack = np.diff(dry, prepend=dry[:1])
+
+        # --- firing 'body' as a POWER CHORD (root + fifth + octave) ----------
+        # A metal power chord is root+fifth (NO third) — perfect intervals lock
+        # harmonically so it sits solid, not 'floaty' like the major third did.
+        # Saturating it adds the tight, dense, distorted-guitar grip.
+        body = np.zeros(frames, dtype=np.float64)
+        if _HAVE_SCIPY and P["body"] > 1e-3:
+            root = min(max(P["firing_pitch"], 40.0), 500.0)
+            for k, (ratio, lvl) in enumerate(((1.0, 1.0), (1.5, 0.9), (0.5, 0.7))):
+                bb, ab = _bandpass(root * ratio, 2.0, self.sample_rate)
+                tone, self._chord_zi[k] = lfilter(bb, ab, dry, zi=self._chord_zi[k])
+                body += lvl * tone
+
+        # Assemble the bang (pulse + snap + power chord) and SATURATE it for the
+        # tight, solid 'metal power chord' grip (the fix for the floaty feel).
+        bang = P["dry"] * dry + P["crack"] * crack + (1.6 * P["body"]) * body
+        drive = P["drive"]
+        if drive > 1e-3:
+            bang = np.tanh(bang * (1.0 + 7.0 * drive))
+
+        # separated fizz (own slider) + clean wet pipe resonance on top
+        fizz = np.zeros(frames, dtype=np.float64)
+        for ci in range(self._nchan):
+            fizz += fizz_chans[ci]
+        sig = bang + wet + P["turbulence"] * (fizz * inv)
+
+        # --- voice shaping: DC-block, de-drone notch, radiation roll-off -----
+        if _HAVE_SCIPY:
+            sig, self._hp_zi = lfilter(self._hp[0], self._hp[1], sig, zi=self._hp_zi)
+            # Helmholtz used as a NOTCH (Akrapovic-style: remove the drone, do
+            # not add yet another resonance).
+            bH, aH = _peaking(f_helm, 1.2, -4.0, self.sample_rate)
+            sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
+            # variable-valve post low-pass: muffled at idle, wide open at redline
+            sr = self.sample_rate
+            cutoff = min(self._post_fc, sr * 0.45)
+            blp, alp = butter(2, cutoff / (sr / 2), btype="low")
+            sig, self._lp_zi = lfilter(blp, alp, sig, zi=self._lp_zi)
+            # boost the low end when the valve is shut -> the heavy low-rpm roar
+            if self._valve < 0.75:
+                bL, aL = _peaking(110.0, 0.6, (1.0 - self._valve) * 7.0, sr)
+                sig, self._lowboost_zi = lfilter(bL, aL, sig, zi=self._lowboost_zi)
+        else:
+            sig = np.diff(sig, prepend=sig[:1])
+
+        # --- intake / induction roar (the OTHER half a real car you hear) ---
+        # Broadband 'sucking' noise through the airbox resonance, swelling with
+        # throttle and rpm.  A separate path from the exhaust, cool-air tuned.
+        if _HAVE_SCIPY and dps > 1e-12:
+            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            intake_gain = P["intake"] * sim.throttle * (0.25 + 0.75 * rpm_frac)
+            if intake_gain > 1e-4:
+                n = self._rng.standard_normal(frames)
+                n, self._intake_bp_zi = lfilter(self._intake_bp[0], self._intake_bp[1],
+                                                n, zi=self._intake_bp_zi)
+                n, self._intake_lp_zi = lfilter(self._intake_lp[0], self._intake_lp[1],
+                                                n, zi=self._intake_lp_zi)
+                sig = sig + intake_gain * n
+
+        # --- 3-band EQ (low / mid / high knobs) -----------------------------
+        if _HAVE_SCIPY:
+            if abs(P["eq_low"]) > 0.1:
+                b, a = _peaking(120.0, 0.7, P["eq_low"], self.sample_rate)
+                sig, self._eq_lo_zi = lfilter(b, a, sig, zi=self._eq_lo_zi)
+            if abs(P["eq_mid"]) > 0.1:
+                b, a = _peaking(850.0, 0.8, P["eq_mid"], self.sample_rate)
+                sig, self._eq_mid_zi = lfilter(b, a, sig, zi=self._eq_mid_zi)
+            if abs(P["eq_high"]) > 0.1:
+                b, a = _peaking(4500.0, 0.7, P["eq_high"], self.sample_rate)
+                sig, self._eq_hi_zi = lfilter(b, a, sig, zi=self._eq_hi_zi)
+
+        # --- cabin effect: muffle the highs, as if heard from inside the car -
+        if self.cabin and _HAVE_SCIPY:
+            sig, self._cabin_zi = lfilter(self._cabin_lp[0], self._cabin_lp[1],
+                                          sig, zi=self._cabin_zi)
+            sig *= 1.4   # make up the level lost to the low-pass
+
+        # --- spatial reverb (a sense of room, not an anechoic void) ----------
+        # A bit more reverb inside the cabin (reflective interior).
+        self._reverb.mix = P["reverb"] + (0.10 if self.cabin else 0.0)
+        sig = self._reverb.process(sig)
+
+        # --- auto-level (or fixed gain) + soft saturation + master volume ----
+        if self.agc_enabled:
+            rms = float(np.sqrt(np.mean(sig * sig))) + 1e-9
+            self._level += (rms - self._level) * 0.04
+            gain = min(0.22 / (self._level + 1e-6), 6.0)
+            self._gain += (gain - self._gain) * 0.15
+            sig *= self._gain
+        else:
+            sig *= 3.5
+        return np.tanh(sig * (self.volume * 1.5)).astype(np.float32)
+
+    # ------------------------------------------------------------ callback
+    def _callback(self, outdata, frames, time_info, status):
+        outdata[:] = self._render_block(frames)[:, None]
+
+    # ----------------------------------------------------------- lifecycle
+    def start(self):
+        if not self.enabled:
+            return False
+        attempts = []
+        if self.prefer_exclusive and self._device is not None:
+            try:
+                excl = sd.WasapiSettings(exclusive=True)
+                attempts.append(("exclusive", dict(
+                    device=self._device, samplerate=self.sample_rate, channels=2,
+                    blocksize=128, latency="low", extra_settings=excl)))
+            except Exception:
+                pass
+        if self._device is not None:
+            attempts.append(("shared", dict(
+                device=self._device, samplerate=self.sample_rate, channels=1,
+                blocksize=BLOCK, latency="low")))
+        attempts.append(("default", dict(
+            device=None, samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK,
+            latency="low")))
+
+        for mode, cfg in attempts:
+            try:
+                self._rebuild_for_rate(cfg["samplerate"])
+                self._stream = sd.OutputStream(
+                    dtype="float32", callback=self._callback, **cfg)
+                self._stream.start()
+                self.mode = mode
+                self.latency_ms = round(self._stream.latency * 1000, 1)
+                return True
+            except Exception:
+                self._stream = None
+                continue
+        print("[audio] disabled: no usable output device")
+        self.enabled = False
+        return False
+
+    def stop(self):
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
