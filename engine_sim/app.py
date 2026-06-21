@@ -84,8 +84,9 @@ SLIDER_DEFS = [
     ("src_reverb", "Explosion reverb", 0.0, 0.6),
     ("reverb", "Reverb (space)", 0.0, 0.5),
     ("cyl_spread", "Cylinder spread", 0.0, 1.0),
-    ("boost_vol", "Boost / whine vol", 0.0, 1.2),
-    ("gearbox_vol", "Gearbox whine vol", 0.0, 1.2),
+    ("super_vol", "Supercharger whine", 0.0, 1.2),
+    ("turbo_vol", "Turbo spool / BOV", 0.0, 1.2),
+    ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -171,6 +172,8 @@ class App:
              lambda: sy.straight_cut, 1),
             ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
             ("Cat", lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
+            ("Flutter", lambda: setattr(sy, "flutter", not sy.flutter),
+             lambda: sy.flutter, 2),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
         ]
 
@@ -217,7 +220,9 @@ class App:
         """(Re)create the synth on the chosen device + sample rate, preserving
         the current mixer params, cabin and firing voice."""
         saved = dict(self.synth.params) if self.synth else None
-        saved_cabin = self.synth.cabin if self.synth else False
+        _flags = ("cabin", "straight_cut", "gpf", "cat", "flutter")
+        saved_flags = ({f: getattr(self.synth, f) for f in _flags}
+                       if self.synth else None)
         if self.synth:
             self.synth.stop()
         device = self.devices[self.device_idx][1]
@@ -225,7 +230,8 @@ class App:
         self.synth = Synthesizer(self.sim, sample_rate=rate, device=device)
         if saved is not None:
             self.synth.params.update(saved)
-            self.synth.cabin = saved_cabin
+            for f, v in saved_flags.items():
+                setattr(self.synth, f, v)
         else:
             self._apply_voice()
         if start:
@@ -345,7 +351,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 31
+            y += 29
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):

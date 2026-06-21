@@ -604,6 +604,533 @@ def pagani_zonda_v12() -> Engine:
     )
 
 
+def toyota_ae86_4age() -> Engine:
+    """Toyota AE86 — 4A-GE 1.6 L naturally-aspirated DOHC 16v inline-four.
+
+    81 x 77 mm, ~10.3:1 CR, ~7600 rpm, ~128 hp.  Light, revvy, free-breathing
+    little twin-cam — firing 1-3-4-2.  DOHC 4-valve, 5-speed manual.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cylinders = [
+        Cylinder(bore=mm(81), stroke=mm(77), rod_length=mm(122),
+                 compression_ratio=10.3, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="Toyota AE86 4A-GE 1.6 I4",
+        cylinders=cylinders,
+        flywheel_inertia=0.12, redline_rpm=7600, idle_rpm=850,
+        heat_release_k=4.5, ve_peak_frac=0.66, closed_map_fraction=0.16,
+        friction_static=4.0, starter_torque=110.0,
+        exhaust_tone=96.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.7, exhaust_radius_m=0.022,
+        exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0022,
+        gear_ratios=[3.59, 2.25, 1.49, 1.00, 0.85], final_drive=4.30,
+        vehicle_mass=970.0, wheel_radius=0.30, clutch_capacity=300.0,
+        gearbox_type="manual",
+    )
+
+
+def nissan_r34_rb26() -> Engine:
+    """Nissan Skyline GT-R R34 — RB26DETT 2.6 L twin-turbo inline-six.
+
+    86 x 73.7 mm, ~8.5:1 CR, ~8000 rpm, ~330 hp.  Firing 1-5-3-6-2-4, twin
+    ceramic turbos (~1.0 bar) with a big blow-off whoosh.  Getrag 6-speed.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 5, 3, 6, 2, 4])
+    cylinders = [
+        Cylinder(bore=mm(86), stroke=mm(73.7), rod_length=mm(139),
+                 compression_ratio=8.5, cycle_offset_deg=offsets[i])
+        for i in range(6)
+    ]
+    return Engine(
+        name="Nissan R34 GT-R RB26DETT 2.6 twin-turbo I6",
+        cylinders=cylinders,
+        flywheel_inertia=0.24, redline_rpm=8000, idle_rpm=850,
+        heat_release_k=5.4, ve_width_frac=0.74, closed_map_fraction=0.16,
+        exhaust_tone=90.0,
+        exhaust_primary_m=0.5, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=1, exhaust_openness=0.66, muffler_volume_m3=0.0028,
+        induction="turbo", boost_bar=0.95, turbo_lag=0.5,
+        gear_ratios=[3.83, 2.36, 1.69, 1.31, 1.00, 0.79], final_drive=3.55,
+        vehicle_mass=1560.0, wheel_radius=0.32, clutch_capacity=550.0,
+        gearbox_type="manual",
+    )
+
+
+def nissan_r35_vr38() -> Engine:
+    """Nissan GT-R R35 — VR38DETT 3.8 L twin-turbo 60-deg V6.
+
+    95.5 x 88.4 mm, ~9.0:1 CR, ~7000 rpm, ~565 hp.  Twin turbos (~1.0 bar) and
+    the GR6 6-speed dual-clutch — fast, brutal, seamless.
+    """
+    offsets = _even_offsets(6)
+    cylinders = []
+    for i in range(6):
+        bank = -30.0 if i < 3 else 30.0          # 60-deg V6
+        cylinders.append(
+            Cylinder(bore=mm(95.5), stroke=mm(88.4), rod_length=mm(151),
+                     compression_ratio=9.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Nissan R35 GT-R VR38DETT 3.8 twin-turbo V6",
+        cylinders=cylinders,
+        flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=800,
+        heat_release_k=5.8, ve_width_frac=0.74, closed_map_fraction=0.16,
+        exhaust_tone=80.0,
+        exhaust_primary_m=0.55, exhaust_total_m=2.0, exhaust_radius_m=0.027,
+        exhaust_channels=2, exhaust_openness=0.62, muffler_volume_m3=0.0032,
+        induction="turbo", boost_bar=1.0, turbo_lag=0.4,
+        gear_ratios=[4.06, 2.30, 1.60, 1.25, 1.00, 0.80], final_drive=3.70,
+        vehicle_mass=1740.0, wheel_radius=0.34, clutch_capacity=720.0,
+        gearbox_type="dct",
+    )
+
+
+def ferrari_f355_v8() -> Engine:
+    """Ferrari F355 — F129 3.5 L flat-plane V8, FIVE valves per cylinder.
+
+    85 x 77 mm, ~11.1:1 CR, ~8500 rpm, ~375 hp.  Firing 1-5-3-7-4-8-2-6, the
+    famous 5-valve top-end howl.  F1 single-clutch automated manual.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0          # 90-deg flat-plane V8
+        cylinders.append(
+            Cylinder(bore=mm(85), stroke=mm(77), rod_length=mm(124),
+                     compression_ratio=11.1, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Ferrari F355 3.5 V8 (5-valve)",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=8500, idle_rpm=950,
+        heat_release_k=4.2, ve_peak_frac=0.72, closed_map_fraction=0.13,
+        friction_static=7.0, starter_torque=160.0,
+        valves_per_cyl=5,                        # 5-valve heads
+        exhaust_tone=100.0,
+        exhaust_primary_m=0.55, exhaust_total_m=1.95, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        gear_ratios=[3.21, 2.10, 1.52, 1.16, 0.92, 0.77], final_drive=4.19,
+        vehicle_mass=1350.0, wheel_radius=0.33, clutch_capacity=480.0,
+        gearbox_type="single",                   # F1 single-clutch
+    )
+
+
+def mazda_787b_rotary() -> Engine:
+    """Mazda 787B — R26B 2.6 L NA FOUR-rotor Wankel (Le Mans 1991).
+
+    Four rotors fire four times per eccentric-shaft revolution (an 8-pulse
+    four-stroke firing rate), with no valvetrain and peripheral ports — the
+    screaming, metallic, ~9000 rpm Le Mans howl.  ~700 hp.  Modelled as an
+    8-pulse even-fire with rotary brightness; sequential single-clutch.
+    """
+    offsets = _even_offsets(8)
+    cylinders = [
+        Cylinder(bore=mm(80), stroke=mm(80), rod_length=mm(120),
+                 compression_ratio=10.0, cycle_offset_deg=offsets[i])
+        for i in range(8)
+    ]
+    return Engine(
+        name="Mazda 787B R26B 4-rotor (Le Mans)",
+        cylinders=cylinders,
+        flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=1100,
+        heat_release_k=6.9, ve_peak_frac=0.74, ve_width_frac=0.72,
+        closed_map_fraction=0.14, friction_static=8.0, starter_torque=180.0,
+        is_rotary=True,
+        exhaust_tone=135.0,
+        exhaust_primary_m=0.42, exhaust_total_m=1.6, exhaust_radius_m=0.023,
+        exhaust_channels=1, exhaust_openness=0.95, muffler_volume_m3=0.0010,
+        gear_ratios=[2.6, 1.9, 1.5, 1.2, 1.0], final_drive=4.10,
+        vehicle_mass=830.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="single",
+    )
+
+
+def porsche_carrera_gt_v10() -> Engine:
+    """Porsche Carrera GT — 5.7 L NA 68-deg V10 (race-derived).
+
+    98 x 76 mm, ~12.0:1 CR, ~8400 rpm, ~612 hp.  A high-revving racing V10 in a
+    road car — sharp, hard-edged wail.  6-speed manual.
+    """
+    offsets = _even_offsets(10)
+    cylinders = []
+    for i in range(10):
+        bank = -34.0 if i < 5 else 34.0          # 68-deg V10
+        cylinders.append(
+            Cylinder(bore=mm(98), stroke=mm(76), rod_length=mm(140),
+                     compression_ratio=12.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Porsche Carrera GT 5.7 V10",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=8400, idle_rpm=950,
+        heat_release_k=3.7, ve_peak_frac=0.72, closed_map_fraction=0.12,
+        friction_static=9.0, starter_torque=190.0,
+        exhaust_tone=104.0,
+        exhaust_primary_m=0.55, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0018,
+        gear_ratios=[3.15, 2.18, 1.61, 1.27, 1.03, 0.84], final_drive=3.55,
+        vehicle_mass=1380.0, wheel_radius=0.34, clutch_capacity=600.0,
+        gearbox_type="manual",
+    )
+
+
+def porsche_992_gt3() -> Engine:
+    """Porsche 911 GT3 (992) — 4.0 L NA flat-six, ~9000 rpm.
+
+    102 x 81.5 mm, ~13.3:1 CR, ~510 hp.  Firing 1-6-2-4-3-5.  The high-revving
+    naturally-aspirated boxer howl — PDK dual-clutch.  DOHC 4-valve.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 6, 2, 4, 3, 5])
+    cylinders = []
+    for i in range(6):
+        bank = -90.0 if i < 3 else 90.0          # horizontally opposed
+        cylinders.append(
+            Cylinder(bore=mm(102), stroke=mm(81.5), rod_length=mm(128),
+                     compression_ratio=13.3, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Porsche 992 GT3 4.0 flat-six",
+        cylinders=cylinders,
+        flywheel_inertia=0.17, redline_rpm=9000, idle_rpm=900,
+        heat_release_k=4.2, ve_peak_frac=0.72, closed_map_fraction=0.12,
+        friction_static=7.0, starter_torque=170.0,
+        exhaust_tone=86.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=2, exhaust_openness=0.86, muffler_volume_m3=0.0018,
+        gear_ratios=[3.91, 2.29, 1.65, 1.30, 1.08, 0.88, 0.62], final_drive=3.97,
+        vehicle_mass=1435.0, wheel_radius=0.34, clutch_capacity=560.0,
+        gearbox_type="dct",                      # PDK
+    )
+
+
+def honda_nsx_na1() -> Engine:
+    """Honda NSX (NA1) — C30A 3.0 L NA 90-deg V6, VTEC.
+
+    90 x 78 mm, ~10.2:1 CR, ~8000 rpm, ~270 hp.  Smooth, high-revving VTEC V6 —
+    firing 1-4-2-5-3-6.  5-speed manual.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 4, 2, 5, 3, 6])
+    cylinders = []
+    for i in range(6):
+        bank = -45.0 if i < 3 else 45.0          # 90-deg V6
+        cylinders.append(
+            Cylinder(bore=mm(90), stroke=mm(78), rod_length=mm(141),
+                     compression_ratio=10.2, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Honda NSX NA1 3.0 V6 VTEC",
+        cylinders=cylinders,
+        flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=800,
+        heat_release_k=4.1, ve_peak_frac=0.7, closed_map_fraction=0.14,
+        friction_static=6.0, starter_torque=150.0,
+        exhaust_tone=92.0,
+        exhaust_primary_m=0.52, exhaust_total_m=1.95, exhaust_radius_m=0.025,
+        exhaust_channels=2, exhaust_openness=0.82, muffler_volume_m3=0.0022,
+        gear_ratios=[3.07, 1.96, 1.39, 1.03, 0.79], final_drive=4.06,
+        vehicle_mass=1370.0, wheel_radius=0.33, clutch_capacity=420.0,
+        gearbox_type="manual",
+    )
+
+
+def mitsubishi_evo7_4g63() -> Engine:
+    """Mitsubishi Lancer Evo VII — 4G63T 2.0 L turbo inline-four.
+
+    85 x 88 mm, ~8.8:1 CR, ~7000 rpm, ~280 hp.  Firing 1-3-4-2, single turbo
+    (~1.0 bar) with a strong blow-off whoosh.  5-speed manual.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cylinders = [
+        Cylinder(bore=mm(85), stroke=mm(88), rod_length=mm(150),
+                 compression_ratio=8.8, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="Mitsubishi Evo VII 4G63T 2.0 turbo I4",
+        cylinders=cylinders,
+        flywheel_inertia=0.18, redline_rpm=7000, idle_rpm=820,
+        heat_release_k=6.7, ve_width_frac=0.72, closed_map_fraction=0.17,
+        exhaust_tone=86.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.85, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.003,
+        induction="turbo", boost_bar=1.0, turbo_lag=0.55,
+        gear_ratios=[2.92, 1.95, 1.41, 1.03, 0.76], final_drive=4.53,
+        vehicle_mass=1400.0, wheel_radius=0.31, clutch_capacity=480.0,
+        gearbox_type="manual",
+    )
+
+
+def chevrolet_c7_lt1() -> Engine:
+    """Chevrolet Corvette C7 Stingray — LT1 6.2 L NA pushrod V8.
+
+    103.25 x 92 mm, ~11.5:1 CR, ~6600 rpm, ~460 hp.  Cross-plane OHV 2-valve
+    small-block — deep American V8 rumble.  Firing 1-8-7-2-6-5-4-3.  7-speed
+    manual.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 8, 7, 2, 6, 5, 4, 3])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(103.25), stroke=mm(92), rod_length=mm(154),
+                     compression_ratio=11.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Chevrolet Corvette C7 LT1 6.2 V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.40, redline_rpm=6600, idle_rpm=750,
+        heat_release_k=3.6, ve_peak_frac=0.58, closed_map_fraction=0.20,
+        friction_static=6.0, starter_torque=180.0,
+        valvetrain="ohv", valves_per_cyl=2,      # pushrod small-block
+        exhaust_tone=52.0,
+        exhaust_primary_m=0.74, exhaust_total_m=2.15, exhaust_radius_m=0.029,
+        exhaust_channels=2, exhaust_openness=0.66, muffler_volume_m3=0.0034,
+        gear_ratios=[2.97, 2.07, 1.43, 1.00, 0.71, 0.57, 0.48], final_drive=2.41,
+        vehicle_mass=1500.0, wheel_radius=0.34, clutch_capacity=700.0,
+        gearbox_type="manual",
+    )
+
+
+def chevrolet_camaro_z28_302() -> Engine:
+    """1968 Chevrolet Camaro Z/28 — DZ 302 (4.9 L) NA small-block V8.
+
+    101.6 x 76.2 mm (4.00 x 3.00 in), ~11.0:1 CR, high-revving ~7000 rpm.
+    Carbureted, solid-lifter OHV 2-valve — lopey idle and a raw classic muscle
+    bark.  Firing 1-8-4-3-6-5-7-2.  Muncie 4-speed manual.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 8, 4, 3, 6, 5, 7, 2])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(101.6), stroke=mm(76.2), rod_length=mm(145),
+                     compression_ratio=11.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="1968 Camaro Z/28 302 V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.38, redline_rpm=7000, idle_rpm=800,
+        heat_release_k=3.2, ve_peak_frac=0.62, closed_map_fraction=0.24,
+        friction_static=6.0, starter_torque=170.0,
+        valvetrain="ohv", valves_per_cyl=2, has_cat=False,
+        exhaust_tone=58.0,
+        exhaust_primary_m=0.7, exhaust_total_m=2.0, exhaust_radius_m=0.030,
+        exhaust_channels=2, exhaust_openness=0.78, muffler_volume_m3=0.0026,
+        gear_ratios=[2.52, 1.88, 1.46, 1.00], final_drive=3.73,
+        vehicle_mass=1500.0, wheel_radius=0.33, clutch_capacity=620.0,
+        gearbox_type="manual",
+    )
+
+
+def audi_sport_quattro_s1() -> Engine:
+    """Audi Sport Quattro S1 — 2.1 L turbo inline-FIVE (Group B rally).
+
+    79.5 x 86.4 mm, ~7.0:1 CR, ~8000 rpm, ~500 hp at huge boost (~1.6 bar).
+    Firing 1-2-4-5-3 — the unmistakable five-cylinder warble.  Anti-lag bangs
+    and crackles on the overrun (the flame-spitting rally car).  5-speed manual.
+    """
+    offsets = _even_offsets(5, firing_order=[1, 2, 4, 5, 3])
+    cylinders = [
+        Cylinder(bore=mm(79.5), stroke=mm(86.4), rod_length=mm(144),
+                 compression_ratio=7.0, cycle_offset_deg=offsets[i])
+        for i in range(5)
+    ]
+    return Engine(
+        name="Audi Sport Quattro S1 2.1 turbo I5",
+        cylinders=cylinders,
+        flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=950,
+        heat_release_k=9.2, ve_width_frac=0.72, closed_map_fraction=0.18,
+        friction_static=6.0, starter_torque=150.0,
+        exhaust_tone=88.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.026,
+        exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0022,
+        induction="turbo", boost_bar=1.6, turbo_lag=0.7, anti_lag=True,
+        turbo_spool_frac=0.18, turbo_spool_width=0.4,
+        gear_ratios=[3.60, 2.12, 1.46, 1.09, 0.86], final_drive=4.10,
+        vehicle_mass=1200.0, wheel_radius=0.32, clutch_capacity=520.0,
+        gearbox_type="manual",
+    )
+
+
+def audi_rs3_2024() -> Engine:
+    """Audi RS3 (8Y, 2024) — EA855 2.5 L turbo inline-FIVE.
+
+    82.5 x 92.8 mm, ~10.0:1 CR, ~7000 rpm, ~400 hp.  Firing 1-2-4-5-3, the
+    modern five-cylinder warble, ~1.3 bar single turbo.  7-speed dual-clutch.
+    """
+    offsets = _even_offsets(5, firing_order=[1, 2, 4, 5, 3])
+    cylinders = [
+        Cylinder(bore=mm(82.5), stroke=mm(92.8), rod_length=mm(151),
+                 compression_ratio=10.0, cycle_offset_deg=offsets[i])
+        for i in range(5)
+    ]
+    return Engine(
+        name="Audi RS3 2.5 turbo I5 (EA855)",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=7000, idle_rpm=820,
+        heat_release_k=5.7, ve_width_frac=0.74, closed_map_fraction=0.16,
+        exhaust_tone=84.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.95, exhaust_radius_m=0.026,
+        exhaust_channels=1, exhaust_openness=0.66, muffler_volume_m3=0.0028,
+        induction="turbo", boost_bar=1.3, turbo_lag=0.4,
+        has_gpf=True,
+        gear_ratios=[3.56, 2.53, 1.68, 1.22, 0.96, 0.79, 0.64], final_drive=4.27,
+        vehicle_mass=1570.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="dct",
+    )
+
+
+def audi_rs5_ea839() -> Engine:
+    """Audi RS5 — EA839 2.9 L twin-turbo 90-deg V6 (hot-V).
+
+    84.5 x 86 mm, ~10.5:1 CR, ~7000 rpm, ~450 hp.  Turbos nestled in the vee,
+    fast spool (~1.2 bar).  8-speed... modelled as quick dual-clutch.
+    """
+    offsets = _even_offsets(6)
+    cylinders = []
+    for i in range(6):
+        bank = -45.0 if i < 3 else 45.0          # 90-deg V6
+        cylinders.append(
+            Cylinder(bore=mm(84.5), stroke=mm(86), rod_length=mm(150),
+                     compression_ratio=10.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Audi RS5 2.9 twin-turbo V6 (EA839)",
+        cylinders=cylinders,
+        flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=780,
+        heat_release_k=5.2, ve_width_frac=0.74, closed_map_fraction=0.16,
+        exhaust_tone=82.0,
+        exhaust_primary_m=0.52, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.0032,
+        induction="turbo", boost_bar=1.2, turbo_lag=0.35,
+        has_gpf=True,
+        gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
+        final_drive=3.20, vehicle_mass=1730.0, wheel_radius=0.33,
+        clutch_capacity=640.0, gearbox_type="dct",
+    )
+
+
+def mercedes_sl65_m275() -> Engine:
+    """Mercedes-Benz SL65 AMG — M275 6.0 L twin-turbo V12.
+
+    82.6 x 93 mm, ~9.0:1 CR, ~6000 rpm, ~612 hp / huge torque (~1.0 bar).
+    Effortless, deep, muffled twin-turbo V12 with a torque-converter automatic —
+    soft, slushy shifts.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -30.0 if i < 6 else 30.0          # 60-deg V12
+        cylinders.append(
+            Cylinder(bore=mm(82.6), stroke=mm(93), rod_length=mm(150),
+                     compression_ratio=9.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Mercedes SL65 AMG 6.0 twin-turbo V12",
+        cylinders=cylinders,
+        flywheel_inertia=0.40, redline_rpm=6000, idle_rpm=600,
+        heat_release_k=4.7, ve_width_frac=0.78, closed_map_fraction=0.18,
+        friction_static=11.0, starter_torque=220.0,
+        exhaust_tone=48.0,
+        exhaust_primary_m=0.8, exhaust_total_m=2.6, exhaust_radius_m=0.030,
+        exhaust_channels=2, exhaust_openness=0.5, muffler_volume_m3=0.005,
+        induction="turbo", boost_bar=1.0, turbo_lag=0.5,
+        gear_ratios=[3.59, 2.19, 1.41, 1.00, 0.83], final_drive=2.65,
+        vehicle_mass=2030.0, wheel_radius=0.34, clutch_capacity=950.0,
+        gearbox_type="at",                       # torque-converter auto — slushy
+    )
+
+
+def mercedes_amg_gt_m178() -> Engine:
+    """Mercedes-AMG GT — M178 4.0 L twin-turbo 'hot-V' V8.
+
+    83 x 92 mm, ~10.5:1 CR, ~7000 rpm, ~523 hp.  Turbos inside the 90-deg vee,
+    flat-plane crank — a hard, bark-y twin-turbo V8.  7-speed dual-clutch.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0          # 90-deg flat-plane (hot-V)
+        cylinders.append(
+            Cylinder(bore=mm(83), stroke=mm(92), rod_length=mm(150),
+                     compression_ratio=10.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Mercedes-AMG GT 4.0 twin-turbo V8 (M178)",
+        cylinders=cylinders,
+        flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=720,
+        heat_release_k=4.6, ve_width_frac=0.74, closed_map_fraction=0.16,
+        exhaust_tone=72.0,
+        exhaust_primary_m=0.6, exhaust_total_m=2.05, exhaust_radius_m=0.027,
+        exhaust_channels=2, exhaust_openness=0.68, muffler_volume_m3=0.003,
+        induction="turbo", boost_bar=1.1, turbo_lag=0.4,
+        gear_ratios=[3.40, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.67,
+        vehicle_mass=1630.0, wheel_radius=0.34, clutch_capacity=680.0,
+        gearbox_type="dct",
+    )
+
+
+def singer_dls_williams_flat6() -> Engine:
+    """Singer DLS — 4.0 L NA air-cooled flat-six (Williams-developed).
+
+    ~107 x 74 mm, high CR, screams to ~9000 rpm, ~500 hp.  A reimagined 911
+    engine with race-bred breathing — a hard, crystalline air-cooled howl.
+    Firing 1-6-2-4-3-5.  6-speed manual.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 6, 2, 4, 3, 5])
+    cylinders = []
+    for i in range(6):
+        bank = -90.0 if i < 3 else 90.0          # horizontally opposed
+        cylinders.append(
+            Cylinder(bore=mm(107), stroke=mm(74), rod_length=mm(127),
+                     compression_ratio=12.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Singer DLS 4.0 flat-six (Williams)",
+        cylinders=cylinders,
+        flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=900,
+        heat_release_k=4.3, ve_peak_frac=0.72, closed_map_fraction=0.12,
+        friction_static=7.0, starter_torque=170.0,
+        exhaust_tone=94.0,
+        exhaust_primary_m=0.48, exhaust_total_m=1.85, exhaust_radius_m=0.024,
+        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0014,
+        gear_ratios=[3.50, 2.12, 1.58, 1.24, 1.00, 0.82], final_drive=3.44,
+        vehicle_mass=1170.0, wheel_radius=0.33, clutch_capacity=520.0,
+        gearbox_type="manual",
+    )
+
+
+def bmw_e92_m3_s65() -> Engine:
+    """BMW E92 M3 — S65 4.0 L naturally-aspirated 90-deg V8.
+
+    92 x 75.2 mm, ~12.0:1 CR, ~8300 rpm, ~414 hp.  Firing 1-5-4-8-6-3-7-2,
+    flat-plane-ish high-revving V8 — a smooth, hard-edged top-end scream.  M-DCT
+    7-speed.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 4, 8, 6, 3, 7, 2])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0          # 90-deg V8
+        cylinders.append(
+            Cylinder(bore=mm(92), stroke=mm(75.2), rod_length=mm(141),
+                     compression_ratio=12.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="BMW E92 M3 S65 4.0 V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.24, redline_rpm=8300, idle_rpm=850,
+        heat_release_k=4.0, ve_peak_frac=0.66, closed_map_fraction=0.14,
+        friction_static=7.0, starter_torque=170.0,
+        exhaust_tone=76.0,
+        exhaust_primary_m=0.58, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.8, muffler_volume_m3=0.0024,
+        gear_ratios=[4.06, 2.40, 1.58, 1.19, 1.00, 0.87, 0.74], final_drive=3.85,
+        vehicle_mass=1655.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="dct",
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -625,6 +1152,24 @@ PRESETS = [
     ("lafe", "LaFerrari V12", ferrari_laferrari_v12),
     ("f40", "F40 twin-turbo V8", ferrari_f40_v8),
     ("zonda", "Zonda V12", pagani_zonda_v12),
+    ("ae86", "AE86 4A-GE", toyota_ae86_4age),
+    ("r34", "R34 RB26", nissan_r34_rb26),
+    ("r35", "R35 VR38", nissan_r35_vr38),
+    ("f355", "F355 V8", ferrari_f355_v8),
+    ("787b", "787B 4-rotor", mazda_787b_rotary),
+    ("cgt", "Carrera GT V10", porsche_carrera_gt_v10),
+    ("gt3", "992 GT3 flat-6", porsche_992_gt3),
+    ("nsx", "NSX NA1 V6", honda_nsx_na1),
+    ("evo7", "Evo VII 4G63", mitsubishi_evo7_4g63),
+    ("c7", "Corvette C7", chevrolet_c7_lt1),
+    ("z28", "'68 Camaro Z/28", chevrolet_camaro_z28_302),
+    ("s1", "S1 Quattro I5", audi_sport_quattro_s1),
+    ("rs3", "RS3 2.5 I5", audi_rs3_2024),
+    ("rs5", "RS5 EA839 V6", audi_rs5_ea839),
+    ("sl65", "SL65 AMG V12", mercedes_sl65_m275),
+    ("amggt", "AMG GT V8", mercedes_amg_gt_m178),
+    ("singer", "Singer DLS 4.0", singer_dls_williams_flat6),
+    ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

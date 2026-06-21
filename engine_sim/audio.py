@@ -273,7 +273,8 @@ class Synthesizer:
             "master": 0.6,        # master output volume
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
             "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
-            "boost_vol": 0.5,     # supercharger whine / turbo whistle / BOV level
+            "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
+            "turbo_vol": 0.6,     # turbo spool whistle + blow-off-valve level
             "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
         }
 
@@ -283,8 +284,10 @@ class Synthesizer:
         self.straight_cut = False # straight-cut gearbox whine on/off
         self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
         self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
+        self.flutter = False      # lift-off sound: False = BOV 'pshhh', True = surge 'stututu'
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
+        self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -599,10 +602,11 @@ class Synthesizer:
         P = self.params
         rpm = sim.rpm
         out = np.zeros(frames, dtype=np.float64)
-        bv = P["boost_vol"]
+        sv = P["super_vol"]      # mechanical supercharger whine
+        tv = P["turbo_vol"]      # turbo spool whistle + BOV
         bfrac = min(sim.boost / max(eng.boost_bar, 0.05), 1.0) if eng.boost_bar else 0.0
 
-        if bv > 1e-3 and eng.induction in ("roots", "centrifugal") and bfrac > 0.01:
+        if sv > 1e-3 and eng.induction in ("roots", "centrifugal") and bfrac > 0.01:
             ratio = (eng.blower_ratio if eng.blower_ratio > 0 else 9.0)
             if eng.induction == "centrifugal":
                 ratio *= 2.5                                  # higher-pitched
@@ -611,21 +615,38 @@ class Synthesizer:
                 harm = [(1, 1.0), (2, 0.5), (3, 0.28)]        # rich roots whine
             f = (rpm / 60.0) * ratio
             if 20.0 < f < sr * 0.45:
-                out += (bv * bfrac * 0.5) * self._whine(f, frames, harm)
+                out += (sv * bfrac * 0.5) * self._whine(f, frames, harm)
 
-        if bv > 1e-3 and eng.induction == "turbo":
+        if tv > 1e-3 and eng.induction == "turbo":
             if bfrac > 0.02:
                 f = 900.0 + bfrac * 5200.0                    # whistle rises with boost
-                amp = bv * bfrac * 0.30
+                amp = tv * bfrac * 0.30
                 out += amp * self._whine(min(f, sr * 0.45), frames, [(1, 1.0)])
                 out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
-            # blow-off valve: throttle snaps shut while on boost -> 'pshhh'
+            # Throttle snaps shut while on boost -> the lift-off sound.  Which
+            # one you hear depends on where the pressurised air goes:
+            #   * an atmospheric dump valve vents it in one clean 'PSHHH';
+            #   * with no (or a shut) valve the air backs up and pulses BACKWARD
+            #     through the compressor wheel again and again -> compressor
+            #     surge, the rapid 'stu-tu-tu-tu' flutter.
             if (self._prev_throttle - sim.throttle) > 0.25 and sim.boost > 0.15:
                 self._bov_env = 1.0
             if self._bov_env > 1e-3:
-                env = np.exp(-np.arange(frames) / (sr * 0.09)) * self._bov_env
-                out += (bv * 0.9) * self._rng.standard_normal(frames) * env
-                self._bov_env *= math.exp(-frames / (sr * 0.13))
+                n = np.arange(frames)
+                noise = self._rng.standard_normal(frames)
+                if self.flutter:
+                    fl = 18.0 + 12.0 * bfrac             # surge rate rises with boost
+                    ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
+                    if frames:
+                        self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
+                    pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 3  # spiky 'tu' bursts
+                    env = np.exp(-n / (sr * 0.20)) * self._bov_env
+                    out += (tv * 1.2) * noise * pulse * env
+                    self._bov_env *= math.exp(-frames / (sr * 0.24))
+                else:
+                    env = np.exp(-n / (sr * 0.09)) * self._bov_env
+                    out += (tv * 0.9) * noise * env      # clean 'pshhh'
+                    self._bov_env *= math.exp(-frames / (sr * 0.13))
         self._prev_throttle = sim.throttle
 
         gv = P["gearbox_vol"]
