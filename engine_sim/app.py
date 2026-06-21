@@ -621,6 +621,40 @@ class App:
             self._grad_cache[key] = surf
         return surf
 
+    def _cyl_shade(self, w, h, base, radius=4):
+        """A cached HORIZONTAL light-centre gradient — bright down the middle,
+        dark at the edges — so a rect reads as a round metal cylinder/piston."""
+        w, h = int(w), int(h)
+        key = ('cyl', w, h, base, radius)
+        surf = self._grad_cache.get(key)
+        if surf is None:
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            for x in range(w):
+                shade = 1.0 - abs(x / max(w - 1, 1) - 0.5) * 2.0   # 0 edge..1 centre
+                f = 0.5 + 0.7 * shade
+                surf.fill((min(255, int(base[0] * f)), min(255, int(base[1] * f)),
+                           min(255, int(base[2] * f))), (x, 0, 1, h))
+            if radius > 0:
+                mask = pygame.Surface((w, h), pygame.SRCALPHA)
+                pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, w, h),
+                                 border_radius=radius)
+                surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            self._grad_cache[key] = surf
+        return surf
+
+    def _draw_rod(self, small, big, w):
+        """An I-beam connecting rod between the wrist pin and the crank journal."""
+        sx, sy = small
+        bx, by = big
+        dx, dy = bx - sx, by - sy
+        ln = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / ln * w, dx / ln * w            # perpendicular offset
+        beam = [(sx + nx * 0.5, sy + ny * 0.5), (bx + nx, by + ny),
+                (bx - nx, by - ny), (sx - nx * 0.5, sy - ny * 0.5)]
+        pygame.draw.polygon(self.screen, ROD, beam)
+        pygame.draw.polygon(self.screen, (110, 116, 128), beam, 1)
+        pygame.draw.line(self.screen, (180, 186, 198), small, big, 1)   # web highlight
+
     def _panel(self, rect, radius=14):
         """A glossy beveled panel slab (gradient + light top edge + dark base)."""
         self.screen.blit(self._grad_surf(rect.w, rect.h, PANEL_TOP, PANEL_BOT,
@@ -653,14 +687,15 @@ class App:
     def _draw_menu(self):
         m = self._open_menu
         mouse = self.canvas_mouse()
-        pygame.draw.rect(self.screen, (30, 33, 40), m["rect"].inflate(4, 4),
-                         border_radius=8)
-        pygame.draw.rect(self.screen, (80, 88, 104), m["rect"], width=1,
-                         border_radius=8)
+        mr = m["rect"]
+        self.screen.blit(self._grad_surf(mr.w + 8, mr.h + 8, PANEL_TOP, PANEL_BOT, 8),
+                         (mr.x - 4, mr.y - 4))
+        pygame.draw.rect(self.screen, BEVEL_LO, mr.inflate(8, 8), width=1, border_radius=8)
         for (lbl, _cb), r in zip(m["items"], m["item_rects"]):
             if r.collidepoint(mouse):
-                pygame.draw.rect(self.screen, ACCENT, r, border_radius=4)
-                col = BG
+                self.screen.blit(self._grad_surf(r.w, r.h, BTN_ON_HI, BTN_ON_LO, 4,
+                                                 gloss=True), r.topleft)
+                col = (255, 255, 255)
             else:
                 col = INK
             self.screen.blit(self.font_small.render(lbl, True, col), (r.x + 8, r.y + 4))
@@ -689,12 +724,18 @@ class App:
             vtxt = f"{val:5.0f}" if s["max"] > 20 else f"{val:5.2f}"
             self.screen.blit(self.font_small.render(vtxt, True, ACCENT),
                              (t.right + 6, s["row_y"] + 2))
-            # track + fill + handle
-            pygame.draw.rect(self.screen, (44, 48, 56), t, border_radius=3)
-            fill = t.copy(); fill.width = int(t.width * norm)
-            pygame.draw.rect(self.screen, ACCENT, fill, border_radius=3)
+            # inset glossy track + blue-glass fill + chrome knob (iOS 6)
+            pygame.draw.rect(self.screen, (24, 26, 31), t, border_radius=3)
+            pygame.draw.line(self.screen, (12, 13, 16), (t.x + 2, t.y),
+                             (t.right - 2, t.y))               # inset shadow
+            fill = t.copy(); fill.width = max(0, int(t.width * norm))
+            if fill.width > 2:
+                self.screen.blit(self._grad_surf(fill.width, t.height, BTN_ON_HI,
+                                                 BTN_ON_LO, 3, gloss=True), fill.topleft)
             hx = t.x + int(t.width * norm)
-            pygame.draw.circle(self.screen, INK, (hx, t.centery), 8)
+            self.screen.blit(self._grad_surf(16, 16, (236, 240, 245), (150, 158, 170),
+                                             8, gloss=True), (hx - 8, t.centery - 8))
+            pygame.draw.circle(self.screen, (90, 96, 108), (hx, t.centery), 8, 1)
 
         # --- spatial audio XY pad (drag the dot = position in the room) ------
         pr = self._pad_rect
@@ -761,56 +802,85 @@ class App:
             return
         col_w = rect.width / n
         bore_h = (bottom - top) * 0.5
-        bore_w = min(col_w * 0.5, 64)
-        crank_r = min(col_w * 0.16, 26)
+        bore_w = min(col_w * 0.52, 62)
+        crank_r = min(col_w * 0.16, 24)
+        piston_h = min(max(bore_w * 0.7, 18), 34)
 
         for i in range(n):
             cx = rect.x + col_w * (i + 0.5)
-            crank_cy = bottom - crank_r - 4
-            bore_top = crank_cy - crank_r - bore_h
-
-            cyl = eng.cylinders[i]
+            crank_cy = bottom - crank_r - 6
+            bore_top = crank_cy - crank_r * 2.2 - bore_h
+            bw = bore_w
+            bx = cx - bw / 2
+            travel = bore_h - piston_h
             phi = sim.cycle_phase_deg(i)
             theta = math.radians(phi % 360.0)
             frac = sim.piston_fraction(i)              # 0 TDC .. 1 BDC
-
-            # Bore walls
-            bx = cx - bore_w / 2
-            pygame.draw.rect(self.screen, (40, 44, 52),
-                             (bx, bore_top, bore_w, bore_h + crank_r), border_radius=6)
-            pygame.draw.rect(self.screen, (64, 70, 82),
-                             (bx, bore_top, bore_w, bore_h + crank_r), width=2,
-                             border_radius=6)
-
-            # Combustion flash at the top of the bore during a firing power stroke
-            if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 430:
-                over = max(sim.cylinder_pressure[i] - 101325.0, 0.0)
-                glow = min(over / (5.0 * 101325.0), 1.0)
-                if glow > 0.02:
-                    s = pygame.Surface((bore_w - 6, 30), pygame.SRCALPHA)
-                    a = int(220 * glow)
-                    s.fill((FLASH[0], FLASH[1], FLASH[2], a))
-                    self.screen.blit(s, (bx + 3, bore_top + 3))
-
-            # Piston travel range (top = TDC, lower = BDC)
-            piston_h = 26
-            travel = bore_h - piston_h
-            py = bore_top + 4 + frac * travel
-            pin = (cx, py + piston_h / 2)
-            pygame.draw.rect(self.screen, PISTON,
-                             (bx + 4, py, bore_w - 8, piston_h), border_radius=4)
-
-            # Crank + connecting rod
+            py = bore_top + 6 + frac * travel
+            pin = (cx, py + piston_h - 7)
             crank_pin = (cx + crank_r * math.sin(theta),
                          crank_cy + crank_r * math.cos(theta))
-            pygame.draw.circle(self.screen, (52, 56, 66), (cx, crank_cy), crank_r)
-            pygame.draw.circle(self.screen, (72, 78, 90), (cx, crank_cy), crank_r, 2)
-            pygame.draw.line(self.screen, ROD, pin, crank_pin, 5)
+
+            # --- cylinder block: finned metal sleeve with a head cap ---
+            head_h = 16
+            sleeve = pygame.Rect(bx - 4, bore_top - head_h, bw + 8,
+                                 bore_h + head_h + 8)
+            self.screen.blit(self._cyl_shade(sleeve.w, sleeve.h, (74, 80, 92), 7),
+                             sleeve.topleft)
+            pygame.draw.rect(self.screen, (26, 28, 34), sleeve, width=2,
+                             border_radius=7)
+            for fy in range(3):                        # cooling fins on the head
+                yy = int(bore_top - head_h + 4 + fy * 4)
+                pygame.draw.line(self.screen, (44, 48, 56),
+                                 (sleeve.x + 4, yy), (sleeve.right - 4, yy))
+            # bore interior (where the piston runs)
+            pygame.draw.rect(self.screen, (30, 33, 40),
+                             (bx, bore_top, bw, bore_h + 4), border_radius=4)
+
+            # --- combustion glow above the crown during the firing stroke ---
+            if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445:
+                glow = min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
+                           / (5.0 * 101325.0), 1.0)
+                if glow > 0.02:
+                    gh = max(6, int(py - bore_top))
+                    gs = pygame.Surface((bw - 4, gh), pygame.SRCALPHA)
+                    gs.fill((FLASH[0], FLASH[1], FLASH[2], int(210 * glow)))
+                    self.screen.blit(gs, (bx + 2, bore_top + 2))
+
+            # --- piston: crown + ring grooves + skirt (round metal) ---
+            self.screen.blit(self._cyl_shade(bw - 6, piston_h, (190, 196, 208), 3),
+                             (cx - (bw - 6) / 2, py))
+            pygame.draw.rect(self.screen, (96, 102, 114),
+                             (cx - (bw - 6) / 2, py, bw - 6, piston_h), width=1,
+                             border_radius=3)
+            for rg in range(3):                        # ring lands
+                ry = int(py + 5 + rg * 4)
+                pygame.draw.line(self.screen, (74, 80, 92),
+                                 (cx - (bw - 8) / 2, ry), (cx + (bw - 8) / 2, ry))
+            pygame.draw.circle(self.screen, (54, 58, 68),
+                               (int(pin[0]), int(pin[1])), 4)   # wrist pin
+            pygame.draw.circle(self.screen, (150, 156, 168),
+                               (int(pin[0]), int(pin[1])), 4, 1)
+
+            # --- connecting rod (I-beam) ---
+            self._draw_rod(pin, crank_pin, max(crank_r * 0.34, 4))
+
+            # --- crankshaft: counterweight web + main + crank journal ---
+            cwx = cx - crank_r * 0.6 * math.sin(theta)
+            cwy = crank_cy - crank_r * 0.6 * math.cos(theta)
+            pygame.draw.circle(self.screen, (44, 47, 56),
+                               (int(cwx), int(cwy)), int(crank_r * 1.35))
+            pygame.draw.circle(self.screen, (62, 66, 78), (int(cx), int(crank_cy)),
+                               int(crank_r * 0.7))
+            pygame.draw.circle(self.screen, (84, 90, 104), (int(cx), int(crank_cy)),
+                               int(crank_r * 0.7), 1)
             pygame.draw.circle(self.screen, ACCENT,
                                (int(crank_pin[0]), int(crank_pin[1])), 5)
+            pygame.draw.circle(self.screen, (20, 60, 110),
+                               (int(crank_pin[0]), int(crank_pin[1])), 5, 1)
 
-            label = self.font_small.render(f"{i+1}", True, DIM)
-            self.screen.blit(label, (cx - 4, bottom + 8))
+            label = self.font_small.render(f"{i + 1}", True, DIM)
+            self.screen.blit(label, (int(cx) - 4, bottom + 8))
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: an epitrochoid housing with a triangular
@@ -838,8 +908,8 @@ class App:
             # triangular rotor: centre orbits, body spins at 1/3 shaft speed
             rcx, rcy = cx + e * math.cos(shaft), cy + e * math.sin(shaft)
             rot = shaft / 3.0
-            verts = [(rcx + R * 0.96 * math.cos(rot + k * 2.094395),
-                      rcy + R * 0.96 * math.sin(rot + k * 2.094395)) for k in range(3)]
+            verts = [(rcx + R * 0.84 * math.cos(rot + k * 2.094395),
+                      rcy + R * 0.84 * math.sin(rot + k * 2.094395)) for k in range(3)]
             pygame.draw.polygon(self.screen, PISTON, verts)
             pygame.draw.polygon(self.screen, (96, 102, 116), verts, 2)
             for v in verts:                            # apex seals
@@ -862,6 +932,101 @@ class App:
             lbl = self.font_small.render(f"R{i + 1}", True, DIM)
             self.screen.blit(lbl, (int(cx) - 8, bottom + 8))
 
+    def _air_gauge(self, cx, cy, r, frac, label, value, danger=False):
+        """An old-school round aircraft instrument: metal bezel, black face, tick
+        marks, a swept needle (270 deg) and a digital readout."""
+        cx, cy = int(cx), int(cy)
+        frac = min(max(frac, 0.0), 1.0)
+        pygame.draw.circle(self.screen, (58, 62, 72), (cx, cy), r + 4)     # bezel
+        pygame.draw.circle(self.screen, (150, 156, 168), (cx, cy), r + 4, 2)
+        pygame.draw.circle(self.screen, (18, 19, 23), (cx, cy), r)         # face
+        for k in range(11):
+            a = math.radians(135 + k * 27)
+            major = (k % 5 == 0)
+            r2 = r - (8 if major else 5)
+            col = (210, 214, 222) if major else (110, 116, 128)
+            pygame.draw.line(self.screen, col,
+                             (cx + (r - 2) * math.cos(a), cy + (r - 2) * math.sin(a)),
+                             (cx + r2 * math.cos(a), cy + r2 * math.sin(a)),
+                             2 if major else 1)
+        # red danger arc over the last fifth
+        for k in range(9, 11):
+            a = math.radians(135 + k * 27)
+            pygame.draw.line(self.screen, (210, 70, 60),
+                             (cx + (r - 2) * math.cos(a), cy + (r - 2) * math.sin(a)),
+                             (cx + (r - 4) * math.cos(a), cy + (r - 4) * math.sin(a)), 3)
+        a = math.radians(135 + frac * 270)
+        tip = (cx + (r - 6) * math.cos(a), cy + (r - 6) * math.sin(a))
+        tail = (cx - 7 * math.cos(a), cy - 7 * math.sin(a))
+        pygame.draw.line(self.screen, (235, 92, 80) if danger else (240, 206, 96),
+                         tail, tip, 2)
+        pygame.draw.circle(self.screen, (180, 186, 198), (cx, cy), 4)
+        pygame.draw.circle(self.screen, (30, 32, 38), (cx, cy), 4, 1)
+        gl = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)               # glass gloss
+        pygame.draw.ellipse(gl, (255, 255, 255, 22),
+                            (int(r * 0.28), int(r * 0.14), int(r * 1.45), int(r * 0.85)))
+        self.screen.blit(gl, (cx - r, cy - r))
+        lab = self.font_small.render(label, True, DIM)
+        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+        val = self.font_small.render(value, True, INK)
+        self.screen.blit(val, (cx - val.get_width() // 2, cy + r * 0.4))
+
+    def _draw_turbo(self, cx, cy, r, spin, load):
+        """A turbocharger: scroll/volute housing with a spinning turbine wheel,
+        glowing hotter as it makes boost."""
+        cx, cy = int(cx), int(cy)
+        pygame.draw.circle(self.screen, (52, 56, 66), (cx, cy), r)         # volute
+        pygame.draw.circle(self.screen, (150, 156, 168), (cx, cy), r, 2)
+        pygame.draw.circle(self.screen, (28, 30, 36), (cx, cy), int(r * 0.78))
+        # outlet snout
+        pygame.draw.rect(self.screen, (60, 64, 74),
+                         (cx + r - 3, cy - 6, 12, 12), border_radius=3)
+        hub = max(3, int(r * 0.18))
+        for k in range(10):                                               # blades
+            a = spin + k * (2 * math.pi / 10)
+            x1 = cx + hub * math.cos(a); y1 = cy + hub * math.sin(a)
+            x2 = cx + r * 0.72 * math.cos(a + 0.5); y2 = cy + r * 0.72 * math.sin(a + 0.5)
+            pygame.draw.line(self.screen, (176, 182, 194), (x1, y1), (x2, y2), 2)
+        if load > 0.02:                                                   # hot glow
+            gs = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (255, 130, 50, int(150 * min(load, 1.0))),
+                               (r, r), int(r * 0.5))
+            self.screen.blit(gs, (cx - r, cy - r))
+        pygame.draw.circle(self.screen, (90, 96, 108), (cx, cy), hub)
+        lab = self.font_small.render("TURBO", True, DIM)
+        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+
+    def _draw_blower(self, cx, cy, r, spin, load, centri=False):
+        """A supercharger: a centrifugal impeller, or two counter-rotating Roots
+        lobes, spinning with the engine."""
+        cx, cy = int(cx), int(cy)
+        if centri:
+            pygame.draw.circle(self.screen, (52, 56, 66), (cx, cy), r)
+            pygame.draw.circle(self.screen, (150, 156, 168), (cx, cy), r, 2)
+            for k in range(12):
+                a = spin + k * (2 * math.pi / 12)
+                pygame.draw.line(self.screen, (176, 182, 194), (cx, cy),
+                                 (cx + r * 0.82 * math.cos(a), cy + r * 0.82 * math.sin(a)), 2)
+            pygame.draw.circle(self.screen, (90, 96, 108), (cx, cy), max(3, int(r*0.2)))
+            txt = "S/C"
+        else:
+            for j, (ox, sgn) in enumerate(((-r * 0.55, 1), (r * 0.55, -1))):
+                rcx = cx + ox
+                pygame.draw.circle(self.screen, (54, 58, 68), (int(rcx), cy), int(r * 0.62))
+                pygame.draw.circle(self.screen, (150, 156, 168), (int(rcx), cy), int(r * 0.62), 1)
+                for k in range(3):                       # 3-lobe roots rotor
+                    a = sgn * spin + k * (2 * math.pi / 3)
+                    pygame.draw.line(self.screen, (184, 190, 202), (rcx, cy),
+                                     (rcx + r * 0.55 * math.cos(a), cy + r * 0.55 * math.sin(a)), 3)
+            txt = "ROOTS"
+        if load > 0.02:
+            gs = pygame.Surface((3 * r, 2 * r), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (90, 170, 255, int(120 * min(load, 1.0))),
+                               (int(1.5 * r), r), int(r * 0.7))
+            self.screen.blit(gs, (cx - int(1.5 * r), cy - r))
+        lab = self.font_small.render(txt, True, DIM)
+        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+
     def _exhaust_db(self):
         """A rough exhaust-loudness readout from the synth's last output RMS."""
         lvl = getattr(self.synth, "last_level", 0.0) if self.synth else 0.0
@@ -870,29 +1035,40 @@ class App:
         return max(0.0, min(120.0, 108.0 + 20.0 * math.log10(lvl)))
 
     def _draw_telemetry(self, rect, top_y):
-        """Physical engine readouts (manifold pressure, VE, AFR, airflow, O2)."""
+        """Telemetry as a cluster of round aircraft instruments, plus a turbo /
+        supercharger visualiser when the engine is forced-induction."""
         t = self.sim.telemetry()
-        x, y = rect.x + 26, top_y
-        self.screen.blit(self.font_small.render("TELEMETRY", True, DIM), (x, y))
-        y += 21
-        rows = [
-            ("MANIFOLD", f"{t['map_kpa']:5.0f} kPa  ({t['vacuum_inhg']:+.0f} inHg)"),
-            ("VOL. EFF.", f"{t['ve_pct']:5.0f} %"),
-            ("AIR / FUEL", f"{t['afr']:5.1f}   (lambda {t['lambda']:.2f})"),
-            ("AIRFLOW", f"{t['scfm']:5.0f} SCFM"),
-            ("EXHAUST O2", f"{t['o2_pct']:5.1f} %"),
-            ("EXHAUST CO2", f"{t['co2_pct']:5.1f} %"),
-            ("EXHAUST", f"{self._exhaust_db():5.0f} dB"),
-        ]
         eng = self.sim.engine
-        if eng.induction != "na":
-            kind = {"roots": "S/C", "centrifugal": "C/F", "turbo": "TURBO"}.get(
-                eng.induction, eng.induction)
-            rows.append(("BOOST", f"{self.sim.boost:4.2f} bar   ({kind})"))
-        for label, val in rows:
-            self.screen.blit(self.font_small.render(label, True, DIM), (x, y))
-            self.screen.blit(self.font_small.render(val, True, INK), (x + 110, y))
-            y += 21
+        db = self._exhaust_db()
+        # (label, value-text, fraction 0..1, danger?)
+        gauges = [
+            ("MAP", f"{t['map_kpa']:.0f}", t['map_kpa'] / 250.0, t['map_kpa'] > 200),
+            ("VE", f"{t['ve_pct']:.0f}%", t['ve_pct'] / 120.0, False),
+            ("AFR", f"{t['afr']:.1f}", (t['afr'] - 10.0) / 6.0, t['afr'] < 11.5),
+            ("O2", f"{t['o2_pct']:.1f}", t['o2_pct'] / 21.0, False),
+            ("CO2", f"{t['co2_pct']:.0f}%", t['co2_pct'] / 16.0, False),
+            ("dB", f"{db:.0f}", (db - 60.0) / 60.0, db > 108),
+        ]
+        r = 30
+        cy = top_y + r + 6
+        x0 = rect.x + 16
+        gap = (rect.width - 32) / 6.0
+        fi = eng.induction != "na"
+        n_gauges = 5 if fi else 6              # last slot becomes the FI visualiser
+        for k in range(n_gauges):
+            lab, val, frac, danger = gauges[k]
+            self._air_gauge(x0 + gap * (k + 0.5), cy, r, frac, lab, val, danger)
+        if fi:
+            spin = self.sim.crank_angle * (6.0 if eng.induction == "turbo" else 3.5)
+            load = (self.sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
+            fcx, fcy = x0 + gap * 5.5, cy
+            if eng.induction == "turbo":
+                self._draw_turbo(fcx, fcy, r - 2, spin, load)
+            else:
+                self._draw_blower(fcx, fcy, r - 4, spin, load,
+                                  centri=(eng.induction == "centrifugal"))
+            bt = self.font_small.render(f"{self.sim.boost:.2f}b", True, ACCENT)
+            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r * 0.4)))
 
     def _draw_preset_bar(self, rect):
         """Selectable engine chips (wrap to more rows for cfg engines)."""
