@@ -81,6 +81,7 @@ TR_ZH = {
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
+    "Touch": "触屏",
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
@@ -215,6 +216,13 @@ class App:
         self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
         self._ign_flash = {}      # per-cylinder ignition-light fade
         self._wheel_ang = 0.0     # spinning road-wheel angle (rad)
+        # --- touch controls (on-screen pedals/paddles for phones & tablets) ---
+        self.touch_mode = False   # show the finger control overlay
+        self._ptr = {}            # active pointer id -> control name
+        self._ptr_val = {}        # pointer id -> analog value (pedals)
+        self._touch_throttle = 0.0
+        self._touch_brake = 0.0
+        self._touch_starter = False
         self.clock = pygame.time.Clock()
         self.lang = "en"          # "en" | "zh"
         self._init_fonts()
@@ -279,6 +287,8 @@ class App:
              lambda: sy.cabin, 1),
             (T("Gear whine"), lambda: setattr(sy, "straight_cut", not sy.straight_cut),
              lambda: sy.straight_cut, 1),
+            (T("Touch"), lambda: setattr(self, "touch_mode", not self.touch_mode),
+             lambda: self.touch_mode, 1),
             ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
             (T("Cat"), lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
             (T("Bent"), lambda: setattr(sy, "road_pipe", not sy.road_pipe),
@@ -568,6 +578,104 @@ class App:
     def canvas_mouse(self):
         return self._map_mouse(pygame.mouse.get_pos())
 
+    # ----------------------------------------------------------- touch input
+    def _map_finger(self, e):
+        """Normalised (0..1) finger event -> canvas coordinates."""
+        ww, wh = self._win_size
+        ox, oy = self._draw_offset
+        return (e.x * ww - ox, e.y * wh - oy)
+
+    def _touch_rects(self):
+        """On-screen control hit-boxes (finger pedals / paddles / buttons)."""
+        return {
+            "brake": pygame.Rect(8, 332, 74, 320),
+            "gas":   pygame.Rect(WIDTH - 82, 332, 74, 320),
+            "up":    pygame.Rect(WIDTH - 182, 332, 90, 98),
+            "down":  pygame.Rect(WIDTH - 182, 434, 90, 98),
+            "start": pygame.Rect(WIDTH - 182, 536, 90, 52),
+            "ign":   pygame.Rect(WIDTH - 182, 592, 90, 52),
+            "auto":  pygame.Rect(WIDTH - 182, 286, 90, 42),
+        }
+
+    def _pointer_down(self, pid, pos):
+        """A finger/mouse pressed.  Returns True if it hit a touch control."""
+        if not self.touch_mode:
+            return False
+        for name, r in self._touch_rects().items():
+            if r.collidepoint(pos):
+                self._ptr[pid] = name
+                if name in ("gas", "brake"):
+                    self._ptr_val[pid] = min(max((pos[1] - r.top) / r.height, 0.0), 1.0)
+                elif name == "up" and not self.sim.drivetrain.auto:
+                    self.sim.drivetrain.shift_up()
+                elif name == "down" and not self.sim.drivetrain.auto:
+                    self.sim.drivetrain.shift_down()
+                elif name == "ign":
+                    self.sim.ignition_on = not self.sim.ignition_on
+                elif name == "auto":
+                    self.sim.drivetrain.auto = not self.sim.drivetrain.auto
+                return True
+        return False
+
+    def _pointer_move(self, pid, pos):
+        name = self._ptr.get(pid)
+        if name in ("gas", "brake"):
+            r = self._touch_rects()[name]
+            self._ptr_val[pid] = min(max((pos[1] - r.top) / r.height, 0.0), 1.0)
+
+    def _pointer_up(self, pid):
+        self._ptr.pop(pid, None)
+        self._ptr_val.pop(pid, None)
+
+    def _aggregate_touch(self):
+        """Fold the active pointers into throttle / brake / starter each frame."""
+        self._touch_throttle = 0.0
+        self._touch_brake = 0.0
+        self._touch_starter = False
+        for pid, name in self._ptr.items():
+            if name == "gas":
+                self._touch_throttle = max(self._touch_throttle,
+                                           self._ptr_val.get(pid, 0.8))
+            elif name == "brake":
+                self._touch_brake = max(self._touch_brake, self._ptr_val.get(pid, 1.0))
+            elif name == "start":
+                self._touch_starter = True
+
+    def _draw_touch_overlay(self):
+        """Translucent on-screen pedals / paddles / buttons for finger control."""
+        if not self.touch_mode:
+            return
+        R = self._touch_rects()
+        ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+        def pedal(r, col, frac, label):
+            pygame.draw.rect(ov, (col[0], col[1], col[2], 55), r, border_radius=12)
+            fh = int(r.height * min(max(frac, 0.0), 1.0))
+            if fh > 2:
+                pygame.draw.rect(ov, (col[0], col[1], col[2], 150),
+                                 pygame.Rect(r.x, r.bottom - fh, r.width, fh),
+                                 border_radius=12)
+            pygame.draw.rect(ov, (col[0], col[1], col[2], 225), r, 2, border_radius=12)
+            t = self.font.render(label, True, (255, 255, 255))
+            ov.blit(t, (r.centerx - t.get_width() // 2, r.bottom - 28))
+
+        def btn(name, label, on=False):
+            r = R[name]
+            c = (70, 150, 80) if on else (54, 60, 74)
+            pygame.draw.rect(ov, (c[0], c[1], c[2], 180), r, border_radius=10)
+            pygame.draw.rect(ov, (164, 172, 188, 215), r, 2, border_radius=10)
+            t = self.font_small.render(label, True, (236, 240, 246))
+            ov.blit(t, (r.centerx - t.get_width() // 2, r.centery - 7))
+
+        pedal(R["gas"], (74, 200, 96), self.sim.throttle, "GAS")
+        pedal(R["brake"], (224, 84, 64), self.sim.drivetrain.brake, "BRK")
+        btn("up", "UP")
+        btn("down", "DOWN")
+        btn("start", "START", self.sim.starter_engaged)
+        btn("ign", "IGN", self.sim.ignition_on)
+        btn("auto", "AUTO", self.sim.drivetrain.auto)
+        self.screen.blit(ov, (0, 0))
+
     def handle_events(self):
         self._rebuild_toolbar(pygame.Rect(24, 24, 620, 632))
         for e in pygame.event.get():
@@ -578,9 +686,20 @@ class App:
                 # the window can only grow (extra room becomes background).
                 self._win_size = (max(e.w, WIDTH), max(e.h, HEIGHT))
                 self.window = pygame.display.set_mode(self._win_size, pygame.RESIZABLE)
+            elif e.type == pygame.FINGERDOWN:
+                self.touch_mode = True            # auto-show controls on first touch
+                self._pointer_down(("f", e.finger_id), self._map_finger(e))
+            elif e.type == pygame.FINGERMOTION:
+                self._pointer_move(("f", e.finger_id), self._map_finger(e))
+            elif e.type == pygame.FINGERUP:
+                self._pointer_up(("f", e.finger_id))
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                if getattr(e, "touch", False):
+                    continue                      # touch-emulated mouse -> use FINGER
                 mpos = self._map_mouse(e.pos)
-                if self._open_menu is not None:
+                if self.touch_mode and self._pointer_down("mouse", mpos):
+                    pass                          # consumed by an on-screen control
+                elif self._open_menu is not None:
                     m = self._open_menu
                     self._open_menu = None
                     for (lbl, cb), r in zip(m["items"], m["item_rects"]):
@@ -610,6 +729,9 @@ class App:
                             break
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
+                self._pointer_up("mouse")
+            elif e.type == pygame.MOUSEMOTION and "mouse" in self._ptr:
+                self._pointer_move("mouse", self._map_mouse(e.pos))
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
                 mpos = self._map_mouse(e.pos)
                 if self._drag == "pad":
@@ -652,7 +774,8 @@ class App:
                     self.sim.drivetrain.auto = not self.sim.drivetrain.auto
 
         keys = pygame.key.get_pressed()
-        self.sim.starter_engaged = keys[pygame.K_s]
+        self._aggregate_touch()
+        self.sim.starter_engaged = keys[pygame.K_s] or self._touch_starter
 
         # Clutch (manual only): tapping Z/X auto-blips it (paddle-shift, no need
         # to hold anything), holding Shift fully disengages it for launches.
@@ -660,13 +783,17 @@ class App:
         shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         dt.manual_clutch(shift_held, self.sim.rpm,
                          self.sim.engine.redline_rpm, 1.0 / FPS)
-        # Up = throttle (ramps up while held, falls back when released).
-        # Down = brake pedal.
-        if keys[pygame.K_UP]:
-            self.sim.throttle = min(1.0, self.sim.throttle + 0.04)
+        # Throttle / brake from the keyboard OR the on-screen touch pedals.
+        if self.touch_mode and self._ptr:
+            self.sim.throttle += (self._touch_throttle - self.sim.throttle) \
+                * min(9.0 / FPS, 1.0)
+            dt.brake = self._touch_brake
         else:
-            self.sim.throttle = max(0.0, self.sim.throttle - 0.04)
-        dt.brake = 1.0 if keys[pygame.K_DOWN] else 0.0
+            if keys[pygame.K_UP]:
+                self.sim.throttle = min(1.0, self.sim.throttle + 0.04)
+            else:
+                self.sim.throttle = max(0.0, self.sim.throttle - 0.04)
+            dt.brake = 1.0 if keys[pygame.K_DOWN] else 0.0
 
     # --------------------------------------------------------------- update
     def update(self, dt):
@@ -761,6 +888,7 @@ class App:
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         if self._open_menu is not None:
             self._draw_menu()
+        self._draw_touch_overlay()
         # Blit the native-size UI into the window WITHOUT scaling (no stretch /
         # squish) — when the window is bigger, the UI is centred and the extra
         # space is just background.  Layout and element sizes never change.
