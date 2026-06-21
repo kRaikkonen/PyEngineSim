@@ -49,17 +49,30 @@ def _open_file_dialog(title, initialdir, save=False, default=""):
         print(f"[dialog] {exc}")
         return None
 
-# --- palette -----------------------------------------------------------------
-BG = (18, 20, 24)
-PANEL = (28, 31, 38)
-INK = (228, 232, 238)
-DIM = (120, 128, 140)
-ACCENT = (90, 200, 255)
+# --- palette (iOS 6 skeuomorphic: glossy, gradients, bevels) ------------------
+BG = (28, 30, 34)               # dark "linen" backdrop
+BG_TOP = (46, 49, 55)
+BG_BOT = (22, 24, 28)
+PANEL = (60, 64, 72)            # legacy flat fallback
+PANEL_TOP = (78, 83, 92)        # panel gradient (glossy slab)
+PANEL_BOT = (46, 49, 56)
+BEVEL_HI = (150, 158, 170)      # 1px light top edge
+BEVEL_LO = (16, 17, 20)         # dark bottom edge
+INK = (236, 240, 245)
+DIM = (150, 158, 170)
+ACCENT = (74, 164, 255)         # iOS 6 glossy blue
 WARN = (255, 92, 80)
 GOOD = (120, 220, 130)
-PISTON = (170, 178, 190)
-ROD = (140, 146, 158)
+PISTON = (196, 202, 212)
+ROD = (150, 156, 168)
 FLASH = (255, 168, 60)
+# glossy button gradients (top -> bottom)
+BTN_HI = (104, 110, 122)
+BTN_LO = (66, 70, 80)
+BTN_HOT_HI = (124, 132, 146)
+BTN_HOT_LO = (84, 90, 102)
+BTN_ON_HI = (108, 186, 255)     # active = blue glass
+BTN_ON_LO = (28, 108, 224)
 
 WIDTH, HEIGHT = 1100, 680
 FPS = 60
@@ -120,6 +133,7 @@ class App:
         self.screen = pygame.Surface((WIDTH, HEIGHT))
         self._win_size = (WIDTH, HEIGHT)
         self._draw_offset = (0, 0)
+        self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
         self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
@@ -557,7 +571,7 @@ class App:
 
     # ----------------------------------------------------------- draw: parts
     def draw(self):
-        self.screen.fill(BG)
+        self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
         left = pygame.Rect(24, 24, 620, 632)
         if self.mixer_open:
             self._draw_mixer(left)
@@ -577,21 +591,59 @@ class App:
         self.window.blit(self.screen, (ox, oy))
         pygame.display.flip()
 
+    # ----------------------------------------------------- iOS 6 skeuomorphism
+    def _grad_surf(self, w, h, c1, c2, radius, gloss=False):
+        """A cached vertical-gradient rounded-rect surface; with `gloss`, bake in
+        the top-half glassy sheen + top highlight (the iOS 6 button look)."""
+        w, h = int(w), int(h)
+        key = (w, h, c1, c2, radius, gloss)
+        surf = self._grad_cache.get(key)
+        if surf is None:
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            for y in range(h):
+                t = y / max(h - 1, 1)
+                surf.fill((round(c1[0] + (c2[0] - c1[0]) * t),
+                           round(c1[1] + (c2[1] - c1[1]) * t),
+                           round(c1[2] + (c2[2] - c1[2]) * t)),
+                          (0, y, w, 1))
+            if gloss:
+                sheen = pygame.Surface((w, h), pygame.SRCALPHA)
+                gh = max(1, int(h * 0.5))
+                for y in range(gh):
+                    a = int(60 * (1.0 - y / gh))
+                    sheen.fill((255, 255, 255, a), (0, y, w, 1))
+                surf.blit(sheen, (0, 0))
+            if radius > 0:
+                mask = pygame.Surface((w, h), pygame.SRCALPHA)
+                pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, w, h),
+                                 border_radius=radius)
+                surf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            self._grad_cache[key] = surf
+        return surf
+
+    def _panel(self, rect, radius=14):
+        """A glossy beveled panel slab (gradient + light top edge + dark base)."""
+        self.screen.blit(self._grad_surf(rect.w, rect.h, PANEL_TOP, PANEL_BOT,
+                                          radius), rect.topleft)
+        pygame.draw.rect(self.screen, BEVEL_LO, rect, width=1, border_radius=radius)
+        pygame.draw.line(self.screen, BEVEL_HI, (rect.x + radius, rect.y + 1),
+                         (rect.right - radius, rect.y + 1))
+
     def _draw_button(self, b, mouse):
         r = b["rect"]
         active = b["active"]() if b["active"] else False
         hot = r.collidepoint(mouse)
         if active:
-            fill, txt = ACCENT, BG
+            c1, c2, txt = BTN_ON_HI, BTN_ON_LO, (255, 255, 255)
         elif hot:
-            fill, txt = (56, 62, 74), INK
+            c1, c2, txt = BTN_HOT_HI, BTN_HOT_LO, INK
         else:
-            fill, txt = (40, 44, 52), INK
-        pygame.draw.rect(self.screen, fill, r, border_radius=6)
-        if not active:
-            pygame.draw.rect(self.screen, (70, 76, 90), r, width=1, border_radius=6)
-        surf = self.font_small.render(b["label"], True, txt)
-        self.screen.blit(surf, (r.x + 10, r.y + 5))
+            c1, c2, txt = BTN_HI, BTN_LO, INK
+        self.screen.blit(self._grad_surf(r.w, r.h, c1, c2, 6, gloss=True), r.topleft)
+        pygame.draw.rect(self.screen, BEVEL_LO, r, width=1, border_radius=6)
+        lbl = self.font_small.render(b["label"], True, txt)
+        self.screen.blit(lbl, (r.centerx - lbl.get_width() // 2,
+                               r.centery - lbl.get_height() // 2))
 
     def _draw_toolbar(self):
         mouse = self.canvas_mouse()
@@ -614,7 +666,7 @@ class App:
             self.screen.blit(self.font_small.render(lbl, True, col), (r.x + 8, r.y + 4))
 
     def _draw_mixer(self, rect):
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
+        self._panel(rect)
         self.screen.blit(self.font.render("AUDIO MIXER", True, INK),
                          (rect.x + 18, rect.y + 18))
         self.screen.blit(self.font_small.render("drag the sliders  ·  C or ✕ to close",
@@ -667,7 +719,7 @@ class App:
         pygame.draw.circle(self.screen, INK, (dx, dy), 9, 1)
 
     def _draw_engine_panel(self, rect):
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
+        self._panel(rect)
         sim = self.sim
         eng = sim.engine
         n = eng.num_cylinders
@@ -701,9 +753,12 @@ class App:
             self.screen.blit(self.font_small.render(self._status, True, ACCENT),
                              (rect.x + 26, by + 18))
 
-        # Layout: one column per cylinder.
+        # Layout: one column per cylinder (or per rotor for a Wankel).
         top = rect.y + 92
         bottom = rect.bottom - 40
+        if eng.is_rotary:
+            self._draw_rotary(rect, top, bottom)
+            return
         col_w = rect.width / n
         bore_h = (bottom - top) * 0.5
         bore_w = min(col_w * 0.5, 64)
@@ -756,6 +811,56 @@ class App:
 
             label = self.font_small.render(f"{i+1}", True, DIM)
             self.screen.blit(label, (cx - 4, bottom + 8))
+
+    def _draw_rotary(self, rect, top, bottom):
+        """Wankel-rotor visualiser: an epitrochoid housing with a triangular
+        rotor orbiting eccentrically (spinning at 1/3 shaft speed), for rotary
+        engines instead of the piston bores.  One housing per ROTOR (the model
+        runs two firing pulses per rotor, so rotors = cylinders / 2)."""
+        sim, eng = self.sim, self.sim.engine
+        n = max(1, eng.num_cylinders // 2)
+        col_w = rect.width / n
+        R = min(col_w * 0.30, (bottom - top) * 0.34)
+        e = R * 0.16                                   # eccentricity
+        cy = (top + bottom) / 2.0
+        shaft0 = sim.crank_angle                       # eccentric-shaft angle (rad)
+        for i in range(n):
+            cx = rect.x + col_w * (i + 0.5)
+            shaft = shaft0 + i * (2.0 * math.pi / n)
+            # epitrochoid housing (2-lobe) outline
+            hull = []
+            for k in range(72):
+                a = 2.0 * math.pi * k / 72.0
+                hull.append((cx + R * math.cos(a) + e * math.cos(3 * a),
+                             cy + R * math.sin(a) + e * math.sin(3 * a)))
+            pygame.draw.polygon(self.screen, (40, 44, 52), hull)
+            pygame.draw.polygon(self.screen, (84, 90, 104), hull, 2)
+            # triangular rotor: centre orbits, body spins at 1/3 shaft speed
+            rcx, rcy = cx + e * math.cos(shaft), cy + e * math.sin(shaft)
+            rot = shaft / 3.0
+            verts = [(rcx + R * 0.96 * math.cos(rot + k * 2.094395),
+                      rcy + R * 0.96 * math.sin(rot + k * 2.094395)) for k in range(3)]
+            pygame.draw.polygon(self.screen, PISTON, verts)
+            pygame.draw.polygon(self.screen, (96, 102, 116), verts, 2)
+            for v in verts:                            # apex seals
+                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 4)
+            # combustion glow in the firing chamber (one of the rotor's faces)
+            j = min(2 * i + 1, eng.num_cylinders - 1)
+            press = max(sim.cylinder_pressure[2 * i], sim.cylinder_pressure[j])
+            glow = (min(max(press - 101325.0, 0.0) / (5.0 * 101325.0), 1.0)
+                    if sim.ignition_on and not sim._fuel_cut else 0.0)
+            if glow > 0.03:
+                mx, my = (verts[0][0] + verts[1][0]) / 2, (verts[0][1] + verts[1][1]) / 2
+                gx, gy = cx + (mx - cx) * 1.18, cy + (my - cy) * 1.18
+                gs = pygame.Surface((44, 44), pygame.SRCALPHA)
+                pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(210 * glow)),
+                                   (22, 22), 20)
+                self.screen.blit(gs, (gx - 22, gy - 22))
+            # eccentric shaft centre + orbiting journal
+            pygame.draw.circle(self.screen, (60, 64, 74), (int(cx), int(cy)), 6)
+            pygame.draw.circle(self.screen, ACCENT, (int(rcx), int(rcy)), 4)
+            lbl = self.font_small.render(f"R{i + 1}", True, DIM)
+            self.screen.blit(lbl, (int(cx) - 8, bottom + 8))
 
     def _exhaust_db(self):
         """A rough exhaust-loudness readout from the synth's last output RMS."""
@@ -815,7 +920,7 @@ class App:
 
     # ----------------------------------------------------------- draw: gauges
     def _draw_gauges(self, rect):
-        pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
+        self._panel(rect)
         sim = self.sim
         eng = sim.engine
 
