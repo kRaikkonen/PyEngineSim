@@ -226,11 +226,12 @@ def lexus_lfa() -> Engine:
 
 
 def lamborghini_murcielago() -> Engine:
-    """Lamborghini Murcielago LP640 — 6.5 L 60-deg V12 howl.
+    """Lamborghini Murcielago LP670-4 SuperVeloce — 6.5 L 60-deg V12.
 
-    Real specs: 6496 cc, bore 88 x stroke 89 mm, 11.0:1 CR, 640 PS @ 8000 /
-    660 Nm @ 6000, redline ~8000 rpm.  6-speed (approx ratios).  Even-firing
-    60-deg V12 -> a deep, complex, layered metallic howl.
+    Real specs: 6496 cc, bore 88 x stroke 89 mm, 11.0:1 CR, 670 PS @ 8000 /
+    660 Nm @ 6500, redline ~8000 rpm, ~100 kg lighter than the LP640.  Famous
+    e-gear (single-clutch automated manual) and a far less restrictive, louder,
+    rawer exhaust -> a harder, more open, more aggressive V12 howl.
     """
     offsets = _even_offsets(12, firing_order=[1, 7, 4, 10, 2, 8, 6, 12, 3, 9, 5, 11])                      # even 60-deg firing
     cylinders = []
@@ -242,23 +243,23 @@ def lamborghini_murcielago() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Lamborghini Murcielago LP640 6.5L V12",
+        name="Lamborghini Murcielago LP670-4 SV 6.5L V12",
         cylinders=cylinders,
-        flywheel_inertia=0.32,
-        redline_rpm=8000,
+        flywheel_inertia=0.30,           # lighter rotating mass (SV)
+        redline_rpm=8100,
         idle_rpm=900,
-        heat_release_k=3.4,
+        heat_release_k=3.5,              # 670 PS
         closed_map_fraction=0.09,
-        ve_peak_frac=0.72,               # peak torque ~6000 rpm
+        ve_peak_frac=0.74,               # peak torque ~6500 rpm
         ve_width_frac=0.6,
         friction_static=10.0,
         starter_torque=200.0,
         exhaust_tone=0.0,                # derive pitch from physics (deep V12)
-        exhaust_primary_m=0.70, exhaust_total_m=2.3, exhaust_radius_m=0.028,
-        exhaust_channels=2, exhaust_openness=0.80, muffler_volume_m3=0.0035,
+        exhaust_primary_m=0.68, exhaust_total_m=2.2, exhaust_radius_m=0.027,
+        exhaust_channels=2, exhaust_openness=0.88, muffler_volume_m3=0.0026,
         gear_ratios=[2.94, 2.06, 1.52, 1.18, 0.94, 0.76],
         final_drive=3.45,
-        vehicle_mass=1665.0, wheel_radius=0.345, clutch_capacity=720.0,        gearbox_type="manual",
+        vehicle_mass=1565.0, wheel_radius=0.345, clutch_capacity=720.0, gearbox_type="single",
     )
 
 
@@ -1521,7 +1522,7 @@ PRESETS = [
     ("3", "Coyote", ford_coyote_v8),
     ("4", "458",    ferrari_458),
     ("5", "LFA",    lexus_lfa),
-    ("6", "V12",    lamborghini_murcielago),
+    ("6", "LP670 SV", lamborghini_murcielago),
     ("7", "F2004",  ferrari_f2004_v10),
     ("8", "Hellcat", dodge_hellcat_v8),
     ("9", "2JZ",    toyota_2jz_supra),
