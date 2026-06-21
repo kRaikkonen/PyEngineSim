@@ -118,6 +118,7 @@ class App:
         self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         self.screen = pygame.Surface((WIDTH, HEIGHT))
         self._win_size = (WIDTH, HEIGHT)
+        self._draw_offset = (0, 0)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
         self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
@@ -213,12 +214,26 @@ class App:
         self._open_menu_for(items, anchor)
 
     def _open_menu_for(self, items, anchor_rect):
-        w = max(self.font_small.size(lbl)[0] for lbl, _ in items) + 28
-        w = max(w, anchor_rect.width)
-        h = len(items) * 26 + 8
-        rect = pygame.Rect(anchor_rect.x, anchor_rect.bottom + 3, w, h)
-        item_rects = [pygame.Rect(rect.x + 4, rect.y + 4 + i * 26, w - 8, 24)
-                      for i in range(len(items))]
+        # Wrap a long list (e.g. all the demo cars) into as many COLUMNS as it
+        # takes to fit the window height, so nothing runs off the bottom.
+        n = len(items)
+        ih = 26
+        col_w = max(self.font_small.size(lbl)[0] for lbl, _ in items) + 28
+        col_w = max(col_w, anchor_rect.width)
+        top = anchor_rect.bottom + 3
+        max_rows = max(1, (HEIGHT - top - 10) // ih)
+        rows = min(n, max_rows)
+        cols = (n + rows - 1) // max(rows, 1)
+        w = cols * col_w + 8
+        h = rows * ih + 8
+        x = min(max(anchor_rect.x, 8), WIDTH - w - 8)
+        y = min(max(top, 8), HEIGHT - h - 8)
+        rect = pygame.Rect(x, y, w, h)
+        item_rects = []
+        for i in range(n):
+            c, r = divmod(i, rows)
+            item_rects.append(pygame.Rect(rect.x + 4 + c * col_w,
+                                          rect.y + 4 + r * ih, col_w - 6, ih - 2))
         self._open_menu = {"items": items, "rect": rect, "item_rects": item_rects}
 
     # ----------------------------------------------------------- audio device
@@ -383,10 +398,11 @@ class App:
 
     # ----------------------------------------------------------------- input
     def _map_mouse(self, pos):
-        """Map a real-window pixel position back onto the fixed UI canvas, so
-        clicks land correctly however the window has been resized."""
-        ww, wh = self._win_size
-        return (pos[0] * WIDTH / max(ww, 1), pos[1] * HEIGHT / max(wh, 1))
+        """Map a real-window pixel position back onto the fixed UI canvas.  The
+        canvas is drawn 1:1 (never scaled), just centred, so this only undoes
+        the centring offset — clicks land exactly on what you see."""
+        ox, oy = getattr(self, "_draw_offset", (0, 0))
+        return (pos[0] - ox, pos[1] - oy)
 
     def canvas_mouse(self):
         return self._map_mouse(pygame.mouse.get_pos())
@@ -397,7 +413,9 @@ class App:
             if e.type == pygame.QUIT:
                 self.running = False
             elif e.type == pygame.VIDEORESIZE:
-                self._win_size = (max(e.w, 320), max(e.h, 240))
+                # Never go below the native UI size, so nothing is ever clipped;
+                # the window can only grow (extra room becomes background).
+                self._win_size = (max(e.w, WIDTH), max(e.h, HEIGHT))
                 self.window = pygame.display.set_mode(self._win_size, pygame.RESIZABLE)
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 mpos = self._map_mouse(e.pos)
@@ -525,11 +543,15 @@ class App:
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         if self._open_menu is not None:
             self._draw_menu()
-        # scale the fixed canvas onto the (possibly resized) window, then show
-        if self._win_size == (WIDTH, HEIGHT):
-            self.window.blit(self.screen, (0, 0))
-        else:
-            pygame.transform.smoothscale(self.screen, self._win_size, self.window)
+        # Blit the native-size UI into the window WITHOUT scaling (no stretch /
+        # squish) — when the window is bigger, the UI is centred and the extra
+        # space is just background.  Layout and element sizes never change.
+        ww, wh = self._win_size
+        ox, oy = max(0, (ww - WIDTH) // 2), max(0, (wh - HEIGHT) // 2)
+        self._draw_offset = (ox, oy)
+        if (ww, wh) != (WIDTH, HEIGHT):
+            self.window.fill(BG)
+        self.window.blit(self.screen, (ox, oy))
         pygame.display.flip()
 
     def _draw_button(self, b, mouse):

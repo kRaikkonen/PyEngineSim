@@ -87,11 +87,18 @@ class Drivetrain:
 
     @property
     def is_shifting(self) -> bool:
-        # Fuel-cut + rev-match apply only while declutched/matching (phases 1-2).
-        # In phase 3 the clutch is re-engaging with the engine already matched,
-        # so combustion resumes and torque feeds in *through* the clutch — no
-        # snap-on torque step.
-        return self._shifting and self._shift_phase < 3
+        """Whether the simulator should CUT fuel (engine makes no torque).
+
+        Only a rev-matched 'box (DCT/AT) cuts fuel — and only while declutched
+        in phases 1-2 — so the engine can be eased down to the matched speed for
+        a seamless re-engage.  A single-clutch / manual box does NOT cut fuel:
+        the engine keeps firing the whole time, flares against the open clutch,
+        and the kick is a real power-ON driveline shock when the clutch slams
+        shut — not a dead spot.  (Phase 3 re-engages with combustion live for
+        every type.)"""
+        if self._shifting and self._shift_phase < 3:
+            return self.gearbox_type not in ("single", "manual")
+        return False
 
     @property
     def rev_matching(self) -> bool:
