@@ -282,6 +282,7 @@ class Synthesizer:
             "eq_low": 0.0,        # dB
             "eq_mid": 0.0,        # dB
             "eq_high": 0.0,       # dB
+            "presence": 0.0,      # dB — guitar-amp 'presence' (upper-mid bite ~3 kHz)
             "cyl_spread": 0.5,    # how much each cylinder's pitch/level differs
             "master": 0.6,        # master output volume
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
@@ -362,6 +363,7 @@ class Synthesizer:
             self._eq_lo_zi = np.zeros(2)
             self._eq_mid_zi = np.zeros(2)
             self._eq_hi_zi = np.zeros(2)
+            self._eq_pres_zi = np.zeros(2)
             # cabin effect: muffle the highs (hearing it from inside the car)
             self._cabin_lp = butter(2, 2400.0 / (sr / 2), btype="low")
             self._cabin_zi = np.zeros(max(len(self._cabin_lp[0]),
@@ -584,6 +586,9 @@ class Synthesizer:
             if abs(P["eq_high"]) > 0.1:
                 b, a = _peaking(4500.0, 0.7, P["eq_high"], self.sample_rate)
                 sig, self._eq_hi_zi = lfilter(b, a, sig, zi=self._eq_hi_zi)
+            if abs(P["presence"]) > 0.1:        # amp 'presence': broad upper-mid lift
+                b, a = _peaking(3000.0, 0.6, P["presence"], self.sample_rate)
+                sig, self._eq_pres_zi = lfilter(b, a, sig, zi=self._eq_pres_zi)
 
         # --- cabin effect: muffle the highs, as if heard from inside the car -
         if self.cabin and _HAVE_SCIPY:

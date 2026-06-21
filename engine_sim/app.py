@@ -105,6 +105,7 @@ SLIDER_DEFS = [
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
+    ("presence", "Presence (bite)", -12.0, 12.0),
 ]
 
 # Firing-pulse timbre presets, cycled with V.  Each sets the single-firing tone.
@@ -200,7 +201,7 @@ class App:
             ("Flutter", lambda: setattr(sy, "flutter", not sy.flutter),
              lambda: sy.flutter, 2),
             ("Hybrid", lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
-             lambda: self.sim.hybrid_on, 2),
+             lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 2),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
             ("G-pad", lambda: setattr(self, "g_spatial", not self.g_spatial),
              lambda: self.g_spatial, 2),
@@ -394,7 +395,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 27
+            y += 26
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
