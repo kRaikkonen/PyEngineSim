@@ -63,6 +63,17 @@ _POWER_CHORD = (
     (3.0, 0.38),    # fifth + octave (top sparkle, kept moderate)
 )
 
+# Selectable firing-body chord voicings (hidden number-key 1-6 hotkeys).  Each
+# is (pitch-ratio vs firing pitch, level); max 5 voices to fit the filter state.
+_FIRE_CHORDS = (
+    _POWER_CHORD,                                                      # 1 power (default)
+    ((0.5, 0.6), (1.0, 1.0), (1.26, 0.7), (1.5, 0.7), (2.0, 0.4)),    # 2 major power
+    ((0.5, 0.5), (1.0, 1.0), (1.0595, 0.8), (2.0, 0.45)),             # 3 root + minor 2nd
+    ((1.0, 1.0), (1.189, 0.65), (1.414, 0.62), (1.782, 0.5), (0.5, 0.5)),  # 4 m7b5
+    ((0.5, 0.55), (1.0, 1.0), (1.189, 0.7), (1.414, 0.6)),            # 5 dim cluster
+    ((0.5, 0.5), (1.0, 1.0), (1.26, 0.6), (1.5, 0.62), (1.888, 0.45)),  # 6 maj7
+)
+
 # Whine voicings (ratios vs the whine fundamental).
 _PERFECT_FIFTH = ((1.0, 1.0), (1.5, 0.6))                 # turbo spool: root + 5th
 _AUG_TRIAD = ((1.0, 1.0), (1.26, 0.5), (1.587, 0.45))     # gear whine: augmented triad
@@ -335,6 +346,7 @@ class Synthesizer:
         self._pop_amp = 0.0       # pop strength
         self.o_chord = False      # hidden 'o' easter egg: turbo V7 + Bdim blow-off
         self._bdim_phase = 0.0    # Bdim blow-off oscillator phase
+        self.fire_chord = 0       # firing-body chord voicing index (hidden keys 1-6)
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -554,7 +566,8 @@ class Synthesizer:
         if _HAVE_SCIPY and P["body"] > 1e-3:
             root = min(max(P["firing_pitch"], 40.0), 500.0)
             nyq = self.sample_rate * 0.45
-            for k, (ratio, lvl) in enumerate(_POWER_CHORD):
+            chord = _FIRE_CHORDS[self.fire_chord % len(_FIRE_CHORDS)]
+            for k, (ratio, lvl) in enumerate(chord):
                 f = min(root * ratio, nyq)
                 bb, ab = _bandpass(f, 2.0, self.sample_rate)
                 tone, self._chord_zi[k] = lfilter(bb, ab, dry, zi=self._chord_zi[k])
