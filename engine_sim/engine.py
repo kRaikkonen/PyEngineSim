@@ -98,7 +98,7 @@ class Engine:
     engine_brake_k: float = 0.16     # closed-throttle vacuum braking, N*m per (rad/s above idle)
     starter_torque: float = 90.0     # N*m the starter motor can apply
     starter_speed_rpm: float = 280.0 # starter spins up to about this rpm
-    exhaust_tone: float = 80.0       # Hz, resonant note of the exhaust 'pop'
+    exhaust_tone: float = 0.0        # Hz pop pitch; 0 = derive from cylinder size
 
     # drivetrain / vehicle (so each preset carries its real gearbox) ----------
     gear_ratios: list = field(default_factory=lambda: [3.45, 2.10, 1.42, 1.03, 0.82])
@@ -158,9 +158,32 @@ class Engine:
     has_cat: bool = True             # came with a catalytic converter
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
 
+    def __post_init__(self) -> None:
+        # Physically derive the exhaust 'pop' resonance pitch from the MEAN
+        # CYLINDER SIZE instead of hand-tuning it: a small cylinder empties a
+        # short, sharp pulse (high pitch); a big lazy cylinder a long, low one.
+        # The per-car *character* still comes from the (physical) pipe geometry —
+        # length / radius / openness / muffler — so same-engine cars (Diablo vs
+        # Murcielago) still differ through their exhaust SYSTEMS, not a fudge.
+        # Set exhaust_tone explicitly (> 0) only to force a value.
+        if self.exhaust_tone <= 0.0:
+            cyl_litres = (self.total_displacement * 1000.0) / max(self.num_cylinders, 1)
+            tone = 36.0 / max(cyl_litres, 0.12) ** 0.92
+            if self.is_rotary:
+                tone *= 1.7              # no valves, peripheral ports -> bright brap
+            self.exhaust_tone = float(min(max(tone, 44.0), 185.0))
+
     @property
     def total_displacement(self) -> float:
         return sum(c.displacement for c in self.cylinders)
+
+    @property
+    def firing_order(self) -> list:
+        """Cylinder numbers (1-based) in the order they fire — derived from the
+        cycle offsets, so it always matches the physics."""
+        order = sorted(range(self.num_cylinders),
+                       key=lambda i: self.cylinders[i].cycle_offset_deg)
+        return [i + 1 for i in order]
 
     @property
     def num_cylinders(self) -> int:

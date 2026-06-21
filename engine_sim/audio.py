@@ -293,7 +293,9 @@ class Synthesizer:
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
-            "pops": 0.5,          # overrun exhaust pops/bangs (deceleration crackle)
+            "pops": 0.6,          # overrun pop level (power-chord bangs on decel)
+            "pop_muff": 0.4,      # how muffled the pops are (0 sharp .. 1 dull)
+            "pops_reverb": 0.22,  # dedicated reverb on the overrun pops
         }
 
         self._build_audio()
@@ -313,9 +315,13 @@ class Synthesizer:
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
         self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
-        self._pop_env = 0.0       # current overrun pop/bang envelope
-        self._pop_bang = False    # this pop is a big bang (vs a small crackle)
         self._was_on_gas = 0.0    # recent on-throttle memory (fuels the crackle)
+        self.pops_on = False      # overrun pops on/off (default off)
+        self.time_scale = 1.0     # 1.0 normal .. <1 slow motion
+        self._pop_age = 10 ** 9   # samples since the current pop started
+        self._pop_len = 1         # length of the current pop (samples)
+        self._pop_f0 = 180.0      # pop base pitch (glides down)
+        self._pop_amp = 0.0       # pop strength
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -349,6 +355,9 @@ class Synthesizer:
         self._ind_reverb = Reverb(sr, room=0.7, feedback=0.7)
         # ...and a separate one just for the straight-cut gearbox whine.
         self._gear_reverb = Reverb(sr, room=0.6, feedback=0.66)
+        # ...and a big roomy one for the overrun pops/bangs (they echo off walls).
+        self._pops_reverb = Reverb(sr, room=0.85, feedback=0.76)
+        self._pop_lp_zi = np.zeros(2)
         # A short reverb on the explosion ITSELF, before the pipe — so the
         # waveguide resonates an already-reverberant bang (chamber/port acoustics).
         self._src_verb = [Reverb(sr, room=0.4, feedback=0.55)
@@ -449,7 +458,8 @@ class Synthesizer:
     def _render_block(self, frames: int) -> np.ndarray:
         sim = self.sim
         omega = sim.omega
-        dps = math.degrees(omega) / self.sample_rate
+        # time_scale < 1 = slow motion (the whole engine note slows + drops)
+        dps = math.degrees(omega) / self.sample_rate * self.time_scale
 
         D1, D2, g, lp_a, f_helm = self._resonance_params()
         s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
@@ -742,44 +752,62 @@ class Synthesizer:
         return out, gw
 
     def _overrun_pops(self, frames):
-        """Exhaust pops & bangs on a closed-throttle overrun — unburnt fuel
-        lighting off in the hot pipe (the deceleration '放炮' crackle).  More
-        frequent and bigger 'BANG's for anti-lag cars."""
+        """Overrun exhaust pops/bangs ('放炮') — modelled like little combustion
+        events: each pop is a sharp transient + a PILE-DRIVING power chord (root
+        + fifth + octave) whose pitch glides DOWNWARD (the dewp/blat), with a low
+        thump for body.  Muffled and reverbed.  Off unless self.pops_on."""
         P = self.params
         lvl = P["pops"]
-        if lvl < 1e-3:
+        if not self.pops_on or lvl < 1e-3:
             return 0.0
         sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
         rpm = sim.rpm
-        # being on the gas loads the pipe with fuel that then lights off on lift
+        # being on the gas loads the pipe with fuel that lights off on lift
         if sim.throttle > 0.5:
             self._was_on_gas = min(1.0, self._was_on_gas + 0.05)
         else:
             self._was_on_gas *= 0.996
         overrun = (sim.ignition_on and sim.throttle < 0.06
                    and rpm > eng.idle_rpm * 1.5)
-        out = np.zeros(frames, dtype=np.float64)
-        if overrun and self._pop_env < 0.05:
+        # trigger a new pop once the previous one is mostly done (allows crackle)
+        if overrun and self._pop_age > self._pop_len * 0.45:
             rf = min(rpm / max(eng.redline_rpm, 1.0), 1.0)
             aggr = 2.4 if eng.anti_lag else 1.0
-            rate = lvl * aggr * (0.05 + 0.5 * rf) * (0.3 + 0.7 * self._was_on_gas)
+            rate = lvl * aggr * (0.06 + 0.55 * rf) * (0.3 + 0.7 * self._was_on_gas)
             if self._rng.random() < rate:
-                self._pop_bang = self._rng.random() < (0.28 if eng.anti_lag else 0.12)
-                self._pop_env = ((0.9 if self._pop_bang else 0.5)
-                                 * (0.6 + 0.8 * self._rng.random()))
-        if self._pop_env > 1e-3:
+                big = self._rng.random() < (0.3 if eng.anti_lag else 0.14)
+                self._pop_age = 0
+                self._pop_len = int(sr * (0.16 if big else 0.085))
+                self._pop_f0 = (95.0 if big else 150.0) * (0.85 + 0.4 * self._rng.random())
+                self._pop_amp = (1.0 if big else 0.6) * (0.6 + 0.7 * self._rng.random())
+        out = np.zeros(frames, dtype=np.float64)
+        if self._pop_age < self._pop_len:
             n = np.arange(frames)
-            noise = self._rng.standard_normal(frames)
-            if self._pop_bang:                       # a BANG: low thump + crackle
-                env = np.exp(-n / (sr * 0.045)) * self._pop_env
-                thump = (np.sin(2 * math.pi * 80.0 * n / sr)
-                         * np.exp(-n / (sr * 0.03)) * self._pop_env)
-                out += (lvl * 1.3) * (noise * env) + (lvl * 0.7) * thump
-                self._pop_env *= math.exp(-frames / (sr * 0.05))
-            else:                                    # a small bright crackle/spit
-                env = np.exp(-n / (sr * 0.010)) * self._pop_env
-                out += (lvl * 0.9) * noise * env
-                self._pop_env *= math.exp(-frames / (sr * 0.012))
+            t = self._pop_age + n                    # samples since this pop began
+            mask = (t < self._pop_len).astype(np.float64)
+            L = float(self._pop_len)
+            env = np.exp(-t / (sr * (0.06 if self._pop_len > sr*0.1 else 0.03))) * mask
+            # power chord with a DOWNWARD pitch glide: phase = 2*pi*integral(f)
+            f0, k = self._pop_f0, 0.5                 # glide down to 0.5*f0
+            ph = 2 * math.pi / sr * (f0 * t - f0 * k * t * t / (2 * L))
+            chord = (np.sin(ph) + 0.7 * np.sin(1.5 * ph) + 0.45 * np.sin(2.0 * ph)
+                     + 0.4 * np.sin(0.5 * ph))        # root+fifth+octave+sub
+            thump = np.sin(2 * math.pi * 72.0 * t / sr) * np.exp(-t / (sr * 0.035)) * mask
+            crack = self._rng.standard_normal(frames) * np.exp(-t / (sr * 0.004)) * mask
+            out = self._pop_amp * (0.7 * chord * env + 0.6 * crack + 0.5 * thump)
+            self._pop_age += frames
+        else:
+            self._pop_age += frames
+        if not _HAVE_SCIPY:
+            return (lvl * 1.4) * out
+        # muffle (a low-pass whose cutoff drops as pop_muff rises)
+        cut = min(max(9000.0 - 7600.0 * P["pop_muff"], 700.0), sr * 0.45)
+        b, a = butter(2, cut / (sr / 2), btype="low")
+        out, self._pop_lp_zi = lfilter(b, a, out, zi=self._pop_lp_zi)
+        out = (lvl * 1.4) * out
+        if P["pops_reverb"] > 1e-3:                   # roomy echo
+            self._pops_reverb.mix = P["pops_reverb"]
+            out = self._pops_reverb.process(out)
         return out
 
     def _callback(self, outdata, frames, time_info, status):

@@ -82,7 +82,8 @@ TR_ZH = {
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
     "Cat": "三元", "Flutter": "颤振", "Hybrid": "混动", "G-pad": "G力",
-    "Lang": "语言",
+    "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
+    "off": "关", "firing order:": "点火顺序:",
     # gauges / readouts
     "RPM": "转速", "TORQUE": "扭矩", "POWER": "功率", "THROTTLE": "油门",
     "GEAR": "挡位", "SPEED": "车速", "TELEMETRY": "遥测",
@@ -118,6 +119,7 @@ TR_ZH = {
     "Turbo spool / BOV": "涡轮/泄压", "Spool reverb": "增压混响",
     "Straight-cut whine": "直齿啸叫", "Gear-whine reverb": "直齿混响",
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
+    "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -152,7 +154,9 @@ SLIDER_DEFS = [
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
     ("gearbox_reverb", "Gear-whine reverb", 0.0, 0.6),
     ("hybrid_vol", "Electric / e-turbo", 0.0, 1.2),
-    ("pops", "Overrun pops", 0.0, 1.2),
+    ("pops", "Overrun pops", 0.0, 1.5),
+    ("pop_muff", "Pop muffle", 0.0, 1.0),
+    ("pops_reverb", "Pop reverb", 0.0, 0.6),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -205,6 +209,7 @@ class App:
         self.telemetry = None
         self.telemetry_mode = False
         self.g_spatial = False    # drift the spatial dot from Forza G-force
+        self.slow_mo = 1.0        # 1.0 normal .. 0.001 = 1000x slow motion
 
         if preset_key not in presets.ALL:
             preset_key = presets.PRESETS[0][0]
@@ -259,7 +264,21 @@ class App:
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
             (T("G-pad"), lambda: setattr(self, "g_spatial", not self.g_spatial),
              lambda: self.g_spatial, 2),
+            (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
+             lambda: sy.pops_on, 2),
+            (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
+             else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
         ]
+
+    def toggle_slow(self):
+        steps = [1.0, 0.1, 0.01, 0.001]              # 1x, 10x, 100x, 1000x slow
+        i = (steps.index(self.slow_mo) + 1) % len(steps) if self.slow_mo in steps else 0
+        self.slow_mo = steps[i]
+        if self.synth:
+            self.synth.time_scale = self.slow_mo
+        self._flash(f"{self.tr('Slow-mo')}: "
+                    + (f"{int(round(1/self.slow_mo))}x" if self.slow_mo < 1
+                       else self.tr("off")))
 
     def _rebuild_toolbar(self, panel):
         defs = self._toolbar_defs()
@@ -449,14 +468,14 @@ class App:
         panel = pygame.Rect(24, 24, 620, 632)
         x = panel.x + 196
         w = (panel.x + 400) - x          # shorter tracks -> room for the pad
-        y = panel.y + 28
+        y = panel.y + 42                 # clear the title/hint row
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 24
+            y += 22
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
@@ -601,12 +620,15 @@ class App:
 
     # --------------------------------------------------------------- update
     def update(self, dt):
+        if self.synth:
+            self.synth.time_scale = 1.0 if self.telemetry_mode else self.slow_mo
         if self.telemetry_mode:
             self._update_telemetry(dt)
         else:
+            sdt = dt * self.slow_mo            # slow-motion time dilation
             self.sim.drivetrain.auto_control(
-                self.sim.rpm, self.sim.throttle, self.sim.engine.redline_rpm, dt)
-            self.sim.step(dt)
+                self.sim.rpm, self.sim.throttle, self.sim.engine.redline_rpm, sdt)
+            self.sim.step(sdt)
             # Show indicated torque — combustion plus any electric-motor assist.
             drive_tq = self.sim.gas_torque + self.sim.motor_torque
             self._disp_torque += (drive_tq - self._disp_torque) * 0.08
@@ -993,6 +1015,11 @@ class App:
 
             label = self.font_small.render(f"{i + 1}", True, DIM)
             self.screen.blit(label, (int(cx) - 4, bottom + 8))
+
+        # firing order (derived from the cycle offsets, so it's always physical)
+        fo = "-".join(str(x) for x in eng.firing_order)
+        self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+                                                True, ACCENT), (rect.x + 18, bottom + 26))
 
     def _reuleaux(self, verts, samples=10):
         """Polygon points for a Reuleaux triangle through three apexes: each side

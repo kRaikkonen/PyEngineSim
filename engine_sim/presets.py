@@ -251,7 +251,7 @@ def lamborghini_murcielago() -> Engine:
         ve_width_frac=0.6,
         friction_static=10.0,
         starter_torque=200.0,
-        exhaust_tone=70.0,               # deep V12
+        exhaust_tone=0.0,                # derive pitch from physics (deep V12)
         exhaust_primary_m=0.70, exhaust_total_m=2.3, exhaust_radius_m=0.028,
         exhaust_channels=2, exhaust_openness=0.80, muffler_volume_m3=0.0035,
         gear_ratios=[2.94, 2.06, 1.52, 1.18, 0.94, 0.76],
@@ -282,9 +282,9 @@ def lamborghini_diablo() -> Engine:
         flywheel_inertia=0.30, redline_rpm=7100, idle_rpm=900,
         heat_release_k=3.8, ve_peak_frac=0.7, ve_width_frac=0.6,
         closed_map_fraction=0.10, friction_static=10.0, starter_torque=200.0,
-        # rawer / harder than the Murcielago: brighter tone, shorter & more open
-        # primaries, far less muffler.
-        exhaust_tone=82.0,
+        # rawer / harder than the Murcielago via the EXHAUST SYSTEM (physics):
+        # shorter, more open primaries + far less muffler.  Pitch auto-derives.
+        exhaust_tone=0.0,
         exhaust_primary_m=0.56, exhaust_total_m=2.05, exhaust_radius_m=0.027,
         exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0016,
         gear_ratios=[2.31, 1.58, 1.24, 0.94, 0.76], final_drive=4.09,
