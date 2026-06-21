@@ -209,7 +209,7 @@ class App:
         self._draw_offset = (0, 0)
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
-        self._flow_hist = [0.0] * 220   # exhaust-flow scope ring buffer
+        self._cyl_flow_hist = []  # per-cylinder exhaust-flow scope ring buffers
         self._fuel_total_l = 0.0  # integrated fuel burned (L)
         self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
         self._ign_flash = {}      # per-cylinder ignition-light fade
@@ -1388,11 +1388,6 @@ class App:
     def _update_hud_signals(self):
         """Sample the exhaust-flow scope and integrate fuel burn — once per frame."""
         sim = self.sim
-        # exhaust-flow scope: append the synth's recent (decimated) waveform, which
-        # IS the exhaust pressure wave, so the trace shows the real firing pulses.
-        w = getattr(self.synth, "last_wave", None) if self.synth else None
-        if w is not None and len(w):
-            self._flow_hist = (self._flow_hist + [float(v) for v in w])[-220:]
         # fuel: burn = air-mass / AFR; only when actually combusting.
         if sim.ignition_on and not sim._fuel_cut:
             t = sim.telemetry()
@@ -1430,20 +1425,45 @@ class App:
         return y + 20 + rows * 20
 
     def _draw_scope(self, x, y, w, h, label):
-        """Oscilloscope strip for the exhaust-flow waveform (orange, persistence)."""
+        """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
+        cylinder.  Each cylinder's blowdown pulse is drawn analytically vs crank
+        angle (the whole 720-deg cycle across the width, scrolling with the crank),
+        so it never aliases at high rpm; the pulses are staggered by firing order
+        and their heights differ with load x the cylinder's own voicing amplitude
+        — you literally watch the cylinders fire in sequence, lumpy at idle."""
         pygame.draw.rect(self.screen, (12, 13, 16), (x, y, w, h))
         pygame.draw.rect(self.screen, (44, 48, 56), (x, y, w, h), 1)
         self.screen.blit(self.font_small.render(self.tr(label), True, DIM), (x + 6, y + 3))
-        hist = self._flow_hist
-        n = len(hist)
-        if n > 1:
-            midy = y + h * 0.60
-            amp = h * 0.34
-            pts = [(x + w * i / (n - 1), midy - max(-1.0, min(1.0, hist[i])) * amp)
-                   for i in range(n)]
-            for off, col in ((2, (90, 52, 18)), (1, (150, 86, 32)), (0, (236, 152, 60))):
-                pygame.draw.lines(self.screen, col, False,
-                                  [(px, py + off) for px, py in pts], 1)
+        sim = self.sim
+        n = sim.engine.num_cylinders
+        if n < 1 or w < 4:
+            return
+        offs = sim._offset_deg
+        voice = getattr(self.synth, "_cyl_voice", None) if self.synth else None
+        crank_deg = math.degrees(sim.crank_angle) % 720.0
+        # overall flow strength from the real blowdown pressure (grows with load)
+        load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
+                       0.30), 1.05)
+        base, amp = h - 4, h - 12
+        ang = (np.arange(w) / (w - 1) * 720.0 + crank_deg) % 720.0   # scroll w/ crank
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        for i in range(n):
+            phi = (ang + offs[i]) % 720.0
+            d = phi - 505.0                              # 0 at exhaust-valve open
+            env = np.where((d >= 0) & (d < 210.0),
+                           np.clip(d / 4.0, 0.0, 1.0) * np.exp(-np.clip(d, 0, None) / 30.0),
+                           0.0)
+            # exaggerate the (small) per-cylinder voicing x3 so the strong/weak
+            # difference is legible on screen (display only — audio is unchanged)
+            vdev = (voice.amp[i] - 1.0) * 3.0 if voice and i < len(voice.amp) else 0.0
+            amp_i = load * (1.0 + vdev)
+            yv = base - np.clip(env * amp_i, 0.0, 1.1) * amp
+            sh = (i % 6) * 8
+            pts = np.column_stack((np.arange(w), yv)).astype(np.int32).tolist()
+            pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, 130), False, pts, 1)
+        self.screen.blit(surf, (x, y))
+        cap = self.font_small.render(f"x{n}", True, (130, 96, 54))
+        self.screen.blit(cap, (x + w - cap.get_width() - 6, y + 3))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
