@@ -162,6 +162,10 @@ class Engine:
                                      #   aluminium / iron -> wall-resonance pitch
     cat_cells_cpsi: int = 400        # catalytic cell density (cells/in^2): higher =
                                      #   denser honeycomb = more high-frequency damping
+    intake_runner_m: float = 0.30    # intake runner length (m) -> per-cylinder
+                                     #   breathing (+/-3%) variation in the voicing model
+    backpressure_coupling: float = 0.5  # 0..1: how strongly each exhaust pulse loads the
+                                     #   next cylinder to fire (cyl-to-cyl strong/weak beat)
 
     def __post_init__(self) -> None:
         # Physically derive the exhaust 'pop' resonance pitch from the MEAN

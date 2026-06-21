@@ -268,6 +268,105 @@ class _BlockDelay:
         return out
 
 
+class CylinderVoicing:
+    """Deterministic per-cylinder exhaust-voice variation derived PURELY from
+    intake / exhaust GEOMETRY — no random numbers, no per-car tuning.  It gives
+    each cylinder its own subtle character so the idle has real granular
+    lumpiness (you hear the cylinders fire one by one) instead of one uniform
+    electronic pulse.  At high rpm the fires overlap and the fixed per-cylinder
+    offsets simply average into a thicker texture — so no rpm-dependent logic is
+    needed: the same constants just *blend* once the firing gets dense.
+
+    Three physical sources, all precomputed ONCE per engine:
+
+      1. RUNNER HF DAMPING — a longer / thinner header runner loses more top end
+         (wall friction + bends), so each cylinder gets a 1st-order low-pass whose
+         cutoff is inversely proportional to its own runner length.  Equal-length
+         headers => near-identical cutoffs => barely any difference; unequal / long
+         headers => spread cutoffs => an obvious cylinder-to-cylinder colour shift.
+         (Exactly the "equal headers small, unequal headers large" physical rule.)
+
+      2. INTAKE DISTRIBUTION — a cylinder fed by a longer intake runner breathes a
+         little less air, so its combustion (hence exhaust-pulse amplitude) is a
+         few percent weaker.  A fixed +/-3% amplitude offset per cylinder.  Mapped
+         through the FIRING ORDER (not the physical order) it lands as an irregular
+         beat in time -> audible lumpiness rather than a smooth ramp.
+
+      3. INTER-CYLINDER BACKPRESSURE — each exhaust pulse leaves residual pressure
+         at the collector that loads the NEXT cylinder to fire on that collector.
+         A short firing gap (closely-spaced fires) => more residual backpressure =>
+         the next pulse is trimmed a touch and its rising edge softened.  Even-
+         firing engines see a uniform gap (no effect); UNEVEN firing (cross-plane
+         V8, unequal headers) gets a regular strong/weak beat for free.
+
+    Cost: one 1st-order filter per cylinder per block (a few microseconds for a
+    V12 at 48 kHz); everything else is just precomputed scalars.  One switch
+    (params["cyl_voice"], 0 = off) scales the whole effect.
+    """
+
+    def __init__(self, runner_len, channel_of, offsets, sr,
+                 intake_runner_m=0.30, bp_coupling=0.5):
+        self.n = n = len(runner_len)
+        self._scipy = _HAVE_SCIPY
+        # ---- (1) runner HF damping: cutoff ~ mean_len / len -------------------
+        Lmean = sum(runner_len) / max(n, 1)
+        self._b, self._a, self._zi = [], [], []
+        for L in runner_len:
+            fc = 9000.0 * (Lmean / max(L, 1e-3))         # longer runner -> duller
+            fc = min(max(fc, 3500.0), 13000.0)
+            if _HAVE_SCIPY:
+                b, a = butter(1, min(fc, sr * 0.45) / (sr / 2), btype="low")
+                self._b.append(b); self._a.append(a); self._zi.append(np.zeros(1))
+            else:
+                self._b.append(None); self._a.append(None); self._zi.append(None)
+        # ---- (2) intake distribution: +/-3% from intake runner length --------
+        # We don't have an explicit per-cylinder intake length, so we reuse the
+        # same along-the-rail ordering the exhaust runners imply (cylinders sorted
+        # by runner length) and apply a fixed gradient: the longest intake runner
+        # breathes ~3% less, the shortest ~3% more.  intake_runner_m scales nothing
+        # by itself here (the gradient is normalised) but is kept as the physical
+        # handle / JSON field and nudges the spread a touch for very long runners.
+        spread3 = 0.03 * min(max(intake_runner_m / 0.30, 0.5), 1.6)
+        order = sorted(range(n), key=lambda i: runner_len[i])
+        intake_amp = [1.0] * n
+        for rank, j in enumerate(order):
+            frac = rank / max(n - 1, 1)                  # 0 short .. 1 long runner
+            intake_amp[j] = 1.0 + spread3 * (1.0 - 2.0 * frac)
+        # ---- (3) inter-cylinder backpressure ---------------------------------
+        by_chan = {}
+        for j in range(n):
+            by_chan.setdefault(channel_of[j], []).append(j)
+        bp_amp = [1.0] * n
+        bp_edge = [1.0] * n
+        for members in by_chan.values():
+            seq = sorted(members, key=lambda i: offsets[i] % 720.0)
+            m = len(seq)
+            if m < 2:
+                continue
+            gaps = []
+            for a_i in range(m):
+                cur, prev = seq[a_i], seq[(a_i - 1) % m]
+                gap = (offsets[cur] - offsets[prev]) % 720.0
+                gaps.append(gap if gap > 1e-6 else 720.0)
+            gmean = sum(gaps) / m
+            for a_i in range(m):
+                j = seq[a_i]
+                gn = gaps[a_i] / gmean                   # <1 = closer than even-fire
+                trim = bp_coupling * max(1.0 - gn, 0.0)  # only short gaps load up
+                bp_amp[j] = 1.0 - 0.06 * trim            # trimmed amplitude
+                bp_edge[j] = 1.0 + 0.5 * trim            # softer (blunter) edge
+        # combined per-cylinder amplitude factor and edge (rise) factor
+        self.amp = [intake_amp[j] * bp_amp[j] for j in range(n)]
+        self.edge = bp_edge
+
+    def damp(self, j, x):
+        """Apply cylinder j's runner HF-damping low-pass (state carried)."""
+        if not self._scipy:
+            return x
+        y, self._zi[j] = lfilter(self._b[j], self._a[j], x, zi=self._zi[j])
+        return y
+
+
 class Synthesizer:
     """Streams physics-driven engine audio from a live :class:`Simulator`."""
 
@@ -337,6 +436,7 @@ class Synthesizer:
             "whine": 1.0,         # high-rpm standing-wave whine/scream amount
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
+            "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -443,6 +543,11 @@ class Synthesizer:
         # pipe's round-trip time -> low-frequency elasticity + a longer, rounder tail.
         self._tail_len = 2.0 * max(eng.exhaust_total_m, 0.5)
         self._tail_dl = _BlockDelay(int(self._tail_len / 380.0 * sr) + BLOCK + 8)
+        # deterministic per-cylinder voicing (granular idle, no random/no per-car)
+        self._cyl_voice = CylinderVoicing(
+            self._runner_len, self._channel_of, [float(o) for o in self._offsets], sr,
+            intake_runner_m=getattr(eng, "intake_runner_m", 0.30),
+            bp_coupling=getattr(eng, "backpressure_coupling", 0.5))
         # TWO waveguides per channel: a short primary runner (high resonance) and
         # the full system length (low resonance) -> several pipe resonances at
         # different frequencies, like a real exhaust.
@@ -668,10 +773,19 @@ class Synthesizer:
             # character clearly audible -> coarse, grainy low-rpm lumpiness.
             spread = self.params["cyl_spread"] * (1.0 + 1.4 * (1.0 - self._valve))
             base_tau = self.params["pulse_tau"]
+            # deterministic per-cylinder voicing (geometry-derived, no random); the
+            # switch scales the deviation from 1.0, so cv=0 is perfectly uniform.
+            voice = self._cyl_voice
+            cv = self.params.get("cyl_voice", 1.0)
+            use_voice = voice is not None and cv > 1e-3
             for j, off in enumerate(self._offsets):
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
                 amp_j = self._jit[j] * max(1.0 + 0.55 * spread * self._cyl_amp[j], 0.1)
+                edge_j = 1.0
+                if use_voice:                                # geometry voicing
+                    amp_j *= 1.0 + (voice.amp[j] - 1.0) * cv
+                    edge_j = 1.0 + (voice.edge[j] - 1.0) * cv
                 phi = np.mod(crank + off + self._header_offset[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
@@ -683,7 +797,7 @@ class Synthesizer:
                 #   load the edge is sharper and taller, so the metallic HF scream
                 #   grows straight from the SOURCE and tracks the throttle — never a
                 #   global treble boost (which would just hiss).
-                rise_deg = max((2.0 + 4.0 * (1.0 - load)) * dps, 1e-4)
+                rise_deg = max((2.0 + 4.0 * (1.0 - load)) * dps * edge_j, 1e-4)
                 hard = np.clip(d / rise_deg, 0.0, 1.0)        # linear hard edge
                 tau_blow = max(0.30 * tau_j, 4.0)
                 blow = (0.7 + 1.0 * load) * hard * np.exp(-dd / tau_blow)
@@ -695,6 +809,9 @@ class Synthesizer:
                 disp = soft * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
                 pulse = np.where(inwin, (blow + 0.7 * disp) * close * amp_j, 0.0)
+                # per-cylinder runner HF damping (longer/thinner runner = duller)
+                if use_voice:
+                    pulse = voice.damp(j, pulse)
                 # delay this cylinder's pulse down its own runner (length / live
                 # sound speed) before it merges at the collector -> interference.
                 d_samp = self._runner_len[j] / c_runner * self.sample_rate

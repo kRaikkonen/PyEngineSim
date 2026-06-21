@@ -55,7 +55,8 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
                                         //   size (recommended). Set 45-135 to force.
   "exhaust_primary_m": 0.42-0.80,       // SHORT=bright/hard, LONG=deep
   "exhaust_total_m": 1.6-2.6,
-  "exhaust_radius_m": 0.022-0.031,
+  "exhaust_radius_m": 0.016-0.032,      // THIN bore (0.018-0.022) = high-rpm
+                                        //   scream/whine; FAT bore (0.029-0.032) = roar
   "exhaust_channels": 1 or 2,           // 2 = separate banks (most V engines, boxers)
   "exhaust_openness": 0.5-0.96,         // 0.6 muffled .. 0.95 open race pipe
   "muffler_volume_m3": 0.001-0.005,     // smaller = louder/harder
@@ -81,6 +82,17 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
                                         //   classics and pure race cars (open exhaust)
   "straight_cut": false,                // straight-cut (dog) gearbox whine on by default
                                         //   — true for race / track / rally cars only
+  "wall_material": "steel",             // exhaust pipe material -> wall-resonance pitch:
+                                        //   "titanium"/"inconel" (race & top exotics:
+                                        //   bright, clear), "steel"/"stainless" (most
+                                        //   road cars), "aluminium", "iron" (old/dull)
+  "cat_cells_cpsi": 400,                // cat honeycomb density: 400 = dense stock
+                                        //   (smothers highs), 200 = high-flow sport cat
+                                        //   (lets the whine through), ignored if no cat
+  "intake_runner_m": 0.30,             // intake runner length (m): drives the fixed
+                                        //   +/-3% per-cylinder breathing variation
+  "backpressure_coupling": 0.5,        // 0..1 how strongly each exhaust pulse loads the
+                                        //   next cylinder (cyl-to-cyl strong/weak beat)
   "gearbox_type": "dct" | "single" | "at" | "manual",
   "gear_ratios": [list of gear ratios, 1st to top],
   "final_drive": number,
@@ -156,6 +168,17 @@ STEP 5 — Pick the right factory HARDWARE for the car (don't just leave default
     race box, kicks), "at" (torque-converter auto, slushy), "manual".
   - induction: "turbo" / "roots" / "centrifugal" with boost_bar>0, else "na".
     Set electric_turbo true for an e-turbo; hybrid_kw>0 for a hybrid.
+  - EXHAUST VOICE by tier (these make the scream/whine come out right):
+      · Screamer (F1, NA race V8/V10/V12, LFA, GT3, 458, Carrera GT, ~8500+ rpm):
+        wall_material "titanium", cat_cells_cpsi 200 (or has_cat false on pure race),
+        exhaust_radius_m 0.018-0.022 (thin), exhaust_openness 0.88-0.98.
+      · Road sports / GT (M3, AMG, R8, Cayman, ~7000-8500 rpm): wall_material
+        "steel", cat_cells_cpsi 400, exhaust_radius_m 0.024-0.027, openness 0.7-0.9.
+      · Muscle / big lazy turbo (Hellcat, SL65, Veyron, ~6000-7000 rpm): wall_material
+        "steel", exhaust_radius_m 0.028-0.032 (fat = roar not whine), openness 0.5-0.65.
+      · Old classic: wall_material "iron"/"steel", has_cat false.
+  - intake_runner_m / backpressure_coupling: leave at defaults (0.30 / 0.5) unless you
+    want stronger per-cylinder lumpiness — longer intake & higher coupling = lumpier idle.
 
 STEP 6 — Final sanity before you output:
   - bore/stroke/rod_length are DECIMALS like 0.086, never 86.
