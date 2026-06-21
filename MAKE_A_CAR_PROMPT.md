@@ -51,7 +51,8 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
   "heat_release_k": see STEP 3,         // THE power knob
   "friction_static": 4-11,              // small engine ~5, big ~10
   "starter_torque": 90-220,
-  "exhaust_tone": 45-135,               // Hz: deep V8 ~52, screamer ~100, rotary ~135
+  "exhaust_tone": 0,                    // 0 = auto-derive pop pitch from cylinder
+                                        //   size (recommended). Set 45-135 to force.
   "exhaust_primary_m": 0.42-0.80,       // SHORT=bright/hard, LONG=deep
   "exhaust_total_m": 1.6-2.6,
   "exhaust_radius_m": 0.022-0.031,
