@@ -981,92 +981,100 @@ class App:
         if eng.is_rotary:
             self._draw_rotary(rect, top, bottom)
             return
-        col_w = rect.width / n
-        bore_h = (bottom - top) * 0.5
-        bore_w = min(col_w * 0.52, 62)
-        crank_r = min(col_w * 0.16, 24)
-        piston_h = min(max(bore_w * 0.7, 18), 34)
-
-        for i in range(n):
-            cx = rect.x + col_w * (i + 0.5)
-            crank_cy = bottom - crank_r - 6
-            bore_top = crank_cy - crank_r * 2.2 - bore_h
-            bw = bore_w
-            bx = cx - bw / 2
-            travel = bore_h - piston_h
-            phi = sim.cycle_phase_deg(i)
-            theta = math.radians(phi % 360.0)
-            frac = sim.piston_fraction(i)              # 0 TDC .. 1 BDC
-            py = bore_top + 6 + frac * travel
-            pin = (cx, py + piston_h - 7)
-            crank_pin = (cx + crank_r * math.sin(theta),
-                         crank_cy + crank_r * math.cos(theta))
-
-            # --- cylinder block: finned metal sleeve with a head cap ---
-            head_h = 16
-            sleeve = pygame.Rect(bx - 4, bore_top - head_h, bw + 8,
-                                 bore_h + head_h + 8)
-            self.screen.blit(self._cyl_shade(sleeve.w, sleeve.h, (74, 80, 92), 7),
-                             sleeve.topleft)
-            pygame.draw.rect(self.screen, (26, 28, 34), sleeve, width=2,
-                             border_radius=7)
-            for fy in range(3):                        # cooling fins on the head
-                yy = int(bore_top - head_h + 4 + fy * 4)
-                pygame.draw.line(self.screen, (44, 48, 56),
-                                 (sleeve.x + 4, yy), (sleeve.right - 4, yy))
-            # bore interior (where the piston runs)
-            pygame.draw.rect(self.screen, (30, 33, 40),
-                             (bx, bore_top, bw, bore_h + 4), border_radius=4)
-
-            # --- combustion glow above the crown during the firing stroke ---
-            if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445:
-                glow = min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
-                           / (5.0 * 101325.0), 1.0)
-                if glow > 0.02:
-                    gh = max(6, int(py - bore_top))
-                    gs = pygame.Surface((bw - 4, gh), pygame.SRCALPHA)
-                    gs.fill((FLASH[0], FLASH[1], FLASH[2], int(210 * glow)))
-                    self.screen.blit(gs, (bx + 2, bore_top + 2))
-
-            # --- piston: crown + ring grooves + skirt (round metal) ---
-            self.screen.blit(self._cyl_shade(bw - 6, piston_h, (190, 196, 208), 3),
-                             (cx - (bw - 6) / 2, py))
-            pygame.draw.rect(self.screen, (96, 102, 114),
-                             (cx - (bw - 6) / 2, py, bw - 6, piston_h), width=1,
-                             border_radius=3)
-            for rg in range(3):                        # ring lands
-                ry = int(py + 5 + rg * 4)
-                pygame.draw.line(self.screen, (74, 80, 92),
-                                 (cx - (bw - 8) / 2, ry), (cx + (bw - 8) / 2, ry))
-            pygame.draw.circle(self.screen, (54, 58, 68),
-                               (int(pin[0]), int(pin[1])), 4)   # wrist pin
-            pygame.draw.circle(self.screen, (150, 156, 168),
-                               (int(pin[0]), int(pin[1])), 4, 1)
-
-            # --- connecting rod (I-beam) ---
-            self._draw_rod(pin, crank_pin, max(crank_r * 0.34, 4))
-
-            # --- crankshaft: counterweight web + main + crank journal ---
-            cwx = cx - crank_r * 0.6 * math.sin(theta)
-            cwy = crank_cy - crank_r * 0.6 * math.cos(theta)
-            pygame.draw.circle(self.screen, (44, 47, 56),
-                               (int(cwx), int(cwy)), int(crank_r * 1.35))
-            pygame.draw.circle(self.screen, (62, 66, 78), (int(cx), int(crank_cy)),
-                               int(crank_r * 0.7))
-            pygame.draw.circle(self.screen, (84, 90, 104), (int(cx), int(crank_cy)),
-                               int(crank_r * 0.7), 1)
-            pygame.draw.circle(self.screen, ACCENT,
-                               (int(crank_pin[0]), int(crank_pin[1])), 5)
-            pygame.draw.circle(self.screen, (20, 60, 110),
-                               (int(crank_pin[0]), int(crank_pin[1])), 5, 1)
-
-            label = self.font_small.render(f"{i + 1}", True, DIM)
-            self.screen.blit(label, (int(cx) - 4, bottom + 8))
+        # Group cylinders by bank so the drawing matches the real layout: an
+        # inline engine is one upright row, a V is two angled banks meeting at a
+        # shared crank, a boxer opposes left/right, a W is a wide double-V.
+        left = [i for i in range(n) if eng.cylinders[i].bank_angle_deg < -0.1]
+        right = [i for i in range(n) if eng.cylinders[i].bank_angle_deg > 0.1]
+        if not left and not right:
+            stations = [[i] for i in range(n)]           # inline: one per station
+        else:
+            m = max(len(left), len(right))
+            stations = []
+            for s in range(m):
+                st = []
+                if s < len(left):
+                    st.append(left[s])
+                if s < len(right):
+                    st.append(right[s])
+                stations.append(st)
+        ns = max(1, len(stations))
+        sw = rect.width / ns
+        maxang = max((abs(c.bank_angle_deg) for c in eng.cylinders), default=0.0)
+        crank_y = bottom - 30 - (bottom - top - 70) * min(maxang / 90.0, 1.0) * 0.5
+        # cap the length so a tilted bank's HORIZONTAL reach never runs into the
+        # neighbouring station or off the panel (matters most for wide V / boxer).
+        sinmax = math.sin(math.radians(maxang))
+        length = min((crank_y - top) * 0.9, sw * 0.95, 0.46 * sw / max(sinmax, 0.34))
+        width = min(sw * 0.32, 40)
+        for s, st in enumerate(stations):
+            jx = rect.x + sw * (s + 0.5)
+            for i in st:
+                cyl = eng.cylinders[i]
+                a = math.radians(cyl.bank_angle_deg)
+                phi = sim.cycle_phase_deg(i)
+                theta = math.radians(phi % 360.0)
+                frac = sim.piston_fraction(i)            # 0 TDC .. 1 BDC
+                glow = (min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
+                            / (5.0 * 101325.0), 1.0)
+                        if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
+                        else 0.0)
+                self._draw_cyl(jx, crank_y, a, length, width, frac, theta, glow)
+                lx = jx + math.sin(a) * (length + 14)
+                ly = crank_y - math.cos(a) * (length + 14)
+                lab = self.font_small.render(f"{i + 1}", True, DIM)
+                self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
 
         # firing order (derived from the cycle offsets, so it's always physical)
         fo = "-".join(str(x) for x in eng.firing_order)
         self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
                                                 True, ACCENT), (rect.x + 18, bottom + 26))
+
+    def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow):
+        """Draw one cylinder + reciprocating piston + rod + crank journal along a
+        bank axis tilted by angle ``a`` (radians) from vertical, hinged at the
+        crank centre (jx, jy).  This is what makes V / boxer / W banks look real."""
+        ux, uy = math.sin(a), -math.cos(a)            # 'up' along the cylinder
+        qx, qy = math.cos(a), math.sin(a)             # perpendicular (across bore)
+        cr = 8.0
+        bx, by = jx + ux * cr * 1.5, jy + uy * cr * 1.5   # bore base (off the crank)
+        hw = width / 2.0
+
+        def quad(d0, d1, halfw):                      # rect from d0..d1 along axis
+            a0 = (bx + ux * d0, by + uy * d0); a1 = (bx + ux * d1, by + uy * d1)
+            return [(a0[0] + qx * halfw, a0[1] + qy * halfw),
+                    (a1[0] + qx * halfw, a1[1] + qy * halfw),
+                    (a1[0] - qx * halfw, a1[1] - qy * halfw),
+                    (a0[0] - qx * halfw, a0[1] - qy * halfw)]
+
+        tx, ty = bx + ux * length, by + uy * length   # bore top
+        pygame.draw.polygon(self.screen, (66, 72, 84), quad(0, length, hw))   # sleeve
+        pygame.draw.polygon(self.screen, (26, 28, 34), quad(0, length, hw), 2)
+        pygame.draw.line(self.screen, (122, 130, 144),               # round highlight
+                         (bx + ux * 6, by + uy * 6), (tx - ux * 6, ty - uy * 6), 2)
+        pygame.draw.polygon(self.screen, (26, 28, 34), quad(3, length - 3, hw - 3))
+        for fz in range(3):                           # head fins near the top
+            d = length - 4 - fz * 4
+            pygame.draw.line(self.screen, (48, 52, 62),
+                             (bx + ux * d + qx * hw, by + uy * d + qy * hw),
+                             (bx + ux * d - qx * hw, by + uy * d - qy * hw))
+        if glow > 0.02:                               # combustion glow near the top
+            gx, gy = bx + ux * (length - 10), by + uy * (length - 10)
+            gs = pygame.Surface((44, 44), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(200 * glow)),
+                               (22, 22), int(width * 0.5))
+            self.screen.blit(gs, (int(gx) - 22, int(gy) - 22))
+        plen = 14.0
+        travel = max(length - plen - 14, 6.0)
+        ppos = 8.0 + (1.0 - frac) * travel            # TDC high, BDC near crank
+        pygame.draw.polygon(self.screen, (192, 198, 210), quad(ppos, ppos + plen, hw - 4))
+        pygame.draw.polygon(self.screen, (96, 102, 114), quad(ppos, ppos + plen, hw - 4), 1)
+        pin = (bx + ux * ppos, by + uy * ppos)        # wrist pin (piston base)
+        jrn = (jx + cr * math.sin(theta), jy + cr * math.cos(theta))   # crank journal
+        self._draw_rod(pin, jrn, max(cr * 0.4, 3))
+        pygame.draw.circle(self.screen, (54, 58, 70), (int(jx), int(jy)), int(cr))
+        pygame.draw.circle(self.screen, (84, 90, 104), (int(jx), int(jy)), int(cr), 1)
+        pygame.draw.circle(self.screen, ACCENT, (int(jrn[0]), int(jrn[1])), 4)
 
     def _reuleaux(self, verts, samples=10):
         """Polygon points for a Reuleaux triangle through three apexes: each side
