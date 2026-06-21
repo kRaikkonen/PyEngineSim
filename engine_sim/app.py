@@ -584,14 +584,24 @@ class App:
                 dtr.v = min(max((tm.rpm - eng.idle_rpm) / span, 0.0), 1.0) * 75.0
             dtr.gear = tm.gear if (tm.throttle_valid and tm.gear > 0) else (
                 1 if dtr.v > 0.5 else 0)
-            self.sim._update_boost(dt)
+            if tm.dash_valid:
+                # sync the game's REAL boost / torque / brake / clutch for accuracy
+                dtr.brake = tm.brake
+                dtr.clutch = 1.0 - tm.clutch        # Forza: 1 = pressed in
+                if eng.induction != "na":
+                    # Forza broadcasts boost in PSI (negative = vacuum)
+                    self.sim.boost = max(0.0, tm.boost_psi) * 0.06895   # -> bar
+                self._disp_torque = max(tm.torque, 0.0)
+            else:
+                self.sim._update_boost(dt)          # FH6/unknown: model the spool
+                self._disp_torque = 0.0
         else:
             # not connected yet: idle quietly
             self.sim.throttle = 0.0
             idle = rpm_to_rads(self.sim.engine.idle_rpm)
             self.sim.omega += (idle - self.sim.omega) * min(3.0 * dt, 1.0)
+            self._disp_torque = 0.0
         self.sim.crank_angle += self.sim.omega * dt
-        self._disp_torque = 0.0
 
     # ----------------------------------------------------------- draw: parts
     def draw(self):

@@ -66,6 +66,14 @@ class ForzaTelemetry:
         self.gear = 0
         self.speed = 0.0              # m/s, from the dash packet (known lengths)
         self.speed_valid = False
+        # extra dash channels (known dash lengths only) — broadcast straight from
+        # the game for an accurate sync instead of our own model.
+        self.power = 0.0             # W
+        self.torque = 0.0            # Nm
+        self.boost_psi = 0.0         # Forza boost (PSI; negative = vacuum)
+        self.brake = 0.0             # 0..1
+        self.clutch = 0.0            # 0..1 (1 = pressed in)
+        self.dash_valid = False
         self.packet_len = 0
         self._last_packet = 0.0
         # car-local acceleration (m/s^2): X = lateral (right+), Z = longitudinal
@@ -144,14 +152,22 @@ class ForzaTelemetry:
             except IndexError:
                 self.throttle_valid = False
             try:
-                sp = struct.unpack_from("<f", data, _BASE_SPEED + shift)[0]
+                sp, pw, tq = struct.unpack_from("<fff", data, _BASE_SPEED + shift)
                 if 0.0 <= sp < 200.0:           # sane m/s
                     self.speed = sp
                     self.speed_valid = True
-            except struct.error:
+                self.power = pw                  # W   @248
+                self.torque = tq                 # Nm  @252
+                self.boost_psi = struct.unpack_from("<f", data, 272 + shift)[0]
+                self.brake = data[304 + shift] / 255.0
+                self.clutch = data[305 + shift] / 255.0
+                self.dash_valid = True
+            except (struct.error, IndexError):
                 self.speed_valid = False
+                self.dash_valid = False
         else:
             # FH6 / sled-only / future: rpm is exact, throttle derived from rpm
             self.throttle_valid = False
             self.speed_valid = False
+            self.dash_valid = False
         self._last_packet = time.monotonic()
