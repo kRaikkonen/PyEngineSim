@@ -115,7 +115,15 @@ forced-induction modelling, and the audio is a pulse synthesizer rather than tru
 convolution. The torque-curve *shapes* and driving feel are realistic; the
 absolute numbers are in the right ballpark but not dyno-accurate.
 
-## Build your own engine
+## Make any car with an AI (no coding)
+
+Don't want to touch Python? Open **[MAKE_A_CAR_PROMPT.md](MAKE_A_CAR_PROMPT.md)**,
+copy the prompt, paste it into any AI assistant with the car name you want, and
+it returns a finished `.json` engine file. Drop it in `configs/engines/` and load
+it with **Load car…**. The template encodes the exact schema, units, firing-order
+maths and a power-tuning table, so the result loads and runs realistically.
+
+## Build your own engine (in code)
 
 Engines are modular: write a builder in `presets.py` that returns an `Engine`
 made of `Cylinder`s, then add one line to the `PRESETS` list — it shows up in the
