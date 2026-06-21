@@ -277,6 +277,7 @@ class Synthesizer:
             "turbo_vol": 0.6,     # turbo spool whistle + blow-off-valve level
             "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
+            "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
         }
 
         self._build_audio()
@@ -290,6 +291,8 @@ class Synthesizer:
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
+        self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
+        self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -663,11 +666,34 @@ class Synthesizer:
 
         gv = P["gearbox_vol"]
         dt = sim.drivetrain
-        if (self.straight_cut and gv > 1e-3 and dt.gear > 0 and dt.clutch > 0.3):
-            f = (rpm / 60.0) * 6.0                            # mesh whine ~ rpm
+        # Straight-cut gear whine tracks ROAD SPEED (the output-shaft / final-drive
+        # mesh), NOT engine rpm.  So the pitch sweeps continuously low->high as the
+        # car accelerates and does NOT dip on every upshift the way an rpm-tracked
+        # tone wrongly would — that single rising whine is the straight-cut sound.
+        if self.straight_cut and gv > 1e-3 and dt.v > 0.4 and dt.gear > 0:
+            wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
+            f = wheel_rps * dt.final_drive * 9.0             # final-drive mesh ~ speed
             if 30.0 < f < sr * 0.45:
                 out += (gv * 0.4) * self._whine(
                     f, frames, [(1, 1.0), (2, 0.4)], phase_attr="_gearbox_phase")
+
+        # --- hybrid: electric-motor whine + e-turbo e-compressor whine ----------
+        hv = P["hybrid_vol"]
+        if hv > 1e-3:
+            # electric drive motor: a clean high whine that rises with rpm and
+            # swells with the motor's assist (throttle), present on hybrids.
+            if eng.hybrid_kw > 0.0 and sim.hybrid_on and sim.throttle > 0.02:
+                fm = (rpm / 60.0) * 14.0                  # geared-up motor whine
+                if 60.0 < fm < sr * 0.45:
+                    amp = hv * 0.18 * min(sim.throttle, 1.0)
+                    out += amp * self._whine(fm, frames, [(1, 1.0), (2, 0.3)],
+                                             phase_attr="_motor_phase")
+            # e-turbo / e-compressor: a steady electric whine whenever it makes
+            # boost (no spool lag, so it's there the moment you ask for it).
+            if eng.electric_turbo and bfrac > 0.02:
+                fe = 2200.0 + bfrac * 2600.0
+                out += (hv * 0.22 * bfrac) * self._whine(
+                    min(fe, sr * 0.45), frames, [(1, 1.0)], phase_attr="_ecomp_phase")
         return out
 
     def _callback(self, outdata, frames, time_info, status):

@@ -62,6 +62,10 @@ class ForzaTelemetry:
         self.gear = 0
         self.packet_len = 0
         self._last_packet = 0.0
+        # car-local acceleration (m/s^2): X = lateral (right+), Z = longitudinal
+        # (forward+).  Drives the spatial-audio dot from real cornering/braking G.
+        self.accel_x = 0.0
+        self.accel_z = 0.0
 
     # ------------------------------------------------------------- lifecycle
     def start(self) -> bool:
@@ -118,6 +122,12 @@ class ForzaTelemetry:
         self.rpm = cur_rpm
         n = len(data)
         self.packet_len = n
+        # AccelerationX @20, AccelerationZ @28 (f32) — same sled, every Forza title
+        if n >= 32:
+            try:
+                self.accel_x, _ay, self.accel_z = struct.unpack_from("<fff", data, 20)
+            except struct.error:
+                pass
         # throttle + gear only from a KNOWN dash length (offset shifts +12 on FH4/5)
         if n in _KNOWN_DASH:
             shift = 12 if n in (323, 324) else 0

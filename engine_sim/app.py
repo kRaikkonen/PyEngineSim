@@ -88,6 +88,7 @@ SLIDER_DEFS = [
     ("turbo_vol", "Turbo spool / BOV", 0.0, 1.2),
     ("spool_reverb", "Spool reverb", 0.0, 0.6),
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
+    ("hybrid_vol", "Electric / e-turbo", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -137,6 +138,7 @@ class App:
         # Forza telemetry mode: drive the sound from a real game's broadcast rpm
         self.telemetry = None
         self.telemetry_mode = False
+        self.g_spatial = False    # drift the spatial dot from Forza G-force
 
         if preset_key not in presets.ALL:
             preset_key = presets.PRESETS[0][0]
@@ -169,6 +171,8 @@ class App:
             ("Load car…", self.load_car_dialog, None, 0),
             ("Load EQ…", self.load_eq_dialog, None, 0),
             ("Save…", self.save_dialog, None, 0),
+            ("Mixer / EQ", lambda: setattr(self, "mixer_open", not self.mixer_open),
+             lambda: self.mixer_open, 0),
             (f"Out: {dev} ▾", self._menu_device, None, 1),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
             ("Auto" if dt.auto else "Manual", lambda: setattr(dt, "auto", not dt.auto),
@@ -181,7 +185,11 @@ class App:
             ("Cat", lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
             ("Flutter", lambda: setattr(sy, "flutter", not sy.flutter),
              lambda: sy.flutter, 2),
+            ("Hybrid", lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
+             lambda: self.sim.hybrid_on, 2),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
+            ("G-pad", lambda: setattr(self, "g_spatial", not self.g_spatial),
+             lambda: self.g_spatial, 2),
         ]
 
     def _rebuild_toolbar(self, panel):
@@ -372,7 +380,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 28
+            y += 27
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
@@ -427,7 +435,10 @@ class App:
                             cb()
                             break
                 elif self.mixer_open:
-                    if self._pad_rect.collidepoint(mpos):
+                    if getattr(self, "_mixer_close_rect", None) and \
+                            self._mixer_close_rect.collidepoint(mpos):
+                        self.mixer_open = False
+                    elif self._pad_rect.collidepoint(mpos):
                         self._drag = "pad"
                         self._set_pad(mpos)
                     else:
@@ -497,8 +508,9 @@ class App:
             self.sim.drivetrain.auto_control(
                 self.sim.rpm, self.sim.throttle, self.sim.engine.redline_rpm, dt)
             self.sim.step(dt)
-            # Show indicated (combustion) torque — the engine's output capacity.
-            self._disp_torque += (self.sim.gas_torque - self._disp_torque) * 0.08
+            # Show indicated torque — combustion plus any electric-motor assist.
+            drive_tq = self.sim.gas_torque + self.sim.motor_torque
+            self._disp_torque += (drive_tq - self._disp_torque) * 0.08
         if self._status_t > 0.0:
             self._status_t -= dt
 
@@ -524,6 +536,17 @@ class App:
             target = rpm_to_rads(max(tm.rpm, 0.0))
             # light smoothing between 60 Hz packets so the pitch glides cleanly
             self.sim.omega += (target - self.sim.omega) * min(22.0 * dt, 1.0)
+            # G-force spatial: drift the spatial-audio dot with the car's real
+            # lateral / longitudinal acceleration (cornering pans L/R, accel &
+            # braking move it near/far), eased so it floats rather than snaps.
+            if self.g_spatial:
+                gx = max(-1.0, min(1.0, tm.accel_x / 12.0))   # ~1.2 g -> full
+                gz = max(-1.0, min(1.0, tm.accel_z / 12.0))
+                tx = 0.5 + 0.5 * gx
+                ty = 0.5 - 0.5 * gz                           # accel -> nearer
+                p = self.synth.params
+                p["spatial_x"] += (tx - p["spatial_x"]) * min(6.0 * dt, 1.0)
+                p["spatial_y"] += (ty - p["spatial_y"]) * min(6.0 * dt, 1.0)
         else:
             # not connected yet: idle quietly
             self.sim.throttle = 0.0
@@ -594,8 +617,14 @@ class App:
         pygame.draw.rect(self.screen, PANEL, rect, border_radius=12)
         self.screen.blit(self.font.render("AUDIO MIXER", True, INK),
                          (rect.x + 18, rect.y + 18))
-        self.screen.blit(self.font_small.render("drag the sliders  ·  C to close",
+        self.screen.blit(self.font_small.render("drag the sliders  ·  C or ✕ to close",
                                                  True, DIM), (rect.x + 150, rect.y + 24))
+        # a mouse-clickable close box (so you never need the keyboard)
+        self._mixer_close_rect = pygame.Rect(rect.right - 42, rect.y + 14, 28, 24)
+        pygame.draw.rect(self.screen, (56, 62, 74), self._mixer_close_rect,
+                         border_radius=5)
+        self.screen.blit(self.font_small.render("X", True, INK),
+                         (self._mixer_close_rect.x + 9, self._mixer_close_rect.y + 4))
         P = self.synth.params
         for s in self._sliders:
             key, t = s["key"], s["track"]

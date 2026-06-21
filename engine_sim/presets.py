@@ -86,7 +86,7 @@ def vw_ea888_i4() -> Engine:
         flywheel_inertia=0.24,
         redline_rpm=6800,
         idle_rpm=850,
-        heat_release_k=6.5,
+        heat_release_k=1.66,             # full-boost power = nameplate (~310 hp)
         ve_peak_frac=0.45,               # turbo: torque peaks low and stays flat
         ve_width_frac=0.8,
         induction="turbo", boost_bar=1.1, turbo_lag=0.4,
@@ -318,7 +318,7 @@ def dodge_hellcat_v8() -> Engine:
         name="Dodge Hellcat 6.2 supercharged V8",
         cylinders=cylinders,
         flywheel_inertia=0.45, redline_rpm=6200, idle_rpm=720,
-        heat_release_k=2.5, ve_width_frac=0.75, closed_map_fraction=0.20,
+        heat_release_k=1.73, ve_width_frac=0.75, closed_map_fraction=0.20,
         friction_static=7.0, starter_torque=180.0,
         exhaust_tone=52.0,
         exhaust_primary_m=0.75, exhaust_total_m=2.2, exhaust_radius_m=0.029,
@@ -346,7 +346,8 @@ def toyota_2jz_supra() -> Engine:
         name="Toyota Supra 2JZ-GTE 3.0 twin-turbo I6",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=800,
-        heat_release_k=4.6, ve_width_frac=0.75, closed_map_fraction=0.17,
+        heat_release_k=1.7, ve_width_frac=0.75, closed_map_fraction=0.22,
+        ve_floor=0.72,
         exhaust_tone=88.0,
         exhaust_primary_m=0.5, exhaust_total_m=2.0, exhaust_radius_m=0.026,
         exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.003,
@@ -372,7 +373,7 @@ def bmw_s58() -> Engine:
         name="BMW S58 3.0 twin-turbo I6 (M3/M4)",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=7200, idle_rpm=750,
-        heat_release_k=5.2, ve_width_frac=0.75, closed_map_fraction=0.16,
+        heat_release_k=1.52, ve_width_frac=0.75, closed_map_fraction=0.16,
         exhaust_tone=92.0,
         exhaust_primary_m=0.48, exhaust_total_m=1.9, exhaust_radius_m=0.025,
         exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0028,
@@ -647,7 +648,7 @@ def nissan_r34_rb26() -> Engine:
         name="Nissan R34 GT-R RB26DETT 2.6 twin-turbo I6",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=8000, idle_rpm=850,
-        heat_release_k=5.4, ve_width_frac=0.74, closed_map_fraction=0.16,
+        heat_release_k=1.42, ve_width_frac=0.74, closed_map_fraction=0.16,
         exhaust_tone=90.0,
         exhaust_primary_m=0.5, exhaust_total_m=2.0, exhaust_radius_m=0.026,
         exhaust_channels=1, exhaust_openness=0.66, muffler_volume_m3=0.0028,
@@ -676,7 +677,7 @@ def nissan_r35_vr38() -> Engine:
         name="Nissan R35 GT-R VR38DETT 3.8 twin-turbo V6",
         cylinders=cylinders,
         flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=800,
-        heat_release_k=5.8, ve_width_frac=0.74, closed_map_fraction=0.16,
+        heat_release_k=1.66, ve_width_frac=0.74, closed_map_fraction=0.16,
         exhaust_tone=80.0,
         exhaust_primary_m=0.55, exhaust_total_m=2.0, exhaust_radius_m=0.027,
         exhaust_channels=2, exhaust_openness=0.62, muffler_volume_m3=0.0032,
@@ -850,7 +851,8 @@ def mitsubishi_evo7_4g63() -> Engine:
         name="Mitsubishi Evo VII 4G63T 2.0 turbo I4",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=7000, idle_rpm=820,
-        heat_release_k=6.7, ve_width_frac=0.72, closed_map_fraction=0.17,
+        heat_release_k=2.6, ve_width_frac=0.72, closed_map_fraction=0.22,
+        ve_floor=0.75,
         exhaust_tone=86.0,
         exhaust_primary_m=0.5, exhaust_total_m=1.85, exhaust_radius_m=0.025,
         exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.003,
@@ -940,7 +942,8 @@ def audi_sport_quattro_s1() -> Engine:
         name="Audi Sport Quattro S1 2.1 turbo I5",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=950,
-        heat_release_k=9.2, ve_width_frac=0.72, closed_map_fraction=0.18,
+        heat_release_k=2.2, ve_width_frac=0.72, closed_map_fraction=0.24,
+        ve_floor=0.72,
         friction_static=6.0, starter_torque=150.0,
         exhaust_tone=88.0,
         exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.026,
@@ -969,7 +972,8 @@ def audi_rs3_2024() -> Engine:
         name="Audi RS3 2.5 turbo I5 (EA855)",
         cylinders=cylinders,
         flywheel_inertia=0.20, redline_rpm=7000, idle_rpm=820,
-        heat_release_k=5.7, ve_width_frac=0.74, closed_map_fraction=0.16,
+        heat_release_k=1.7, ve_width_frac=0.74, closed_map_fraction=0.22,
+        ve_floor=0.72,
         exhaust_tone=84.0,
         exhaust_primary_m=0.5, exhaust_total_m=1.95, exhaust_radius_m=0.026,
         exhaust_channels=1, exhaust_openness=0.66, muffler_volume_m3=0.0028,
@@ -999,7 +1003,7 @@ def audi_rs5_ea839() -> Engine:
         name="Audi RS5 2.9 twin-turbo V6 (EA839)",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=780,
-        heat_release_k=5.2, ve_width_frac=0.74, closed_map_fraction=0.16,
+        heat_release_k=1.34, ve_width_frac=0.74, closed_map_fraction=0.16,
         exhaust_tone=82.0,
         exhaust_primary_m=0.52, exhaust_total_m=2.0, exhaust_radius_m=0.026,
         exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.0032,
@@ -1030,7 +1034,7 @@ def mercedes_sl65_m275() -> Engine:
         name="Mercedes SL65 AMG 6.0 twin-turbo V12",
         cylinders=cylinders,
         flywheel_inertia=0.40, redline_rpm=6000, idle_rpm=600,
-        heat_release_k=4.7, ve_width_frac=0.78, closed_map_fraction=0.18,
+        heat_release_k=1.31, ve_width_frac=0.78, closed_map_fraction=0.18,
         friction_static=11.0, starter_torque=220.0,
         exhaust_tone=48.0,
         exhaust_primary_m=0.8, exhaust_total_m=2.6, exhaust_radius_m=0.030,
@@ -1060,7 +1064,7 @@ def mercedes_amg_gt_m178() -> Engine:
         name="Mercedes-AMG GT 4.0 twin-turbo V8 (M178)",
         cylinders=cylinders,
         flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=720,
-        heat_release_k=4.6, ve_width_frac=0.74, closed_map_fraction=0.16,
+        heat_release_k=1.23, ve_width_frac=0.74, closed_map_fraction=0.16,
         exhaust_tone=72.0,
         exhaust_primary_m=0.6, exhaust_total_m=2.05, exhaust_radius_m=0.027,
         exhaust_channels=2, exhaust_openness=0.68, muffler_volume_m3=0.003,
@@ -1131,6 +1135,38 @@ def bmw_e92_m3_s65() -> Engine:
     )
 
 
+def porsche_918_v8_hybrid() -> Engine:
+    """Porsche 918 Spyder — 4.6 L NA flat-plane V8 + electric motors (hybrid).
+
+    95 x 81 mm, ~11.0:1 CR, screams to ~9000 rpm, ~608 hp from the race-derived
+    V8, plus ~210 kW of electric motors (front axle + crank) for ~890 hp combined
+    and brutal instant low-end torque.  Firing 1-5-3-7-4-8-2-6, 7-speed PDK.
+    Toggle the electric assist with the Hybrid button.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0          # 90-deg flat-plane V8
+        cylinders.append(
+            Cylinder(bore=mm(95), stroke=mm(81), rod_length=mm(140),
+                     compression_ratio=11.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Porsche 918 Spyder 4.6 V8 hybrid",
+        cylinders=cylinders,
+        flywheel_inertia=0.22, redline_rpm=9000, idle_rpm=950,
+        heat_release_k=4.8, ve_peak_frac=0.7, closed_map_fraction=0.13,
+        friction_static=8.0, starter_torque=190.0,
+        exhaust_tone=92.0,                       # top-exit race-car wail
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0014,
+        hybrid_kw=210.0, hybrid_base_rpm=2500.0,  # ~890 hp combined, instant low end
+        gear_ratios=[3.91, 2.29, 1.58, 1.19, 0.97, 0.83, 0.70], final_drive=3.60,
+        vehicle_mass=1675.0, wheel_radius=0.34, clutch_capacity=1500.0,  # hypercar PDK
+        gearbox_type="dct",                      # PDK
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -1170,6 +1206,7 @@ PRESETS = [
     ("amggt", "AMG GT V8", mercedes_amg_gt_m178),
     ("singer", "Singer DLS 4.0", singer_dls_williams_flat6),
     ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
+    ("918", "918 V8 hybrid", porsche_918_v8_hybrid),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

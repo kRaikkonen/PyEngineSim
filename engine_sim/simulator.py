@@ -60,10 +60,12 @@ class Simulator:
         self._shift_cut = False         # ignition cut during a gearshift
         self.boost = 0.0                # forced-induction boost (bar gauge)
         self._idle_trim = engine.idle_air_base  # idle-governor air, 0..~0.3
+        self.hybrid_on = True           # electric-motor assist enabled (hybrids)
 
         # --- telemetry (updated every step) ---
         self.gas_torque = 0.0
         self.friction_torque = 0.0
+        self.motor_torque = 0.0         # electric-motor assist torque (hybrids)
         self.cylinder_pressure = np.full(engine.num_cylinders, P_ATM)
 
         # precompute per-cylinder cycle offset in radians of the *cycle*
@@ -105,11 +107,40 @@ class Simulator:
             target = eng.boost_bar * thr * (rf * rf)
             rate = min(dt * 14.0, 1.0)
         else:                                     # turbo: spools with lag
+            if eng.electric_turbo:
+                # e-turbo / e-compressor: an electric motor spins the compressor,
+                # so boost is available almost instantly from low rpm, no lag.
+                target = eng.boost_bar * thr
+                tau = 0.05
+                rate = min(dt / tau, 1.0)
+                self.boost += (target - self.boost) * rate
+                return
             spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
             target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0)
             tau = eng.turbo_lag if target > self.boost else 0.18
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate
+
+    def _electric_motor_torque(self) -> float:
+        """Electric-motor assist torque (N*m) for a hybrid.
+
+        Constant torque below ``hybrid_base_rpm`` (the flat low-end shove an EV
+        gives), then constant power above it.  Throttle-scaled so it adds with
+        the driver's demand.  Returns 0 for a non-hybrid or when switched off."""
+        eng = self.engine
+        if eng.hybrid_kw <= 0.0 or not self.hybrid_on:
+            return 0.0
+        thr = min(max(self.throttle, 0.0), 1.0)
+        if thr <= 0.0:
+            return 0.0
+        p_w = eng.hybrid_kw * 1000.0
+        base = max(eng.hybrid_base_rpm, 1.0) * TWO_PI / 60.0
+        peak_tq = p_w / base
+        if self.omega <= base:
+            tq = peak_tq
+        else:
+            tq = p_w / max(self.omega, 1.0)         # constant power region
+        return tq * thr
 
     def _update_idle_governor(self, h: float):
         """Integral controller that trims idle air to hold ``idle_rpm`` when the
@@ -263,11 +294,12 @@ class Simulator:
             self._update_idle_governor(h)
             self.gas_torque = self._compute_torque()
             self.friction_torque = self._loss_torque()
+            self.motor_torque = self._electric_motor_torque()
             starter = self._starter_torque()
             clutch = self.drivetrain.clutch_torque_on_engine(self.omega)
 
-            net = (self.gas_torque + starter - self.friction_torque
-                   - self.external_load + clutch)
+            net = (self.gas_torque + self.motor_torque + starter
+                   - self.friction_torque - self.external_load + clutch)
             domega = net / eng.flywheel_inertia * h
 
             new_omega = self.omega + domega

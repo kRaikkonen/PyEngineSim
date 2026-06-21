@@ -136,6 +136,14 @@ class Engine:
     turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)
     turbo_spool_width: float = 0.5   # rpm frac over which boost ramps to full
     anti_lag: bool = False           # bangs/crackle + whoosh on overrun
+    electric_turbo: bool = False     # e-turbo / e-compressor: near-instant spool, no lag
+
+    # hybrid electric drive ----------------------------------------------------
+    # An electric motor that adds torque (instant, low-end-strong) on top of the
+    # combustion engine, with constant torque below hybrid_base_rpm and constant
+    # power above it.  Set hybrid_kw > 0 to make the car a hybrid (e.g. 918).
+    hybrid_kw: float = 0.0           # electric motor peak power (kW)
+    hybrid_base_rpm: float = 2200.0  # rpm below which the motor gives constant torque
 
     # head / valvetrain / engine type ----------------------------------------
     # Unequal-length exhaust headers delay one bank's pulses, creating the
