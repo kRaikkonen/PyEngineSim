@@ -81,7 +81,7 @@ TR_ZH = {
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
-    "Touch": "触屏",
+    "Touch": "触屏", "Touch OFF": "关闭触屏",
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
@@ -595,6 +595,7 @@ class App:
             "start": pygame.Rect(WIDTH - 182, 536, 90, 52),
             "ign":   pygame.Rect(WIDTH - 182, 592, 90, 52),
             "auto":  pygame.Rect(WIDTH - 182, 286, 90, 42),
+            "close": pygame.Rect(WIDTH - 182, 240, 90, 40),   # turn touch mode off
         }
 
     def _pointer_down(self, pid, pos):
@@ -614,6 +615,10 @@ class App:
                     self.sim.ignition_on = not self.sim.ignition_on
                 elif name == "auto":
                     self.sim.drivetrain.auto = not self.sim.drivetrain.auto
+                elif name == "close":
+                    self.touch_mode = False
+                    self._ptr.clear()
+                    self._ptr_val.clear()
                 return True
         return False
 
@@ -640,6 +645,45 @@ class App:
                 self._touch_brake = max(self._touch_brake, self._ptr_val.get(pid, 1.0))
             elif name == "start":
                 self._touch_starter = True
+
+    def _handle_press(self, mpos):
+        """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
+        if self._open_menu is not None:
+            m = self._open_menu
+            self._open_menu = None
+            for (lbl, cb), r in zip(m["items"], m["item_rects"]):
+                if r.collidepoint(mpos):
+                    cb()
+                    break
+        elif self.mixer_open:
+            if getattr(self, "_mixer_close_rect", None) and \
+                    self._mixer_close_rect.collidepoint(mpos):
+                self.mixer_open = False
+            elif self._pad_rect.collidepoint(mpos):
+                self._drag = "pad"
+                self._set_pad(mpos)
+            elif self._fire_pad_rect.collidepoint(mpos):
+                self._drag = "firepad"
+                self._set_fire_pad(mpos)
+            else:
+                for s in self._sliders:
+                    if s["track"].inflate(12, 26).collidepoint(mpos):
+                        self._drag = s
+                        self._set_slider(s, mpos[0])
+                        break
+        else:
+            for b in self._buttons:
+                if b["rect"].collidepoint(mpos):
+                    b["cb"]()
+                    break
+
+    def _handle_drag(self, mpos):
+        if self._drag == "pad":
+            self._set_pad(mpos)
+        elif self._drag == "firepad":
+            self._set_fire_pad(mpos)
+        elif self._drag is not None:
+            self._set_slider(self._drag, mpos[0])
 
     def _draw_touch_overlay(self):
         """Translucent on-screen pedals / paddles / buttons for finger control."""
@@ -674,6 +718,12 @@ class App:
         btn("start", "START", self.sim.starter_engaged)
         btn("ign", "IGN", self.sim.ignition_on)
         btn("auto", "AUTO", self.sim.drivetrain.auto)
+        # close button (red) — turn touch mode off without the toolbar
+        rc = R["close"]
+        pygame.draw.rect(ov, (190, 70, 60, 210), rc, border_radius=10)
+        pygame.draw.rect(ov, (230, 150, 140, 230), rc, 2, border_radius=10)
+        tc = self.font_small.render(self.tr("Touch OFF"), True, (255, 235, 230))
+        ov.blit(tc, (rc.centerx - tc.get_width() // 2, rc.centery - 7))
         self.screen.blit(ov, (0, 0))
 
     def handle_events(self):
@@ -687,59 +737,34 @@ class App:
                 self._win_size = (max(e.w, WIDTH), max(e.h, HEIGHT))
                 self.window = pygame.display.set_mode(self._win_size, pygame.RESIZABLE)
             elif e.type == pygame.FINGERDOWN:
-                self.touch_mode = True            # auto-show controls on first touch
-                self._pointer_down(("f", e.finger_id), self._map_finger(e))
+                pos = self._map_finger(e)
+                # a finger on a touch control (when touch mode is on) drives it;
+                # otherwise it falls through to the normal UI (toolbar, sliders…)
+                # so the menus/buttons stay tappable on a touchscreen.
+                if not (self.touch_mode and self._pointer_down(("f", e.finger_id), pos)):
+                    self._handle_press(pos)
             elif e.type == pygame.FINGERMOTION:
-                self._pointer_move(("f", e.finger_id), self._map_finger(e))
+                pos = self._map_finger(e)
+                if ("f", e.finger_id) in self._ptr:
+                    self._pointer_move(("f", e.finger_id), pos)
+                elif self._drag is not None:
+                    self._handle_drag(pos)
             elif e.type == pygame.FINGERUP:
                 self._pointer_up(("f", e.finger_id))
+                self._drag = None
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 if getattr(e, "touch", False):
                     continue                      # touch-emulated mouse -> use FINGER
                 mpos = self._map_mouse(e.pos)
-                if self.touch_mode and self._pointer_down("mouse", mpos):
-                    pass                          # consumed by an on-screen control
-                elif self._open_menu is not None:
-                    m = self._open_menu
-                    self._open_menu = None
-                    for (lbl, cb), r in zip(m["items"], m["item_rects"]):
-                        if r.collidepoint(mpos):
-                            cb()
-                            break
-                elif self.mixer_open:
-                    if getattr(self, "_mixer_close_rect", None) and \
-                            self._mixer_close_rect.collidepoint(mpos):
-                        self.mixer_open = False
-                    elif self._pad_rect.collidepoint(mpos):
-                        self._drag = "pad"
-                        self._set_pad(mpos)
-                    elif self._fire_pad_rect.collidepoint(mpos):
-                        self._drag = "firepad"
-                        self._set_fire_pad(mpos)
-                    else:
-                        for s in self._sliders:
-                            if s["track"].inflate(12, 26).collidepoint(mpos):
-                                self._drag = s
-                                self._set_slider(s, mpos[0])
-                                break
-                else:
-                    for b in self._buttons:
-                        if b["rect"].collidepoint(mpos):
-                            b["cb"]()
-                            break
+                if not (self.touch_mode and self._pointer_down("mouse", mpos)):
+                    self._handle_press(mpos)
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
                 self._pointer_up("mouse")
             elif e.type == pygame.MOUSEMOTION and "mouse" in self._ptr:
                 self._pointer_move("mouse", self._map_mouse(e.pos))
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
-                mpos = self._map_mouse(e.pos)
-                if self._drag == "pad":
-                    self._set_pad(mpos)
-                elif self._drag == "firepad":
-                    self._set_fire_pad(mpos)
-                else:
-                    self._set_slider(self._drag, mpos[0])
+                self._handle_drag(self._map_mouse(e.pos))
             elif e.type == pygame.KEYDOWN:
                 if e.key in (pygame.K_ESCAPE, pygame.K_q):
                     self.running = False
