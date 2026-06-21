@@ -179,9 +179,34 @@ class Drivetrain:
         a little off — that residual slip is the Aventador-style kick.  An AT
         eases the converter and feeds back in slowly for the slushy shift.
         """
-        dc_rate, tol_frac, timeout, re_rate, lock = self._SHIFT_PROFILES.get(
-            self.gearbox_type, self._SHIFT_PROFILES["dct"])
         self._shift_elapsed += dt
+
+        # --- TRUE DUAL-CLUTCH: a torque HANDOVER, not a torque cut -------------
+        # A real DCT has two clutches; the target gear is pre-selected on the idle
+        # one, so the shift is a fast clutch-to-clutch crossfade with (almost) no
+        # interruption.  We swap the ratio instantly and let the FIRM engaging
+        # clutch rev-match the engine itself — dragging it DOWN on an upshift and
+        # UP on a downshift (the slip torque does it).  No passive rev-match wait,
+        # which is what made off-throttle downshifts hang then slam in.
+        if self.gearbox_type == "dct":
+            if self._shift_phase == 1:
+                self.gear = self._pending_gear     # pre-engaged 2nd clutch -> instant
+                self._pending_gear = None
+                self._shift_phase = 3
+            if self._shift_elapsed < 0.06:
+                self._ease_clutch(0.55, dt, 16.0)  # brief slip = the handover
+            else:
+                self._ease_clutch(1.0, dt, 6.5)    # firm close -> clutch rev-matches
+            if self.clutch > 0.95 or self._shift_elapsed > 0.5:
+                self._shifting = False
+                self._shift_phase = 0
+                self._shift_lock = 0.30
+            return
+
+        # --- single-clutch / manual / AT: a genuine declutch + re-engage ------
+        dc_rate, tol_frac, timeout, re_rate, lock = self._SHIFT_PROFILES.get(
+            self.gearbox_type, self._SHIFT_PROFILES["single"])
+        downshift = self._pending_gear is not None and self._pending_gear < self.gear
         if self._shift_phase == 1:                 # declutch, then swap gear
             self._ease_clutch(0.0, dt, dc_rate)
             self._apply_pending()                  # swaps only once clutch < 0.08
@@ -191,7 +216,11 @@ class Drivetrain:
             self._ease_clutch(0.0, dt, dc_rate)
             tgt_rpm = self.shift_target_omega() * 9.5492966   # rad/s -> rpm
             tol = max(110.0, tol_frac * redline)
-            if tgt_rpm < 60.0 or abs(rpm - tgt_rpm) < tol or self._shift_elapsed > timeout:
+            # A downshift needs the engine to rev UP to a higher target; off the
+            # throttle it can't on its own, so don't wait for an impossible passive
+            # match — move on and let the clutch blip drag it up on re-engage.
+            matched = tgt_rpm < 60.0 or abs(rpm - tgt_rpm) < tol
+            if (downshift and rpm < tgt_rpm) or matched or self._shift_elapsed > timeout:
                 self._shift_phase = 3
         else:                                      # re-engage (feed-in or slam)
             self._ease_clutch(1.0, dt, re_rate)
