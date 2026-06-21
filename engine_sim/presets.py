@@ -176,6 +176,7 @@ def ferrari_458() -> Engine:
         # race exhaust -> bright, ringing (high openness)
         exhaust_primary_m=0.62, exhaust_total_m=2.2, exhaust_radius_m=0.025,
         exhaust_channels=1, exhaust_openness=0.92, muffler_volume_m3=0.0015,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.08, 2.18, 1.63, 1.29, 1.03, 0.84, 0.69],
         final_drive=5.14,
         vehicle_mass=1485.0,             # 458 curb weight ~1485 kg
@@ -327,6 +328,7 @@ def ferrari_f2004_v10() -> Engine:
         exhaust_tone=185.0,              # very high F1 shriek
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
         exhaust_channels=1, exhaust_openness=0.98, muffler_volume_m3=0.0008,
+        wall_material="titanium",
         has_cat=False,                           # open race exhaust, no cat/GPF
         gear_ratios=[2.50, 1.95, 1.60, 1.36, 1.18, 1.04, 0.92],  # close F1 7-speed
         final_drive=4.20,
@@ -636,6 +638,7 @@ def pagani_zonda_v12() -> Engine:
         exhaust_tone=50.0,
         exhaust_primary_m=0.80, exhaust_total_m=2.6, exhaust_radius_m=0.031,
         exhaust_channels=2, exhaust_openness=0.78, muffler_volume_m3=0.0048,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.00, 2.04, 1.52, 1.18, 0.95, 0.79], final_drive=3.36,
         vehicle_mass=1250.0, wheel_radius=0.34, clutch_capacity=820.0,
         gearbox_type="manual",   # Cima 6-speed manual — jerky in auto mode
@@ -809,6 +812,7 @@ def porsche_carrera_gt_v10() -> Engine:
         exhaust_tone=104.0,
         exhaust_primary_m=0.55, exhaust_total_m=2.0, exhaust_radius_m=0.026,
         exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0018,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.15, 2.18, 1.61, 1.27, 1.03, 0.84], final_drive=3.55,
         vehicle_mass=1380.0, wheel_radius=0.34, clutch_capacity=600.0,
         gearbox_type="manual",
@@ -838,6 +842,7 @@ def porsche_992_gt3() -> Engine:
         exhaust_tone=86.0,
         exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
         exhaust_channels=2, exhaust_openness=0.86, muffler_volume_m3=0.0018,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.91, 2.29, 1.65, 1.30, 1.08, 0.88, 0.62], final_drive=3.97,
         vehicle_mass=1435.0, wheel_radius=0.34, clutch_capacity=560.0,
         gearbox_type="dct",                      # PDK
@@ -1498,6 +1503,7 @@ def mclaren_f1_v12() -> Engine:
         exhaust_tone=72.0,
         exhaust_primary_m=0.58, exhaust_total_m=2.05, exhaust_radius_m=0.026,
         exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[2.83, 1.96, 1.52, 1.20, 0.96, 0.74], final_drive=2.37,
         vehicle_mass=1140.0, wheel_radius=0.33, clutch_capacity=620.0,
         gearbox_type="manual",

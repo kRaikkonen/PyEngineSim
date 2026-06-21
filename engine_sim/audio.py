@@ -550,8 +550,16 @@ class Synthesizer:
             # revs/heat).  We store the (odd) harmonic orders to hit ~3.5/5/6.5 kHz.
             L_tot = max(eng.exhaust_total_m, 0.5)
             d_pipe = 2.0 * r
-            self._whine_ld = L_tot / d_pipe                  # length / diameter
-            self._whine_amt = min(max((self._whine_ld - 32.0) / 36.0, 0.0), 1.0)
+            self._whine_ld = L_tot / d_pipe                  # length / diameter (-> Q)
+            # Whine PROMINENCE is what an engine's scream really tracks: how high it
+            # revs (the firing harmonics reach the whine band), how thin the bore is
+            # (high Q), and how open the system is (un-muffled).  Driving it purely
+            # off length/diameter mis-fired — it left every high-revving exotic flat
+            # and gave a short-pipe F1 car ZERO whine.  Redline is the lead term.
+            rev = min(max((eng.redline_rpm - 6500.0) / 3500.0, 0.0), 1.25)
+            bore = min(max((0.028 - r) / 0.011, 0.0), 1.0)
+            self._whine_amt = min(rev * (0.55 + 0.30 * bore
+                                         + 0.25 * eng.exhaust_openness), 1.1)
             fqw0 = 540.0 / (4.0 * L_tot)                     # quarter-wave, nominal c
             self._whine_orders = []
             for target in (3500.0, 5000.0, 6500.0):
