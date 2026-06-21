@@ -302,6 +302,8 @@ class Synthesizer:
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
+            "fire_weight": 0.5,   # fire-tone pad X: thin/bright .. thick/fat body
+            "fire_grit": 0.3,     # fire-tone pad Y: smooth .. coarse/raw saturation
             "pops": 0.6,          # overrun pop level (power-chord bangs on decel)
             "pop_muff": 0.4,      # how muffled the pops are (0 sharp .. 1 dull)
             "pops_reverb": 0.22,  # dedicated reverb on the overrun pops
@@ -407,7 +409,9 @@ class Synthesizer:
             # pipe-wall-thickness low-passes (dull the brassy 'trumpet' edge)
             self._wall_out_zi = np.zeros(2)   # turbo / supercharger whine
             self._wall_gw_zi = np.zeros(2)    # gearbox whine
-            self._wall_sig_zi = np.zeros(2)   # the main exhaust note
+            self._wall_sig_zi = np.zeros(2)   # the main exhaust note (de-honk)
+            self._wall_low_zi = np.zeros(2)   # ...and its low-shelf body boost
+            self._fire_low_zi = np.zeros(2)   # fire-tone pad 'weight' low shelf
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -559,10 +563,17 @@ class Synthesizer:
 
         # Assemble the bang (pulse + snap + power chord) and SATURATE it for the
         # tight, solid 'metal power chord' grip (the fix for the floaty feel).
-        bang = P["dry"] * dry + P["crack"] * crack + (1.6 * P["body"]) * body
-        drive = P["drive"]
+        # The 2-D fire-tone pad morphs the STYLE: weight (X) = fatter body + low
+        # shelf, grit (Y) = more saturation and attack snap.
+        fw, fg = P["fire_weight"], P["fire_grit"]
+        bang = (P["dry"] * dry + P["crack"] * (1.0 + 1.3 * fg) * crack
+                + (1.6 * P["body"]) * (1.0 + 1.4 * fw) * body)
+        drive = P["drive"] + 1.6 * fg
         if drive > 1e-3:
             bang = np.tanh(bang * (1.0 + 7.0 * drive))
+        if _HAVE_SCIPY and fw > 0.02:                    # low-shelf 'weight'
+            b, a = _peaking(110.0, 0.6, 10.0 * fw, self.sample_rate)
+            bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
 
         # separated fizz (own slider) + clean wet pipe resonance on top
         fizz = np.zeros(frames, dtype=np.float64)
@@ -615,14 +626,15 @@ class Synthesizer:
             sig = sig + ind + gw
             sig = sig + self._overrun_pops(frames)   # decel pops & bangs
 
-        # --- pipe-wall thickness on the exhaust note (gentler than on the whine)
-        # so even an N/A car can lose the bright metallic 'small-trumpet' shriek.
+        # --- pipe-wall thickness: kill the 'small-trumpet' shriek WITHOUT losing
+        # low end.  The brass honk lives in a ~1.8 kHz formant — scoop THAT band
+        # and add a touch of low-shelf body, so the note gets thicker, not thinner.
         wt = P["wall_thickness"]
         if _HAVE_SCIPY and wt > 1e-3:
-            sr2 = self.sample_rate
-            cut = min(max(15000.0 - 11000.0 * wt, 2200.0), sr2 * 0.45)
-            b, a = butter(2, cut / (sr2 / 2), btype="low")
+            b, a = _peaking(1850.0, 1.1, -16.0 * wt, self.sample_rate)   # de-honk
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
+            b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
+            sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:

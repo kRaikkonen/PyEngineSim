@@ -100,6 +100,8 @@ TR_ZH = {
     "AUDIO MIXER": "混音台",
     "drag the sliders  ·  C or ✕ to close": "拖动滑块  ·  C 或 ✕ 关闭",
     "SPATIAL  (drag)": "空间音频 (拖动)", "far": "远", "near": "近",
+    "FIRE TONE  (drag)": "点火音色 (拖动)", "thin": "薄", "fat": "厚",
+    "coarse": "粗", "smooth": "顺",
     # forza banner + tach
     "LIVE": "实时", "redline": "红线",
     "waiting for Data Out on UDP": "等待 Data Out 广播 UDP",
@@ -136,11 +138,11 @@ _GBX_LABEL = {"dct": "DCT", "single": "single-clutch", "at": "AT", "manual": "ma
 # Synthesizer.params and are dragged live in the in-app console (press C).
 SLIDER_DEFS = [
     ("master", "MASTER volume", 0.0, 1.2),
-    ("dry", "Firing / bang", 0.0, 1.6),
-    ("body", "Body (thickness)", 0.0, 2.0),
-    ("drive", "Drive (solid)", 0.0, 1.0),
-    ("firing_pitch", "Firing pitch (Hz)", 50.0, 300.0),
-    ("crack", "Attack crack", 0.0, 0.8),
+    ("dry", "Firing / bang", 0.0, 4.0),
+    ("body", "Body (thickness)", 0.0, 6.0),
+    ("drive", "Drive (solid)", 0.0, 3.0),
+    ("firing_pitch", "Firing pitch (Hz)", 40.0, 300.0),
+    ("crack", "Attack crack", 0.0, 1.6),
     ("attack_deg", "Attack soft (blunt)", 1.0, 25.0),
     ("turbulence", "Fizz / gas noise", 0.0, 1.6),
     ("res1", "Pipe resonance 1", 0.0, 0.8),
@@ -479,6 +481,8 @@ class App:
             })
             y += 21
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
+        # 2-D fire/bang tone IR pad (drag to morph the firing timbre)
+        self._fire_pad_rect = pygame.Rect(panel.x + 462, panel.y + 320, 152, 152)
 
     def _set_pad(self, pos):
         r = self._pad_rect
@@ -486,6 +490,13 @@ class App:
         py = (pos[1] - r.y) / r.height          # top = far, bottom = near
         self.synth.params["spatial_x"] = min(max(px, 0.0), 1.0)
         self.synth.params["spatial_y"] = min(max(py, 0.0), 1.0)
+
+    def _set_fire_pad(self, pos):
+        r = self._fire_pad_rect
+        px = (pos[0] - r.x) / r.width            # X = thin/bright .. thick/fat
+        py = 1.0 - (pos[1] - r.y) / r.height     # Y up = more grit/coarse
+        self.synth.params["fire_weight"] = min(max(px, 0.0), 1.0)
+        self.synth.params["fire_grit"] = min(max(py, 0.0), 1.0)
 
     def _set_slider(self, s, mx):
         t = s["track"]
@@ -561,6 +572,9 @@ class App:
                     elif self._pad_rect.collidepoint(mpos):
                         self._drag = "pad"
                         self._set_pad(mpos)
+                    elif self._fire_pad_rect.collidepoint(mpos):
+                        self._drag = "firepad"
+                        self._set_fire_pad(mpos)
                     else:
                         for s in self._sliders:
                             if s["track"].inflate(12, 26).collidepoint(mpos):
@@ -578,6 +592,8 @@ class App:
                 mpos = self._map_mouse(e.pos)
                 if self._drag == "pad":
                     self._set_pad(mpos)
+                elif self._drag == "firepad":
+                    self._set_fire_pad(mpos)
                 else:
                     self._set_slider(self._drag, mpos[0])
             elif e.type == pygame.KEYDOWN:
@@ -597,6 +613,9 @@ class App:
                 elif e.key == pygame.K_o:                # hidden: turbo V7 + Bdim
                     self.synth.o_chord = not self.synth.o_chord
                     self._flash("♪ V7" if self.synth.o_chord else "")
+                elif e.key == pygame.K_p:                # hidden: test the BOV sound
+                    self.synth._bov_env = 1.0
+                    self.synth._bdim_phase = 0.0
                 elif e.key == pygame.K_x:
                     if not self.sim.drivetrain.auto:
                         self.sim.drivetrain.shift_up()
@@ -895,6 +914,25 @@ class App:
         dy = pr.y + int(sy * pr.height)
         pygame.draw.circle(self.screen, ACCENT, (dx, dy), 9)
         pygame.draw.circle(self.screen, INK, (dx, dy), 9, 1)
+
+        # --- 2-D fire/bang tone pad (drag to morph the firing timbre) --------
+        fr = self._fire_pad_rect
+        self.screen.blit(self.font_small.render(self.tr("FIRE TONE  (drag)"), True, INK),
+                         (fr.x, fr.y - 20))
+        pygame.draw.rect(self.screen, (30, 33, 40), fr, border_radius=8)
+        pygame.draw.rect(self.screen, (70, 76, 90), fr, width=1, border_radius=8)
+        self.screen.blit(self.font_small.render(self.tr("thin"), True, DIM),
+                         (fr.x + 4, fr.centery - 8))
+        self.screen.blit(self.font_small.render(self.tr("fat"), True, DIM),
+                         (fr.right - 24, fr.centery - 8))
+        self.screen.blit(self.font_small.render(self.tr("coarse"), True, DIM),
+                         (fr.centerx - 18, fr.y + 3))
+        self.screen.blit(self.font_small.render(self.tr("smooth"), True, DIM),
+                         (fr.centerx - 18, fr.bottom - 16))
+        fwx = fr.x + int(self.synth.params["fire_weight"] * fr.width)
+        fgy = fr.y + int((1.0 - self.synth.params["fire_grit"]) * fr.height)
+        pygame.draw.circle(self.screen, (255, 150, 70), (fwx, fgy), 9)
+        pygame.draw.circle(self.screen, INK, (fwx, fgy), 9, 1)
 
     def _draw_engine_panel(self, rect):
         self._panel(rect)
