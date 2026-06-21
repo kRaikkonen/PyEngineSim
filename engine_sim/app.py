@@ -1010,6 +1010,19 @@ class App:
         sinmax = math.sin(math.radians(maxang))
         length = min((crank_y - top) * 0.9, sw * 0.95, 0.46 * sw / max(sinmax, 0.34))
         width = min(sw * 0.32, 40)
+        # metallic crankshaft running behind every journal (round strip-shaded)
+        cx0 = rect.x + sw * 0.5 - 16
+        cx1 = rect.x + sw * (ns - 0.5) + 16
+        chh = max(width * 0.30, 9.0)
+        for si in range(7):
+            e0 = (si / 7 * 2 - 1) * chh; e1 = ((si + 1) / 7 * 2 - 1) * chh
+            f = 0.40 + 0.66 * (1.0 - abs((si + 0.5) / 7 * 2 - 1))
+            pygame.draw.polygon(self.screen, (min(255, int(70 * f)),
+                                min(255, int(76 * f)), min(255, int(90 * f))),
+                                [(cx0, crank_y + e0), (cx1, crank_y + e0),
+                                 (cx1, crank_y + e1), (cx0, crank_y + e1)])
+        pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
+        pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
         for s, st in enumerate(stations):
             jx = rect.x + sw * (s + 0.5)
             for i in st:
@@ -1036,48 +1049,74 @@ class App:
     def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow):
         """Draw one cylinder + reciprocating piston + rod + crank journal along a
         bank axis tilted by angle ``a`` (radians) from vertical, hinged at the
-        crank centre (jx, jy).  This is what makes V / boxer / W banks look real."""
+        crank centre (jx, jy).  Metal surfaces are strip-shaded (bright centre,
+        dark edges) for the round skeuomorphic look, even when tilted."""
         ux, uy = math.sin(a), -math.cos(a)            # 'up' along the cylinder
         qx, qy = math.cos(a), math.sin(a)             # perpendicular (across bore)
-        cr = 8.0
-        bx, by = jx + ux * cr * 1.5, jy + uy * cr * 1.5   # bore base (off the crank)
+        cr = 9.0
+        bx, by = jx + ux * cr * 1.4, jy + uy * cr * 1.4   # bore base (off the crank)
         hw = width / 2.0
 
-        def quad(d0, d1, halfw):                      # rect from d0..d1 along axis
-            a0 = (bx + ux * d0, by + uy * d0); a1 = (bx + ux * d1, by + uy * d1)
-            return [(a0[0] + qx * halfw, a0[1] + qy * halfw),
-                    (a1[0] + qx * halfw, a1[1] + qy * halfw),
-                    (a1[0] - qx * halfw, a1[1] - qy * halfw),
-                    (a0[0] - qx * halfw, a0[1] - qy * halfw)]
+        def shaded(d0, d1, halfw, base, n=7):         # round-metal strip gradient
+            for si in range(n):
+                e0 = (si / n * 2 - 1) * halfw; e1 = ((si + 1) / n * 2 - 1) * halfw
+                f = 0.42 + 0.62 * (1.0 - abs((si + 0.5) / n * 2 - 1))
+                col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
+                       min(255, int(base[2] * f)))
+                pygame.draw.polygon(self.screen, col, [
+                    (bx + ux * d0 + qx * e0, by + uy * d0 + qy * e0),
+                    (bx + ux * d1 + qx * e0, by + uy * d1 + qy * e0),
+                    (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
+                    (bx + ux * d0 + qx * e1, by + uy * d0 + qy * e1)])
 
-        tx, ty = bx + ux * length, by + uy * length   # bore top
-        pygame.draw.polygon(self.screen, (66, 72, 84), quad(0, length, hw))   # sleeve
-        pygame.draw.polygon(self.screen, (26, 28, 34), quad(0, length, hw), 2)
-        pygame.draw.line(self.screen, (122, 130, 144),               # round highlight
-                         (bx + ux * 6, by + uy * 6), (tx - ux * 6, ty - uy * 6), 2)
-        pygame.draw.polygon(self.screen, (26, 28, 34), quad(3, length - 3, hw - 3))
-        for fz in range(3):                           # head fins near the top
-            d = length - 4 - fz * 4
-            pygame.draw.line(self.screen, (48, 52, 62),
-                             (bx + ux * d + qx * hw, by + uy * d + qy * hw),
-                             (bx + ux * d - qx * hw, by + uy * d - qy * hw))
+        def edge(d0, d1, halfw, col, w=1):
+            pygame.draw.polygon(self.screen, col, [
+                (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
+                (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
+                (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
+                (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
+
+        shaded(-2, length + 4, hw + 3, (78, 84, 96))  # finned metal sleeve
+        for fz in range(4):                           # cooling fins near the head
+            d = length - 2 - fz * 5
+            pygame.draw.line(self.screen, (40, 44, 54),
+                             (bx + ux * d + qx * (hw + 3), by + uy * d + qy * (hw + 3)),
+                             (bx + ux * d - qx * (hw + 3), by + uy * d - qy * (hw + 3)), 2)
+        edge(-2, length + 4, hw + 3, (24, 26, 32), 2)
+        # dark bore interior
+        pygame.draw.polygon(self.screen, (24, 26, 32), [
+            (bx + ux * 1 + qx * (hw - 2), by + uy * 1 + qy * (hw - 2)),
+            (bx + ux * length + qx * (hw - 2), by + uy * length + qy * (hw - 2)),
+            (bx + ux * length - qx * (hw - 2), by + uy * length - qy * (hw - 2)),
+            (bx + ux * 1 - qx * (hw - 2), by + uy * 1 - qy * (hw - 2))])
         if glow > 0.02:                               # combustion glow near the top
-            gx, gy = bx + ux * (length - 10), by + uy * (length - 10)
-            gs = pygame.Surface((44, 44), pygame.SRCALPHA)
-            pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(200 * glow)),
-                               (22, 22), int(width * 0.5))
-            self.screen.blit(gs, (int(gx) - 22, int(gy) - 22))
-        plen = 14.0
+            gx, gy = bx + ux * (length - 8), by + uy * (length - 8)
+            gs = pygame.Surface((50, 50), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(210 * glow)),
+                               (25, 25), int(width * 0.55))
+            self.screen.blit(gs, (int(gx) - 25, int(gy) - 25))
+        # piston (brighter round metal) with ring lands
+        plen = 15.0
         travel = max(length - plen - 14, 6.0)
         ppos = 8.0 + (1.0 - frac) * travel            # TDC high, BDC near crank
-        pygame.draw.polygon(self.screen, (192, 198, 210), quad(ppos, ppos + plen, hw - 4))
-        pygame.draw.polygon(self.screen, (96, 102, 114), quad(ppos, ppos + plen, hw - 4), 1)
+        shaded(ppos, ppos + plen, hw - 3, (196, 202, 214))
+        edge(ppos, ppos + plen, hw - 3, (96, 102, 114), 1)
+        for rg in range(3):
+            d = ppos + 4 + rg * 4
+            pygame.draw.line(self.screen, (70, 76, 88),
+                             (bx + ux * d + qx * (hw - 4), by + uy * d + qy * (hw - 4)),
+                             (bx + ux * d - qx * (hw - 4), by + uy * d - qy * (hw - 4)))
         pin = (bx + ux * ppos, by + uy * ppos)        # wrist pin (piston base)
+        pygame.draw.circle(self.screen, (54, 58, 70), (int(pin[0]), int(pin[1])), 4)
+        pygame.draw.circle(self.screen, (150, 156, 168), (int(pin[0]), int(pin[1])), 4, 1)
         jrn = (jx + cr * math.sin(theta), jy + cr * math.cos(theta))   # crank journal
-        self._draw_rod(pin, jrn, max(cr * 0.4, 3))
-        pygame.draw.circle(self.screen, (54, 58, 70), (int(jx), int(jy)), int(cr))
-        pygame.draw.circle(self.screen, (84, 90, 104), (int(jx), int(jy)), int(cr), 1)
+        self._draw_rod(pin, jrn, max(cr * 0.42, 3))
+        # crank web (counterweight) + journal
+        cwx, cwy = jx - cr * 0.5 * math.sin(theta), jy - cr * 0.5 * math.cos(theta)
+        pygame.draw.circle(self.screen, (46, 50, 60), (int(cwx), int(cwy)), int(cr * 1.25))
+        pygame.draw.circle(self.screen, (66, 72, 84), (int(jx), int(jy)), int(cr * 0.7))
         pygame.draw.circle(self.screen, ACCENT, (int(jrn[0]), int(jrn[1])), 4)
+        pygame.draw.circle(self.screen, (20, 60, 110), (int(jrn[0]), int(jrn[1])), 4, 1)
 
     def _reuleaux(self, verts, samples=10):
         """Polygon points for a Reuleaux triangle through three apexes: each side
