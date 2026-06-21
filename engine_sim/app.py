@@ -81,7 +81,8 @@ TR_ZH = {
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
-    "Cat": "三元", "Flutter": "颤振", "Hybrid": "混动", "G-pad": "G力",
+    "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
+    "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
     "off": "关", "firing order:": "点火顺序:",
     # gauges / readouts
@@ -261,6 +262,8 @@ class App:
              lambda: sy.straight_cut, 1),
             ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
             (T("Cat"), lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
+            (T("Bent"), lambda: setattr(sy, "road_pipe", not sy.road_pipe),
+             lambda: sy.road_pipe, 2),
             (T("Flutter"), lambda: setattr(sy, "flutter", not sy.flutter),
              lambda: sy.flutter, 2),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
@@ -347,7 +350,7 @@ class App:
         saved = dict(self.synth.params) if self.synth else None
         _flags = ["cabin"]
         if keep_engine_flags:
-            _flags += ["gpf", "cat", "straight_cut", "flutter"]
+            _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
                        if self.synth else None)
         if self.synth:

@@ -328,6 +328,10 @@ class Synthesizer:
         self.straight_cut = simulator.engine.straight_cut
         self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
         self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
+        # bent stainless road exhaust + cat: absorbs the harsh fire/bang highs so
+        # it doesn't sound like a raw straight pipe.  On by default for road cars
+        # (those with a cat), off for open-exhaust race cars.
+        self.road_pipe = simulator.engine.has_cat
         # lift-off sound: False = clean BOV 'pshhh', True = compressor-surge
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
@@ -424,6 +428,12 @@ class Synthesizer:
             self._wall_sig_zi = np.zeros(2)   # the main exhaust note (de-honk)
             self._wall_low_zi = np.zeros(2)   # ...and its low-shelf body boost
             self._fire_low_zi = np.zeros(2)   # fire-tone pad 'weight' low shelf
+            # bent-pipe road exhaust: a low-pass + an upper-mid scoop that the
+            # bends & cat impose, absorbing the raw straight-pipe high frequencies
+            self._road_lp = butter(2, min(5200.0, sr * 0.45) / (sr / 2), btype="low")
+            self._road_sh = _peaking(3400.0, 0.7, -5.5, sr)
+            self._road_lp_zi = np.zeros(2)
+            self._road_sh_zi = np.zeros(2)
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -648,6 +658,14 @@ class Synthesizer:
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
             b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
             sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
+
+        # --- bent stainless road exhaust + cat: absorb the raw straight-pipe
+        # high frequencies so an ordinary car doesn't sound like an open header.
+        if self.road_pipe and _HAVE_SCIPY:
+            sig, self._road_lp_zi = lfilter(self._road_lp[0], self._road_lp[1],
+                                            sig, zi=self._road_lp_zi)
+            sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
+                                            sig, zi=self._road_sh_zi)
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
