@@ -279,6 +279,7 @@ def ferrari_f2004_v10() -> Engine:
     return Engine(
         name="Ferrari F2004 3.0 V10 (F1)",
         cylinders=cylinders,
+        straight_cut=True,               # F1: sequential dog box
         flywheel_inertia=0.045,          # F1: revs almost instantly
         redline_rpm=18500,
         idle_rpm=3600,                   # F1 engines idle high
@@ -735,6 +736,7 @@ def mazda_787b_rotary() -> Engine:
     return Engine(
         name="Mazda 787B R26B 4-rotor (Le Mans)",
         cylinders=cylinders,
+        straight_cut=True, has_cat=False,   # Le Mans prototype: dog box, no cat
         flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=1100,
         heat_release_k=6.9, ve_peak_frac=0.74, ve_width_frac=0.72,
         closed_map_fraction=0.14, friction_static=8.0, starter_torque=180.0,
@@ -941,6 +943,7 @@ def audi_sport_quattro_s1() -> Engine:
     return Engine(
         name="Audi Sport Quattro S1 2.1 turbo I5",
         cylinders=cylinders,
+        straight_cut=True, has_cat=False,   # Group B rally: dog box, no cat
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=950,
         heat_release_k=2.2, ve_width_frac=0.72, closed_map_fraction=0.24,
         ve_floor=0.72,
@@ -1421,6 +1424,7 @@ def bmw_m3_gtr_p60() -> Engine:
     return Engine(
         name="BMW M3 GTR E46 P60B40 4.0 V8",
         cylinders=cylinders,
+        straight_cut=True, has_cat=False,   # homologation race V8: dog box, no cat
         flywheel_inertia=0.20, redline_rpm=8000, idle_rpm=950,
         heat_release_k=4.4, ve_peak_frac=0.66, closed_map_fraction=0.14,
         friction_static=8.0, starter_torque=180.0,

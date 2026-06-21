@@ -101,6 +101,7 @@ SLIDER_DEFS = [
     ("turbo_vol", "Turbo spool / BOV", 0.0, 1.2),
     ("spool_reverb", "Spool reverb", 0.0, 0.6),
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
+    ("gearbox_reverb", "Gear-whine reverb", 0.0, 0.6),
     ("hybrid_vol", "Electric / e-turbo", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
@@ -261,11 +262,17 @@ class App:
         self._open_menu = {"items": items, "rect": rect, "item_rects": item_rects}
 
     # ----------------------------------------------------------- audio device
-    def _make_synth(self, start=True):
+    def _make_synth(self, start=True, keep_engine_flags=True):
         """(Re)create the synth on the chosen device + sample rate, preserving
-        the current mixer params, cabin and firing voice."""
+        the current mixer params, cabin and firing voice.
+
+        ``keep_engine_flags`` keeps the GPF/Cat toggles (device/rate changes);
+        on a CAR change it is False so GPF/Cat reset to the new engine's own
+        has_gpf / has_cat instead of carrying the previous car's exhaust kit."""
         saved = dict(self.synth.params) if self.synth else None
-        _flags = ("cabin", "straight_cut", "gpf", "cat", "flutter")
+        _flags = ["cabin", "flutter"]
+        if keep_engine_flags:
+            _flags += ["gpf", "cat", "straight_cut"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
                        if self.synth else None)
         if self.synth:
@@ -330,8 +337,9 @@ class App:
             return
         self.current_key = None
         self.sim = Simulator(eng)
-        self._make_synth(start=True)
+        self._make_synth(start=True, keep_engine_flags=False)
         self._disp_torque = 0.0
+        self._tele_smooth.clear()
         import os
         self._flash(f"Loaded engine: {os.path.basename(path)}")
 
@@ -396,7 +404,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 26
+            y += 25
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
@@ -417,8 +425,9 @@ class App:
             return
         self.current_key = key
         self.sim = Simulator(presets.ALL[key]())
-        self._make_synth(start=True)          # preserves mixer params + device/rate
+        self._make_synth(start=True, keep_engine_flags=False)   # GPF/Cat per new car
         self._disp_torque = 0.0
+        self._tele_smooth.clear()             # don't carry needle state across cars
 
     # ----------------------------------------------------------------- input
     def _map_mouse(self, pos):
@@ -884,52 +893,88 @@ class App:
             label = self.font_small.render(f"{i + 1}", True, DIM)
             self.screen.blit(label, (int(cx) - 4, bottom + 8))
 
+    def _reuleaux(self, verts, samples=10):
+        """Polygon points for a Reuleaux triangle through three apexes: each side
+        is a circular arc centred on the opposite apex (the real rotor shape)."""
+        pts = []
+        for s in range(3):
+            va, vb, vc = verts[s], verts[(s + 1) % 3], verts[(s + 2) % 3]
+            rad = math.hypot(va[0] - vc[0], va[1] - vc[1])
+            a0 = math.atan2(va[1] - vc[1], va[0] - vc[0])
+            a1 = math.atan2(vb[1] - vc[1], vb[0] - vc[0])
+            d = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi      # shortest sweep
+            for k in range(samples):
+                a = a0 + d * k / samples
+                pts.append((vc[0] + rad * math.cos(a), vc[1] + rad * math.sin(a)))
+        return pts
+
     def _draw_rotary(self, rect, top, bottom):
-        """Wankel-rotor visualiser: an epitrochoid housing with a triangular
-        rotor orbiting eccentrically (spinning at 1/3 shaft speed), for rotary
-        engines instead of the piston bores.  One housing per ROTOR (the model
-        runs two firing pulses per rotor, so rotors = cylinders / 2)."""
+        """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
+        triangular rotor orbiting eccentrically (spinning at 1/3 shaft speed),
+        face recesses, apex seals, spark plugs and a firing-chamber glow.  One
+        housing per ROTOR (the model fires twice per rotor, so rotors = cyl/2)."""
         sim, eng = self.sim, self.sim.engine
         n = max(1, eng.num_cylinders // 2)
         col_w = rect.width / n
-        R = min(col_w * 0.30, (bottom - top) * 0.34)
-        e = R * 0.16                                   # eccentricity
+        R = min(col_w * 0.34, (bottom - top) * 0.40)
+        sx = 1.15                                      # housing is wider than tall
+        e = R * 0.15                                   # eccentricity
         cy = (top + bottom) / 2.0
-        shaft0 = sim.crank_angle                       # eccentric-shaft angle (rad)
+        shaft0 = sim.crank_angle
+        TAU3 = 2.0943951                               # 120 deg
         for i in range(n):
             cx = rect.x + col_w * (i + 0.5)
             shaft = shaft0 + i * (2.0 * math.pi / n)
-            # epitrochoid housing (2-lobe) outline
+            # --- epitrochoid housing (2-lobe, horizontally stretched) ---
             hull = []
-            for k in range(72):
-                a = 2.0 * math.pi * k / 72.0
-                hull.append((cx + R * math.cos(a) + e * math.cos(3 * a),
-                             cy + R * math.sin(a) + e * math.sin(3 * a)))
-            pygame.draw.polygon(self.screen, (40, 44, 52), hull)
-            pygame.draw.polygon(self.screen, (84, 90, 104), hull, 2)
-            # triangular rotor: centre orbits, body spins at 1/3 shaft speed
-            rcx, rcy = cx + e * math.cos(shaft), cy + e * math.sin(shaft)
-            rot = shaft / 3.0
-            verts = [(rcx + R * 0.84 * math.cos(rot + k * 2.094395),
-                      rcy + R * 0.84 * math.sin(rot + k * 2.094395)) for k in range(3)]
-            pygame.draw.polygon(self.screen, PISTON, verts)
-            pygame.draw.polygon(self.screen, (96, 102, 116), verts, 2)
-            for v in verts:                            # apex seals
-                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 4)
-            # combustion glow in the firing chamber (one of the rotor's faces)
+            for k in range(96):
+                a = 2.0 * math.pi * k / 96.0
+                hx = (R * math.cos(a) + e * math.cos(3 * a)) * sx
+                hy = R * math.sin(a) + e * math.sin(3 * a)
+                hull.append((cx + hx, cy + hy))
+            pygame.draw.polygon(self.screen, (32, 35, 42), hull)       # chamber void
+            pygame.draw.polygon(self.screen, (96, 102, 116), hull, 3)  # housing wall
+            pygame.draw.polygon(self.screen, (60, 64, 74), hull, 1)
+            # spark plugs (leading + trailing) at the top waist
+            for sp in (-0.16, 0.16):
+                spx, spy = cx + sx * R * sp, cy - R * 0.9
+                pygame.draw.circle(self.screen, (150, 156, 168), (int(spx), int(spy)), 3)
+            # --- combustion glow in the firing chamber (top-right of housing) ---
             j = min(2 * i + 1, eng.num_cylinders - 1)
             press = max(sim.cylinder_pressure[2 * i], sim.cylinder_pressure[j])
             glow = (min(max(press - 101325.0, 0.0) / (5.0 * 101325.0), 1.0)
                     if sim.ignition_on and not sim._fuel_cut else 0.0)
             if glow > 0.03:
-                mx, my = (verts[0][0] + verts[1][0]) / 2, (verts[0][1] + verts[1][1]) / 2
-                gx, gy = cx + (mx - cx) * 1.18, cy + (my - cy) * 1.18
-                gs = pygame.Surface((44, 44), pygame.SRCALPHA)
-                pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(210 * glow)),
-                                   (22, 22), 20)
-                self.screen.blit(gs, (gx - 22, gy - 22))
-            # eccentric shaft centre + orbiting journal
-            pygame.draw.circle(self.screen, (60, 64, 74), (int(cx), int(cy)), 6)
+                gx, gy = cx + sx * R * 0.42, cy - R * 0.42
+                gs = pygame.Surface((54, 54), pygame.SRCALPHA)
+                pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(200 * glow)),
+                                   (27, 27), 24)
+                self.screen.blit(gs, (gx - 27, gy - 27))
+            # --- Reuleaux rotor: centre orbits, body spins at 1/3 shaft speed ---
+            rcx = cx + e * sx * math.cos(shaft)
+            rcy = cy + e * math.sin(shaft)
+            rotang = -shaft / 3.0
+            apex = [(rcx + R * 0.66 * sx * math.cos(rotang + k * TAU3),
+                     rcy + R * 0.66 * math.sin(rotang + k * TAU3)) for k in range(3)]
+            body = self._reuleaux(apex)
+            pygame.draw.polygon(self.screen, (150, 156, 170), body)
+            pygame.draw.polygon(self.screen, (96, 102, 116), body, 2)
+            # face recesses (the dish in each rotor flank) + side seal lines
+            for k in range(3):
+                m = ((apex[k][0] + apex[(k + 1) % 3][0]) / 2,
+                     (apex[k][1] + apex[(k + 1) % 3][1]) / 2)
+                fx, fy = rcx + (m[0] - rcx) * 0.55, rcy + (m[1] - rcy) * 0.55
+                pygame.draw.circle(self.screen, (96, 102, 118), (int(fx), int(fy)), int(R * 0.2))
+            pygame.draw.line(self.screen, (60, 64, 74),
+                             (apex[0][0], apex[0][1]), (apex[1][0], apex[1][1]), 1)
+            # internal ring gear hint + apex seals
+            pygame.draw.circle(self.screen, (40, 43, 50), (int(rcx), int(rcy)), int(R * 0.34))
+            pygame.draw.circle(self.screen, (70, 75, 88), (int(rcx), int(rcy)), int(R * 0.34), 1)
+            for v in apex:
+                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 3)
+            # --- eccentric shaft: fixed stationary gear + orbiting journal ---
+            pygame.draw.circle(self.screen, (54, 58, 68), (int(cx), int(cy)), int(R * 0.2))
+            pygame.draw.circle(self.screen, (90, 96, 110), (int(cx), int(cy)), int(R * 0.2), 1)
             pygame.draw.circle(self.screen, ACCENT, (int(rcx), int(rcy)), 4)
             lbl = self.font_small.render(f"R{i + 1}", True, DIM)
             self.screen.blit(lbl, (int(cx) - 8, bottom + 8))

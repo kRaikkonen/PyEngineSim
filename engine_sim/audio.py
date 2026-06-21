@@ -292,12 +292,15 @@ class Synthesizer:
             "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
+            "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
         }
 
         self._build_audio()
 
         self.cabin = False        # interior (in-cabin) muffling effect
-        self.straight_cut = False # straight-cut gearbox whine on/off
+        # straight-cut gearbox whine — on by default for cars that actually have
+        # a straight-cut (dog) box (race cars), off otherwise.
+        self.straight_cut = simulator.engine.straight_cut
         self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
         self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
         self.flutter = False      # lift-off sound: False = BOV 'pshhh', True = surge 'stututu'
@@ -338,6 +341,8 @@ class Synthesizer:
         # A dedicated reverb for the forced-induction sounds (spool whistle /
         # blower whine / BOV) so the user can wash them with their own space.
         self._ind_reverb = Reverb(sr, room=0.7, feedback=0.7)
+        # ...and a separate one just for the straight-cut gearbox whine.
+        self._gear_reverb = Reverb(sr, room=0.6, feedback=0.66)
         # A short reverb on the explosion ITSELF, before the pipe — so the
         # waveguide resonates an already-reverberant bang (chamber/port acoustics).
         self._src_verb = [Reverb(sr, room=0.4, feedback=0.55)
@@ -569,11 +574,14 @@ class Synthesizer:
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:
-            ind = self._induction_audio(frames)
+            ind, gw = self._induction_audio(frames)
             if _HAVE_SCIPY and P["spool_reverb"] > 1e-3:
                 self._ind_reverb.mix = P["spool_reverb"]
                 ind = self._ind_reverb.process(ind)
-            sig = sig + ind
+            if _HAVE_SCIPY and P["gearbox_reverb"] > 1e-3:
+                self._gear_reverb.mix = P["gearbox_reverb"]
+                gw = self._gear_reverb.process(gw)
+            sig = sig + ind + gw
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
@@ -645,7 +653,8 @@ class Synthesizer:
         sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
         P = self.params
         rpm = sim.rpm
-        out = np.zeros(frames, dtype=np.float64)
+        out = np.zeros(frames, dtype=np.float64)   # induction (spool/whine/BOV)
+        gw = np.zeros(frames, dtype=np.float64)    # straight-cut gearbox whine
         sv = P["super_vol"]      # mechanical supercharger whine
         tv = P["turbo_vol"]      # turbo spool whistle + BOV
         bfrac = min(sim.boost / max(eng.boost_bar, 0.05), 1.0) if eng.boost_bar else 0.0
@@ -703,7 +712,7 @@ class Synthesizer:
             wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
             f = wheel_rps * dt.final_drive * 9.0             # final-drive mesh ~ speed
             if 30.0 < f < sr * 0.45:
-                out += (gv * 0.4) * self._whine(
+                gw += (gv * 0.4) * self._whine(
                     f, frames, [(1, 1.0), (2, 0.4)], phase_attr="_gearbox_phase")
 
         # --- hybrid: electric-motor whine + e-turbo e-compressor whine ----------
@@ -723,7 +732,7 @@ class Synthesizer:
                 fe = 2200.0 + bfrac * 2600.0
                 out += (hv * 0.22 * bfrac) * self._whine(
                     min(fe, sr * 0.45), frames, [(1, 1.0)], phase_attr="_ecomp_phase")
-        return out
+        return out, gw
 
     def _callback(self, outdata, frames, time_info, status):
         mono = self._render_block(frames)

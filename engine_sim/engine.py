@@ -154,6 +154,7 @@ class Engine:
     is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
     has_gpf: bool = False            # came with a gasoline particulate filter
     has_cat: bool = True             # came with a catalytic converter
+    straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
 
     @property
     def total_displacement(self) -> float:

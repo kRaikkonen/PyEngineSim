@@ -46,6 +46,8 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
   "closed_map_fraction": 0.10-0.24,     // idle air floor; higher = higher, lopier idle
   "ve_peak_frac": 0.55-0.75,            // rpm-fraction of peak torque (NA hi-rev ~0.72)
   "ve_width_frac": 0.50-0.78,           // torque-curve width (turbo broad ~0.75)
+  "ve_floor": 0.55,                     // low-rpm breathing; raise to 0.72 on small
+                                        //   turbos so they idle/launch off-boost
   "heat_release_k": see STEP 3,         // THE power knob
   "friction_static": 4-11,              // small engine ~5, big ~10
   "starter_torque": 90-220,
@@ -63,12 +65,19 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
   "turbo_spool_frac": 0.12,             // turbo only: rpm-frac before boost (laggy ~0.42)
   "turbo_spool_width": 0.5,             // turbo only: rpm-frac to reach full boost
   "anti_lag": false,                    // rally/Group-B bangs & crackle on overrun
+  "electric_turbo": false,              // e-turbo / e-compressor: near-instant, no lag
+  "hybrid_kw": 0.0,                     // electric-motor peak power (kW); >0 = hybrid
+  "hybrid_base_rpm": 2200,              // rpm below which the motor gives constant torque
   "header_unequal_deg": 0.0,            // 28 = the Subaru boxer "rumble" (unequal headers)
   "valvetrain": "dohc" | "sohc" | "ohv",
   "valves_per_cyl": 2 | 4 | 5,
   "is_rotary": false,                   // true for Wankel rotary (bright "brap")
-  "has_gpf": false,                     // gasoline particulate filter (muffles a lot)
-  "has_cat": true,                      // catalytic converter (mild muffle)
+  "has_gpf": false,                     // gasoline particulate filter — ONLY modern
+                                        //   (post-2018) EU petrol cars; muffles a lot
+  "has_cat": true,                      // catalytic converter; false on pre-'90s
+                                        //   classics and pure race cars (open exhaust)
+  "straight_cut": false,                // straight-cut (dog) gearbox whine on by default
+                                        //   — true for race / track / rally cars only
   "gearbox_type": "dct" | "single" | "at" | "manual",
   "gear_ratios": [list of gear ratios, 1st to top],
   "final_drive": number,
@@ -78,20 +87,33 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
   "cylinders": [ one object PER CYLINDER, see STEP 4 ]
 }
 
-STEP 3 — Choose heat_release_k (the power knob). Pick the closest reference below
-and nudge: higher k = more power; for the SAME power, smaller displacement needs
-higher k. For TURBO engines, tune k so the **un-boosted** power roughly equals
-the real nameplate hp — the boost then adds the extra punch in-game (so a turbo
-uses a *higher* k than a same-size NA engine).
+STEP 3 — Choose heat_release_k (the power knob). Pick the closest reference and
+nudge: higher k = more power; for the SAME power, smaller displacement needs a
+higher k.
 
+IMPORTANT — turbo/supercharged engines use a MUCH LOWER k than NA. Boost adds
+its own air, so the k is tuned for the FULL-BOOST nameplate power, not the
+un-boosted figure (a high k + boost would give absurd 1000+ hp and slam the
+redline in any gear). So a forced-induction engine uses a *lower* k than a
+same-size NA one.
+
+  -- NA (naturally aspirated) --
   NA   I4 1.6L 128hp ........ k 4.5      NA   flat6 4.0L 510hp ..... k 4.2
   NA   V6 3.0L 270hp ........ k 4.1      NA   V8 5.0L 415hp ........ k 4.0
-  NA   V10 5.2L 610hp ....... k 3.7      NA   V12 6.5L 725hp ....... k 3.75
-  NA   4-rotor 700hp ........ k 6.9      NA   V8 4.0L 414hp ........ k 4.0
-  TURBO I4 2.0L 280hp ...... k 6.7      TURBO I6 3.0L 330hp ...... k 4.6
-  TURBO I5 2.5L 400hp ...... k 5.7      TURBO V6 2.9L 450hp ...... k 5.2
-  TURBO V8 4.0L 523hp ...... k 4.6      TURBO V12 6.0L 612hp ..... k 4.7
-  ROOTS-SUPERCHARGED V8 6.2L 707hp ... k 2.5  (use induction "roots", boost ~0.8)
+  NA   V8 4.0L 444hp ........ k 4.4      NA   V10 5.2L 610hp ....... k 3.7
+  NA   V12 6.5L 725hp ....... k 3.75     NA   4-rotor 700hp ........ k 6.9
+  -- TURBO (tune so FULL-BOOST power = nameplate) --
+  TURBO I4 2.0L 280hp ...... k 2.6      TURBO I4 2.0L 416hp ...... k 1.6
+  TURBO I5 2.5L 400hp ...... k 1.3      TURBO I6 3.0L 330hp ...... k 1.7
+  TURBO V6 2.9L 450hp ...... k 1.3      TURBO V6 3.5L 647hp ...... k 1.6
+  TURBO V8 4.0L 523hp ...... k 1.2      TURBO V8 4.4L 600hp ...... k 1.35
+  TURBO V12 6.0L 612hp ..... k 1.3      TURBO W16 8.0L 1001hp .... k 1.5
+  ROOTS-SUPERCHARGED V8 6.2L 707hp ... k 1.7  (induction "roots", boost ~0.8)
+
+  Rule of thumb: turbo k ≈ NA-k-for-that-size ÷ (1 + boost_bar).  Smaller, higher-
+  boost turbos (k ~1.3) need ve_floor ~0.72 + closed_map_fraction ~0.22 or they
+  bog/stall off-boost. A HYBRID's electric motor adds power on TOP of the engine,
+  so tune the engine k for the engine-only hp and let hybrid_kw add the rest.
 
 STEP 4 — Build the "cylinders" list (one object each). Each cylinder:
 
@@ -118,12 +140,25 @@ STEP 4 — Build the "cylinders" list (one object each). Each cylinder:
     flat / boxer .................... first half = -90, second half = +90
     rotary .......................... 0 for every "cylinder"
 
-STEP 5 — Sanity rules before you output:
+STEP 5 — Pick the right factory HARDWARE for the car (don't just leave defaults):
+  - has_cat: true for any road car since ~1993; FALSE for pre-'90s classics and
+    pure race cars (F1, Le Mans, GT race, Group B rally) — open exhaust.
+  - has_gpf: true ONLY for modern (roughly post-2018) European petrol cars
+    (e.g. recent BMW/Audi/Merc turbos); false for everything else.
+  - straight_cut: true for race / track / rally cars (dog box whine); false for
+    road cars.
+  - valvetrain: "ohv" + valves_per_cyl 2 for American pushrod V8s; "dohc" 4-valve
+    for most modern performance engines; "sohc" where correct.
+  - gearbox_type: "dct" (PDK/DCT), "single" (single-clutch automated / sequential
+    race box, kicks), "at" (torque-converter auto, slushy), "manual".
+  - induction: "turbo" / "roots" / "centrifugal" with boost_bar>0, else "na".
+    Set electric_turbo true for an e-turbo; hybrid_kw>0 for a hybrid.
+
+STEP 6 — Final sanity before you output:
   - bore/stroke/rod_length are DECIMALS like 0.086, never 86.
-  - cylinders array length == cylinder count; offsets are all different and span 0..720.
-  - turbo/SC: set induction and boost_bar (>0); NA: induction "na", boost_bar 0.
+  - cylinders array length == cylinder count; offsets are all different, span 0..720.
+  - NA: induction "na", boost_bar 0. Turbo/SC: induction set and boost_bar > 0.
   - rotary: is_rotary true, exhaust_tone high (120-135), bright/open pipe.
-  - big American OHV V8: valvetrain "ohv", valves_per_cyl 2, exhaust_tone ~52-58.
   - Output ONLY the JSON object.
 ````
 
