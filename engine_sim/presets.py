@@ -1641,6 +1641,101 @@ def f4f_wildcat_radial() -> Engine:
     )
 
 
+def ferrari_f2007_v8() -> Engine:
+    """Ferrari F2007 — Ferrari 056 2.4 L NA 90-deg V8 F1 engine (2007).
+
+    98 x 39.75 mm x 8, ~13:1, ~750 hp @ 19000, rev limit 19000 rpm.  The
+    screaming late-2000s F1 V8 — flat-plane, titanium, wide open, no muffler.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 8, 3, 6, 4, 5, 2, 7])
+    cylinders = [
+        Cylinder(bore=mm(98), stroke=mm(39.75), rod_length=mm(102),
+                 compression_ratio=13.0, cycle_offset_deg=offsets[i],
+                 bank_angle_deg=(-45.0 if i < 4 else 45.0))
+        for i in range(8)
+    ]
+    return Engine(
+        name="Ferrari F2007 056 2.4L V8 F1 (19000 rpm)",
+        cylinders=cylinders,
+        flywheel_inertia=0.05, redline_rpm=19000, idle_rpm=4000,
+        heat_release_k=3.6, ve_peak_frac=0.85, ve_width_frac=0.55,
+        friction_static=6.0, friction_quad=4.0e-5,
+        starter_torque=140.0, starter_speed_rpm=3800.0,
+        exhaust_tone=152.0,
+        exhaust_primary_m=0.42, exhaust_total_m=0.65, exhaust_radius_m=0.018,
+        exhaust_channels=2, exhaust_openness=0.99, muffler_volume_m3=0.0006,
+        valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
+        wall_material="titanium", gear_grain=0.38,
+        gear_ratios=[3.0, 2.3, 1.85, 1.5, 1.25, 1.05, 0.9], final_drive=4.0,
+        vehicle_mass=605.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="single",
+    )
+
+
+def ferrari_sf25_v6_hybrid() -> Engine:
+    """Ferrari SF-25 — 1.6 L turbo-hybrid 90-deg V6 F1 power unit (2025).
+
+    80 x 53 mm x 6, ~15000 rpm, ~830 hp ICE + ~160 hp ERS.  Single turbo +
+    MGU-H (near-instant spool) and MGU-K — the muffled, strangled turbo-era note.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 6, 3, 4, 2, 5])
+    cylinders = [
+        Cylinder(bore=mm(80), stroke=mm(53), rod_length=mm(102),
+                 compression_ratio=13.0, cycle_offset_deg=offsets[i],
+                 bank_angle_deg=(-45.0 if i < 3 else 45.0))
+        for i in range(6)
+    ]
+    return Engine(
+        name="Ferrari SF-25 1.6T V6 hybrid F1 (2025)",
+        cylinders=cylinders,
+        flywheel_inertia=0.11, redline_rpm=15000, idle_rpm=4000,
+        heat_release_k=3.4, ve_peak_frac=0.8, ve_width_frac=0.6,
+        friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3800.0,
+        exhaust_tone=120.0,
+        exhaust_primary_m=0.4, exhaust_total_m=0.8, exhaust_radius_m=0.026,
+        exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0015,
+        induction="turbo", boost_bar=2.5, turbo_lag=0.25, turbo_spool_frac=0.08,
+        electric_turbo=True,             # MGU-H -> near-instant spool
+        hybrid_kw=120.0, hybrid_base_rpm=3000.0,
+        valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
+        gear_grain=0.3,
+        gear_ratios=[3.2, 2.5, 2.0, 1.65, 1.35, 1.12, 0.95, 0.82], final_drive=3.7,
+        vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="single",
+    )
+
+
+def mclaren_mp44_honda_v6() -> Engine:
+    """McLaren MP4/4 — Honda RA168E 1.5 L twin-turbo 80-deg V6 F1 (1988).
+
+    79 x 50.8 mm x 6, ~12500 rpm, ~650 hp race / 1000+ in qualifying boost.  The
+    Senna/Prost turbo-era screamer with a big turbo whistle.  Manual H-box.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 6, 3, 4, 2, 5])
+    cylinders = [
+        Cylinder(bore=mm(79), stroke=mm(50.8), rod_length=mm(100),
+                 compression_ratio=9.0, cycle_offset_deg=offsets[i],
+                 bank_angle_deg=(-40.0 if i < 3 else 40.0))
+        for i in range(6)
+    ]
+    return Engine(
+        name="McLaren MP4/4 Honda RA168E 1.5 V6 twin-turbo (1988)",
+        cylinders=cylinders,
+        flywheel_inertia=0.11, redline_rpm=12500, idle_rpm=3500,
+        heat_release_k=3.5, ve_peak_frac=0.8, ve_width_frac=0.6,
+        friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3300.0,
+        exhaust_tone=130.0,
+        exhaust_primary_m=0.4, exhaust_total_m=0.7, exhaust_radius_m=0.022,
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.001,
+        induction="turbo", boost_bar=2.6, turbo_lag=0.4, turbo_spool_frac=0.16,
+        valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
+        wall_material="titanium", gear_grain=0.3,
+        gear_ratios=[2.9, 2.2, 1.8, 1.5, 1.3, 1.1], final_drive=4.0,
+        vehicle_mass=540.0, wheel_radius=0.33, clutch_capacity=550.0,
+        gearbox_type="manual",
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -1696,6 +1791,9 @@ PRESETS = [
     ("focus3", "Focus 1.0 I3", ford_focus_ecoboost_i3),
     ("merlin", "Spitfire Merlin V12", spitfire_merlin_v12),
     ("wildcat", "F4F Wildcat radial", f4f_wildcat_radial),
+    ("f2007", "Ferrari F2007 V8 F1", ferrari_f2007_v8),
+    ("sf25", "Ferrari SF-25 V6 F1", ferrari_sf25_v6_hybrid),
+    ("mp44", "McLaren MP4/4 V6 turbo", mclaren_mp44_honda_v6),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
