@@ -407,8 +407,9 @@ class Synthesizer:
             self._intake_bp_zi = np.zeros(2)
             self._intake_lp_zi = np.zeros(max(len(self._intake_lp[0]),
                                                len(self._intake_lp[1])) - 1)
-            # firing 'body' = a 1-3-5 major chord (3 band-passes) + 3-band EQ
-            self._chord_zi = [np.zeros(2) for _ in _POWER_CHORD]
+            # firing 'body' = a power/colour chord rung as high-Q resonators.
+            # Sized to the widest voicing (5) so every hidden chord fits.
+            self._chord_zi = [np.zeros(2) for _ in range(5)]
             self._eq_lo_zi = np.zeros(2)
             self._eq_mid_zi = np.zeros(2)
             self._eq_hi_zi = np.zeros(2)
@@ -422,6 +423,11 @@ class Synthesizer:
             # ~7 kHz keeps the bright, solid attack snap without the thin shriek.
             self._crack_lp = butter(2, min(7000.0, sr * 0.46) / (sr / 2), btype="low")
             self._crack_lp_zi = np.zeros(2)
+            # ...and high-pass it so the 'crack' is a bright mechanical TICK that
+            # sits clearly apart from the low combustion thump (dry) — otherwise
+            # dry / crack / body all blur into one undifferentiated 'ignition'.
+            self._crack_hp = butter(2, 700.0 / (sr / 2), btype="high")
+            self._crack_hp_zi = np.zeros(2)
             # pipe-wall-thickness low-passes (dull the brassy 'trumpet' edge)
             self._wall_out_zi = np.zeros(2)   # turbo / supercharger whine
             self._wall_gw_zi = np.zeros(2)    # gearbox whine
@@ -563,26 +569,35 @@ class Synthesizer:
         inv = 1.0 / self._nchan
         dry *= inv
         wet *= inv
-        crack = np.diff(dry, prepend=dry[:1])
-        if _HAVE_SCIPY:                                   # tame the piercing top
+        # The three firing voices must be TIMBRALLY distinct, or they all read as
+        # one 'ignition' blob:
+        #   dry   = the low broadband combustion THUMP (the punch)
+        #   crack = a bright mechanical TICK (snap), high-passed off the thump
+        #   body  = a pitched CHORD that RINGS (high-Q resonators), the musical note
+        snap = np.diff(dry, prepend=dry[:1])             # raw broadband edge
+        crack = snap
+        if _HAVE_SCIPY:                                   # bright tick, not a thump
             crack, self._crack_lp_zi = lfilter(
                 self._crack_lp[0], self._crack_lp[1], crack, zi=self._crack_lp_zi)
+            crack, self._crack_hp_zi = lfilter(
+                self._crack_hp[0], self._crack_hp[1], crack, zi=self._crack_hp_zi)
 
-        # --- firing 'body' as a POWER CHORD (root + fifth + octave) ----------
-        # A metal power chord is root+fifth (NO third) — perfect intervals lock
-        # harmonically so it sits solid, not 'floaty' like the major third did.
-        # Saturating it adds the tight, dense, distorted-guitar grip.
+        # --- firing 'body' = a chord RUNG OUT by the combustion snap ----------
+        # Each chord voice is a high-Q resonator EXCITED by the sharp snap, so it
+        # actually rings at its pitch (a real, audible chord) instead of being a
+        # weak band-pass of the thump.  Now switching voicings (keys 1-6) clearly
+        # changes the timbre, and the chord is its own voice — not 'more ignition'.
         body = np.zeros(frames, dtype=np.float64)
         if _HAVE_SCIPY and P["body"] > 1e-3:
-            root = min(max(P["firing_pitch"], 40.0), 500.0)
+            root = min(max(P["firing_pitch"], 28.0), 600.0)
             nyq = self.sample_rate * 0.45
             chord = _FIRE_CHORDS[self.fire_chord % len(_FIRE_CHORDS)]
             for k, (ratio, lvl) in enumerate(chord):
                 f = min(root * ratio, nyq)
-                bb, ab = _bandpass(f, 2.0, self.sample_rate)
-                tone, self._chord_zi[k] = lfilter(bb, ab, dry, zi=self._chord_zi[k])
+                bb, ab = _bandpass(f, 11.0, self.sample_rate)    # resonant -> rings
+                tone, self._chord_zi[k] = lfilter(bb, ab, snap, zi=self._chord_zi[k])
                 body += lvl * tone
-            body *= 0.8                          # trim for the extra chord voices
+            body *= 1.7                          # the resonators ring quietly; lift
 
         # Assemble the bang (pulse + snap + power chord) and SATURATE it for the
         # tight, solid 'metal power chord' grip (the fix for the floaty feel).
@@ -688,9 +703,12 @@ class Synthesizer:
                                           sig, zi=self._cabin_zi)
             sig *= 1.4   # make up the level lost to the low-pass
 
-        # --- spatial reverb (a sense of room, not an anechoic void) ----------
-        # A bit more reverb inside the cabin (reflective interior).
-        self._reverb.mix = P["reverb"] + (0.10 if self.cabin else 0.0)
+        # --- spatial / room reverb — the LAST stage, the space the tailpipe
+        # exhausts into (after the bent pipe + cat, exactly like real life).  A
+        # bent-stainless road car is heard bouncing off tarmac & bodywork, so it
+        # carries MORE room than a dry open-header race car; the cabin adds more.
+        self._reverb.mix = (P["reverb"] + (0.10 if self.cabin else 0.0)
+                            + (0.12 if self.road_pipe else 0.0))
         sig = self._reverb.process(sig)
 
         # --- auto-level (or fixed gain) + soft saturation + master volume ----

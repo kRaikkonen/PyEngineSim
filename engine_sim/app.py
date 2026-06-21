@@ -142,7 +142,7 @@ SLIDER_DEFS = [
     ("dry", "Firing / bang", 0.0, 4.0),
     ("body", "Body (thickness)", 0.0, 6.0),
     ("drive", "Drive (solid)", 0.0, 3.0),
-    ("firing_pitch", "Firing pitch (Hz)", 40.0, 300.0),
+    ("firing_pitch", "Firing pitch (Hz)", 28.0, 600.0),
     ("crack", "Attack crack", 0.0, 1.6),
     ("attack_deg", "Attack soft (blunt)", 1.0, 25.0),
     ("turbulence", "Fizz / gas noise", 0.0, 1.6),
@@ -1002,8 +1002,59 @@ class App:
                     st.append(right[s])
                 stations.append(st)
         ns = max(1, len(stations))
-        sw = rect.width / ns
         maxang = max((abs(c.bank_angle_deg) for c in eng.cylinders), default=0.0)
+
+        # A V or a W is laid out VERTICALLY: the crankshaft runs DOWN the centre
+        # and the two banks fan out left & right (herringbone).  Spreading a wide
+        # V12 / W16 across the top made the tilted banks shoot off the panel edge;
+        # going vertical uses the tall axis for the stations and keeps every
+        # cylinder inside the frame.  (Inline = upright row, boxer = opposed: both
+        # still drawn the wide way below.)
+        if left and right and maxang < 80.0:
+            cxx = rect.centerx
+            mtop, mbot = rect.y + 306, rect.bottom - 48
+            dy = (mbot - mtop) / ns
+            tilt = max(8.0, min(22.0, (90.0 - maxang) * 0.30))   # gentle up-angle
+            trad = math.radians(tilt)
+            width = min(dy * 0.60, 38.0)
+            length = min((rect.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
+                         dy * 2.7, 172.0)
+            # vertical metallic crankshaft behind every journal (strip-shaded)
+            cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
+            chw = max(width * 0.30, 9.0)
+            for si in range(7):
+                e0 = (si / 7 * 2 - 1) * chw; e1 = ((si + 1) / 7 * 2 - 1) * chw
+                f = 0.40 + 0.66 * (1.0 - abs((si + 0.5) / 7 * 2 - 1))
+                pygame.draw.polygon(self.screen, (min(255, int(70 * f)),
+                                    min(255, int(76 * f)), min(255, int(90 * f))),
+                                    [(cxx + e0, cy0), (cxx + e0, cy1),
+                                     (cxx + e1, cy1), (cxx + e1, cy0)])
+            pygame.draw.line(self.screen, (24, 26, 32), (cxx - chw, cy0), (cxx - chw, cy1))
+            pygame.draw.line(self.screen, (24, 26, 32), (cxx + chw, cy0), (cxx + chw, cy1))
+            for s, st in enumerate(stations):
+                jy = mtop + dy * (s + 0.5)
+                for i in st:
+                    cyl = eng.cylinders[i]
+                    phi = sim.cycle_phase_deg(i)
+                    theta = math.radians(phi % 360.0)
+                    frac = sim.piston_fraction(i)
+                    glow = (min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
+                                / (5.0 * 101325.0), 1.0)
+                            if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
+                            else 0.0)
+                    side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
+                    a = side * (math.pi / 2.0 - trad)        # point left / right, up
+                    self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
+                    lx = cxx + math.sin(a) * (length + 14)
+                    ly = jy - math.cos(a) * (length + 14)
+                    lab = self.font_small.render(f"{i + 1}", True, DIM)
+                    self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+            fo = "-".join(str(x) for x in eng.firing_order)
+            self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+                             True, ACCENT), (rect.x + 18, rect.bottom - 14))
+            return
+
+        sw = rect.width / ns
         crank_y = bottom - 30 - (bottom - top - 70) * min(maxang / 90.0, 1.0) * 0.5
         # cap the length so a tilted bank's HORIZONTAL reach never runs into the
         # neighbouring station or off the panel (matters most for wide V / boxer).
