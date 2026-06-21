@@ -209,6 +209,7 @@ class App:
         self.screen = pygame.Surface((WIDTH, HEIGHT))
         self._win_size = (WIDTH, HEIGHT)
         self._draw_offset = (0, 0)
+        self._draw_scale = 1.0
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
         self._cyl_flow_hist = []  # per-cylinder exhaust-flow scope ring buffers
@@ -569,21 +570,23 @@ class App:
         self._flash("语言: 中文" if self.lang == "zh" else "Language: English")
 
     def _map_mouse(self, pos):
-        """Map a real-window pixel position back onto the fixed UI canvas.  The
-        canvas is drawn 1:1 (never scaled), just centred, so this only undoes
-        the centring offset — clicks land exactly on what you see."""
+        """Map a real-window pixel position back onto the fixed UI canvas — undo
+        the centring offset AND the fit-to-window scale, so clicks/taps land
+        exactly on what you see at any window or phone-screen size."""
         ox, oy = getattr(self, "_draw_offset", (0, 0))
-        return (pos[0] - ox, pos[1] - oy)
+        s = getattr(self, "_draw_scale", 1.0) or 1.0
+        return ((pos[0] - ox) / s, (pos[1] - oy) / s)
 
     def canvas_mouse(self):
         return self._map_mouse(pygame.mouse.get_pos())
 
     # ----------------------------------------------------------- touch input
     def _map_finger(self, e):
-        """Normalised (0..1) finger event -> canvas coordinates."""
+        """Normalised (0..1) finger event -> canvas coordinates (undo fit scale)."""
         ww, wh = self._win_size
         ox, oy = self._draw_offset
-        return (e.x * ww - ox, e.y * wh - oy)
+        s = getattr(self, "_draw_scale", 1.0) or 1.0
+        return ((e.x * ww - ox) / s, (e.y * wh - oy) / s)
 
     def _touch_rects(self):
         """On-screen control hit-boxes (finger pedals / paddles / buttons)."""
@@ -732,9 +735,9 @@ class App:
             if e.type == pygame.QUIT:
                 self.running = False
             elif e.type == pygame.VIDEORESIZE:
-                # Never go below the native UI size, so nothing is ever clipped;
-                # the window can only grow (extra room becomes background).
-                self._win_size = (max(e.w, WIDTH), max(e.h, HEIGHT))
+                # The canvas scales to fit (aspect-preserved), so the window may be
+                # any size — bigger OR smaller than native (phones scale it down).
+                self._win_size = (max(e.w, 480), max(e.h, 300))
                 self.window = pygame.display.set_mode(self._win_size, pygame.RESIZABLE)
             elif e.type == pygame.FINGERDOWN:
                 pos = self._map_finger(e)
@@ -914,15 +917,21 @@ class App:
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
-        # Blit the native-size UI into the window WITHOUT scaling (no stretch /
-        # squish) — when the window is bigger, the UI is centred and the extra
-        # space is just background.  Layout and element sizes never change.
+        # Fit the native 1100x680 canvas into the window, PRESERVING ASPECT RATIO
+        # (letter-boxed) — so it fills a phone screen or a maximised desktop window
+        # cleanly instead of sitting tiny in the corner.  scale==1 => crisp 1:1.
         ww, wh = self._win_size
-        ox, oy = max(0, (ww - WIDTH) // 2), max(0, (wh - HEIGHT) // 2)
+        scale = min(ww / WIDTH, wh / HEIGHT)
+        sw, sh = int(WIDTH * scale), int(HEIGHT * scale)
+        ox, oy = (ww - sw) // 2, (wh - sh) // 2
+        self._draw_scale = scale
         self._draw_offset = (ox, oy)
-        if (ww, wh) != (WIDTH, HEIGHT):
-            self.window.fill(BG)
-        self.window.blit(self.screen, (ox, oy))
+        self.window.fill(BG)
+        if abs(scale - 1.0) < 1e-3:
+            self.window.blit(self.screen, (ox, oy))
+        else:
+            self.window.blit(pygame.transform.smoothscale(self.screen, (sw, sh)),
+                             (ox, oy))
         pygame.display.flip()
 
     # ----------------------------------------------------- iOS 6 skeuomorphism
