@@ -63,6 +63,11 @@ _POWER_CHORD = (
     (3.0, 0.38),    # fifth + octave (top sparkle, kept moderate)
 )
 
+# A DOMINANT-7th chord voicing for the turbo spool / gear whine — stacking the
+# root, major third, fifth and (flat) seventh thickens the single brassy tone
+# into a fuller, less 'small-trumpet' sound.  (ratios vs the whine fundamental)
+_DOM7 = ((1.0, 1.0), (1.25, 0.5), (1.5, 0.62), (1.78, 0.42))
+
 # Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
 VALVE_OPEN = 505.0
 VALVE_CLOSE = 715.0
@@ -288,8 +293,9 @@ class Synthesizer:
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
             "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
-            "turbo_vol": 0.6,     # turbo spool whistle + blow-off-valve level
-            "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
+            "turbo_vol": 0.45,    # turbo spool whistle + BOV (was 0.6 -> 75%)
+            "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
+            "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -393,6 +399,10 @@ class Synthesizer:
             # ~7 kHz keeps the bright, solid attack snap without the thin shriek.
             self._crack_lp = butter(2, min(7000.0, sr * 0.46) / (sr / 2), btype="low")
             self._crack_lp_zi = np.zeros(2)
+            # pipe-wall-thickness low-passes (dull the brassy 'trumpet' edge)
+            self._wall_out_zi = np.zeros(2)   # turbo / supercharger whine
+            self._wall_gw_zi = np.zeros(2)    # gearbox whine
+            self._wall_sig_zi = np.zeros(2)   # the main exhaust note
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -600,6 +610,15 @@ class Synthesizer:
             sig = sig + ind + gw
             sig = sig + self._overrun_pops(frames)   # decel pops & bangs
 
+        # --- pipe-wall thickness on the exhaust note (gentler than on the whine)
+        # so even an N/A car can lose the bright metallic 'small-trumpet' shriek.
+        wt = P["wall_thickness"]
+        if _HAVE_SCIPY and wt > 1e-3:
+            sr2 = self.sample_rate
+            cut = min(max(15000.0 - 11000.0 * wt, 2200.0), sr2 * 0.45)
+            b, a = butter(2, cut / (sr2 / 2), btype="low")
+            sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
+
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
             if abs(P["eq_low"]) > 0.1:
@@ -691,7 +710,8 @@ class Synthesizer:
             if bfrac > 0.02:
                 f = 900.0 + bfrac * 5200.0                    # whistle rises with boost
                 amp = tv * bfrac * 0.30
-                out += amp * self._whine(min(f, sr * 0.45), frames, [(1, 1.0)])
+                # dominant-7th stack thickens the single brassy whistle tone
+                out += amp * self._whine(min(f, sr * 0.45), frames, list(_DOM7))
                 out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
             # Throttle snaps shut while on boost -> the lift-off sound.  Which
             # one you hear depends on where the pressurised air goes:
@@ -729,8 +749,9 @@ class Synthesizer:
             wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
             f = wheel_rps * dt.final_drive * 9.0             # final-drive mesh ~ speed
             if 30.0 < f < sr * 0.45:
+                # dominant-7th stack for a thicker, less small-trumpet whine
                 gw += (gv * 0.4) * self._whine(
-                    f, frames, [(1, 1.0), (2, 0.4)], phase_attr="_gearbox_phase")
+                    f, frames, list(_DOM7), phase_attr="_gearbox_phase")
 
         # --- hybrid: electric-motor whine + e-turbo e-compressor whine ----------
         hv = P["hybrid_vol"]
@@ -749,6 +770,14 @@ class Synthesizer:
                 fe = 2200.0 + bfrac * 2600.0
                 out += (hv * 0.22 * bfrac) * self._whine(
                     min(fe, sr * 0.45), frames, [(1, 1.0)], phase_attr="_ecomp_phase")
+
+        # pipe-wall thickness: dull the brassy 'trumpet' edge of the whines
+        wt = P["wall_thickness"]
+        if _HAVE_SCIPY and wt > 1e-3:
+            cut = min(max(7000.0 - 5600.0 * wt, 900.0), sr * 0.45)
+            b, a = butter(2, cut / (sr / 2), btype="low")
+            out, self._wall_out_zi = lfilter(b, a, out, zi=self._wall_out_zi)
+            gw, self._wall_gw_zi = lfilter(b, a, gw, zi=self._wall_gw_zi)
         return out, gw
 
     def _overrun_pops(self, frames):

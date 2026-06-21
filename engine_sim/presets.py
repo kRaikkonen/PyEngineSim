@@ -515,7 +515,8 @@ def lamborghini_aventador_v12() -> Engine:
     95 x 76.4 mm, ~11.8:1 CR, ~8500 rpm, ~700 hp.  The big NA V12 howl — fuller
     and smoother than the V10, twelve even 60-deg pulses.  DOHC 4-valve.
     """
-    offsets = _even_offsets(12, firing_order=[1, 12, 3, 10, 6, 7, 2, 11, 4, 9, 5, 8])
+    # Official L539 firing order (cast on the engine plate): banks 1-6 / 7-12.
+    offsets = _even_offsets(12, firing_order=[1, 12, 4, 9, 2, 11, 6, 7, 3, 10, 5, 8])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V

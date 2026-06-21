@@ -120,6 +120,7 @@ TR_ZH = {
     "Straight-cut whine": "直齿啸叫", "Gear-whine reverb": "直齿混响",
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
+    "Pipe wall (anti-horn)": "管壁厚度(去小号)",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -157,6 +158,7 @@ SLIDER_DEFS = [
     ("pops", "Overrun pops", 0.0, 1.5),
     ("pop_muff", "Pop muffle", 0.0, 1.0),
     ("pops_reverb", "Pop reverb", 0.0, 0.6),
+    ("wall_thickness", "Pipe wall (anti-horn)", 0.0, 1.0),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -475,7 +477,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 22
+            y += 21
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
