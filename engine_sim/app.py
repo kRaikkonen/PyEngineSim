@@ -74,6 +74,54 @@ BTN_HOT_LO = (84, 90, 102)
 BTN_ON_HI = (108, 186, 255)     # active = blue glass
 BTN_ON_LO = (28, 108, 224)
 
+# --- localisation (English / 简体中文) ---------------------------------------
+# Keyed by the English string; tr() returns the current language's version.
+TR_ZH = {
+    # toolbar
+    "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
+    "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
+    "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
+    "Cat": "三元", "Flutter": "颤振", "Hybrid": "混动", "G-pad": "G力",
+    "Lang": "语言",
+    # gauges / readouts
+    "RPM": "转速", "TORQUE": "扭矩", "POWER": "功率", "THROTTLE": "油门",
+    "GEAR": "挡位", "SPEED": "车速", "TELEMETRY": "遥测",
+    "TURBO": "涡轮", "ROOTS": "机增", "S/C": "机增",
+    # status
+    "IGNITION": "点火", "STARTER": "起动机", "REV LIMIT": "断油", "AUDIO": "音频",
+    "CLUTCH IN": "离合", "IN GEAR": "在挡",
+    # controls
+    "CONTROLS": "操作", "ignition": "点火", "starter": "起动机",
+    "gas / brake": "油门/刹车", "shift": "换挡", "clutch": "离合",
+    "auto box": "自动挡", "voice": "音色", "mixer": "混音",
+    "mute / quit": "静音/退出",
+    # mixer panel
+    "AUDIO MIXER": "混音台",
+    "drag the sliders  ·  C or ✕ to close": "拖动滑块  ·  C 或 ✕ 关闭",
+    "SPATIAL  (drag)": "空间音频 (拖动)", "far": "远", "near": "近",
+    # forza banner + tach
+    "LIVE": "实时", "redline": "红线",
+    "waiting for Data Out on UDP": "等待 Data Out 广播 UDP",
+    "rpm   x1000": "转速 x1000",
+    # firing voice + voices
+    "firing voice:": "点火音色:", "cabin": "车内",
+    "Balanced": "均衡", "Sharp": "尖锐", "Deep": "低沉", "Raspy": "沙哑",
+    "Hollow": "空洞",
+    # slider labels
+    "MASTER volume": "主音量", "Firing / bang": "点火爆音", "Body (thickness)": "声体(厚)",
+    "Drive (solid)": "驱动(扎实)", "Firing pitch (Hz)": "点火音高(Hz)",
+    "Attack crack": "起音爆裂", "Attack soft (blunt)": "起音柔化",
+    "Fizz / gas noise": "气流嘶声", "Pipe resonance 1": "排气共振1",
+    "Pipe resonance 2": "排气共振2", "Intake roar": "进气轰鸣",
+    "Explosion reverb": "爆燃混响", "Reverb (space)": "空间混响",
+    "Cylinder spread": "缸间差异", "Supercharger whine": "机增啸叫",
+    "Turbo spool / BOV": "涡轮/泄压", "Spool reverb": "增压混响",
+    "Straight-cut whine": "直齿啸叫", "Gear-whine reverb": "直齿混响",
+    "Electric / e-turbo": "电机/电涡轮", "EQ low (dB)": "EQ低频(dB)",
+    "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
+    "Presence (bite)": "临场(咬合)",
+}
+
 WIDTH, HEIGHT = 1100, 680
 FPS = 60
 
@@ -138,9 +186,8 @@ class App:
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("consolas", 18)
-        self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
-        self.font_small = pygame.font.SysFont("consolas", 14)
+        self.lang = "en"          # "en" | "zh"
+        self._init_fonts()
 
         # load any user engine .json configs as extra presets
         presets.register_user_engines()
@@ -183,29 +230,32 @@ class App:
         dev = self.devices[self.device_idx][0]
         rate = SAMPLE_RATES[self.rate_idx]
         sy = self.synth
+        T = self.tr
+        arr = "▼" if self.lang == "zh" else "▾"   # YaHei lacks U+25BE
         return [
-            ("Demo cars ▾", self._menu_demo, None, 0),
-            ("Load car…", self.load_car_dialog, None, 0),
-            ("Load EQ…", self.load_eq_dialog, None, 0),
-            ("Save…", self.save_dialog, None, 0),
-            ("Mixer / EQ", lambda: setattr(self, "mixer_open", not self.mixer_open),
+            (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
+            (T("Load car…"), self.load_car_dialog, None, 0),
+            (T("Load EQ…"), self.load_eq_dialog, None, 0),
+            (T("Save…"), self.save_dialog, None, 0),
+            (T("Mixer / EQ"), lambda: setattr(self, "mixer_open", not self.mixer_open),
              lambda: self.mixer_open, 0),
-            (f"Out: {dev} ▾", self._menu_device, None, 1),
+            (f"{'中/EN' if self.lang == 'en' else 'EN/中'}", self.toggle_lang, None, 0),
+            (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 1),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
-            ("Auto" if dt.auto else "Manual", lambda: setattr(dt, "auto", not dt.auto),
-             lambda: dt.auto, 1),
-            ("Cabin", lambda: setattr(sy, "cabin", not sy.cabin),
+            (T("Auto") if dt.auto else T("Manual"),
+             lambda: setattr(dt, "auto", not dt.auto), lambda: dt.auto, 1),
+            (T("Cabin"), lambda: setattr(sy, "cabin", not sy.cabin),
              lambda: sy.cabin, 1),
-            ("Gear whine", lambda: setattr(sy, "straight_cut", not sy.straight_cut),
+            (T("Gear whine"), lambda: setattr(sy, "straight_cut", not sy.straight_cut),
              lambda: sy.straight_cut, 1),
             ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
-            ("Cat", lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
-            ("Flutter", lambda: setattr(sy, "flutter", not sy.flutter),
+            (T("Cat"), lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
+            (T("Flutter"), lambda: setattr(sy, "flutter", not sy.flutter),
              lambda: sy.flutter, 2),
-            ("Hybrid", lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
+            (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 2),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
-            ("G-pad", lambda: setattr(self, "g_spatial", not self.g_spatial),
+            (T("G-pad"), lambda: setattr(self, "g_spatial", not self.g_spatial),
              lambda: self.g_spatial, 2),
         ]
 
@@ -234,8 +284,8 @@ class App:
     def _menu_device(self):
         items = [(lbl, (lambda i=i: self.set_device(i)))
                  for i, (lbl, _idx) in enumerate(self.devices)]
-        # the device button is the first on row 1
-        anchor = next(b["rect"] for b in self._buttons if b["label"].startswith("Out:"))
+        # find the device button by its callback (label is translated)
+        anchor = next(b["rect"] for b in self._buttons if b["cb"] == self._menu_device)
         self._open_menu_for(items, anchor)
 
     def _open_menu_for(self, items, anchor_rect):
@@ -430,6 +480,28 @@ class App:
         self._tele_smooth.clear()             # don't carry needle state across cars
 
     # ----------------------------------------------------------------- input
+    def _init_fonts(self):
+        """(Re)build fonts for the current language — a CJK-capable face for
+        Chinese, crisp Consolas for English."""
+        if self.lang == "zh":
+            fam = "microsoftyahei,microsoftyaheui,simhei,simsun"
+            self.font = pygame.font.SysFont(fam, 17)
+            self.font_big = pygame.font.SysFont(fam, 40, bold=True)
+            self.font_small = pygame.font.SysFont(fam, 14)
+        else:
+            self.font = pygame.font.SysFont("consolas", 18)
+            self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
+            self.font_small = pygame.font.SysFont("consolas", 14)
+
+    def tr(self, s):
+        """Translate a UI string for the current language."""
+        return TR_ZH.get(s, s) if self.lang == "zh" else s
+
+    def toggle_lang(self):
+        self.lang = "zh" if self.lang == "en" else "en"
+        self._init_fonts()
+        self._flash("语言: 中文" if self.lang == "zh" else "Language: English")
+
     def _map_mouse(self, pos):
         """Map a real-window pixel position back onto the fixed UI canvas.  The
         canvas is drawn 1:1 (never scaled), just centred, so this only undoes
@@ -736,10 +808,11 @@ class App:
 
     def _draw_mixer(self, rect):
         self._panel(rect)
-        self.screen.blit(self.font.render("AUDIO MIXER", True, INK),
+        self.screen.blit(self.font.render(self.tr("AUDIO MIXER"), True, INK),
                          (rect.x + 18, rect.y + 18))
-        self.screen.blit(self.font_small.render("drag the sliders  ·  C or ✕ to close",
-                                                 True, DIM), (rect.x + 150, rect.y + 24))
+        self.screen.blit(self.font_small.render(
+            self.tr("drag the sliders  ·  C or ✕ to close"),
+            True, DIM), (rect.x + 150, rect.y + 24))
         # a mouse-clickable close box (so you never need the keyboard)
         self._mixer_close_rect = pygame.Rect(rect.right - 42, rect.y + 14, 28, 24)
         pygame.draw.rect(self.screen, (56, 62, 74), self._mixer_close_rect,
@@ -753,7 +826,7 @@ class App:
             norm = (val - s["min"]) / (s["max"] - s["min"]) if s["max"] > s["min"] else 0
             norm = min(max(norm, 0.0), 1.0)
             # label + value
-            self.screen.blit(self.font_small.render(s["label"], True, INK),
+            self.screen.blit(self.font_small.render(self.tr(s["label"]), True, INK),
                              (rect.x + 22, s["row_y"] + 2))
             vtxt = f"{val:5.0f}" if s["max"] > 20 else f"{val:5.2f}"
             self.screen.blit(self.font_small.render(vtxt, True, ACCENT),
@@ -773,7 +846,7 @@ class App:
 
         # --- spatial audio XY pad (drag the dot = position in the room) ------
         pr = self._pad_rect
-        self.screen.blit(self.font_small.render("SPATIAL  (drag)", True, INK),
+        self.screen.blit(self.font_small.render(self.tr("SPATIAL  (drag)"), True, INK),
                          (pr.x, pr.y - 20))
         pygame.draw.rect(self.screen, (30, 33, 40), pr, border_radius=8)
         pygame.draw.rect(self.screen, (70, 76, 90), pr, width=1, border_radius=8)
@@ -783,8 +856,9 @@ class App:
                          (pr.x + 6, pr.centery), (pr.right - 6, pr.centery))
         self.screen.blit(self.font_small.render("L", True, DIM), (pr.x + 5, pr.centery - 8))
         self.screen.blit(self.font_small.render("R", True, DIM), (pr.right - 14, pr.centery - 8))
-        self.screen.blit(self.font_small.render("far", True, DIM), (pr.centerx - 9, pr.y + 3))
-        self.screen.blit(self.font_small.render("near", True, DIM),
+        self.screen.blit(self.font_small.render(self.tr("far"), True, DIM),
+                         (pr.centerx - 9, pr.y + 3))
+        self.screen.blit(self.font_small.render(self.tr("near"), True, DIM),
                          (pr.centerx - 13, pr.bottom - 16))
         sx = self.synth.params["spatial_x"]
         sy = self.synth.params["spatial_y"]
@@ -806,10 +880,11 @@ class App:
 
         title = self.font.render(eng.name, True, INK)
         self.screen.blit(title, (rect.x + 18, ty))
-        voice = FIRING_VOICES[self.voice_idx][0]
-        cab = "   ·   cabin" if self.synth.cabin else ""
-        self.screen.blit(self.font_small.render(f"firing voice: {voice}  (V){cab}",
-                                                True, ACCENT), (rect.x + 18, ty + 24))
+        voice = self.tr(FIRING_VOICES[self.voice_idx][0])
+        cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
+        self.screen.blit(self.font_small.render(
+            f"{self.tr('firing voice:')} {voice}  (V){cab}",
+            True, ACCENT), (rect.x + 18, ty + 24))
 
         self._draw_telemetry(rect, ty + 48)
 
@@ -818,10 +893,11 @@ class App:
         if self.telemetry_mode:
             tm = self.telemetry
             if tm is not None and tm.is_live():
-                txt = f"FORZA  LIVE   {tm.rpm:5.0f} rpm   (redline {tm.max_rpm:.0f})"
+                lr = self.tr("redline") if self.lang == "zh" else "redline"
+                txt = f"FORZA  {self.tr('LIVE')}   {tm.rpm:5.0f} rpm   ({lr} {tm.max_rpm:.0f})"
                 col = GOOD
             else:
-                txt = f"FORZA  waiting for Data Out on UDP :{FORZA_PORT}"
+                txt = f"FORZA  {self.tr('waiting for Data Out on UDP')} :{FORZA_PORT}"
                 col = WARN
             self.screen.blit(self.font_small.render(txt, True, col), (rect.x + 26, by))
         if self._status_t > 0.0:
@@ -1063,7 +1139,7 @@ class App:
                                (r, r), int(r * 0.5))
             self.screen.blit(gs, (cx - r, cy - r))
         pygame.draw.circle(self.screen, (90, 96, 108), (cx, cy), hub)
-        lab = self.font_small.render("TURBO", True, DIM)
+        lab = self.font_small.render(self.tr("TURBO"), True, DIM)
         self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
     def _draw_blower(self, cx, cy, r, spin, load, centri=False):
@@ -1094,7 +1170,7 @@ class App:
             pygame.draw.circle(gs, (90, 170, 255, int(120 * min(load, 1.0))),
                                (int(1.5 * r), r), int(r * 0.7))
             self.screen.blit(gs, (cx - int(1.5 * r), cy - r))
-        lab = self.font_small.render(txt, True, DIM)
+        lab = self.font_small.render(self.tr(txt), True, DIM)
         self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
     def _exhaust_db(self):
@@ -1192,37 +1268,39 @@ class App:
         hp = nm_to_hp_at(max(tq, 0.0), max(sim.rpm, 1.0))
         dt = sim.drivetrain
         y = rect.y + 296
+        T = self.tr
+        mode = T("Auto") if dt.auto else T("Manual")
         rows = [
             ("RPM", f"{sim.rpm:6.0f}", ACCENT),
             ("TORQUE", f"{tq:6.0f} Nm  ({nm_to_lbft(tq):.0f} lb-ft)", INK),
             ("POWER", f"{hp:6.0f} hp", INK),
             ("THROTTLE", f"{sim.throttle*100:5.0f} %", INK),
-            ("GEAR", f"{dt.gear_name:>3}  {'AUTO' if dt.auto else 'MANUAL'}"
+            ("GEAR", f"{dt.gear_name:>3}  {mode}"
                      f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
             ("SPEED", f"{dt.speed_kmh:6.0f} km/h", INK),
         ]
         for label, value, col in rows:
-            self.screen.blit(self.font.render(label, True, DIM), (rect.x + 28, y))
+            self.screen.blit(self.font.render(T(label), True, DIM), (rect.x + 28, y))
             self.screen.blit(self.font.render(value, True, col), (rect.x + 150, y))
             y += 28
 
         # --- status indicators ---
         y += 6
-        self._status_dot(rect.x + 28, y, "IGNITION", sim.ignition_on, GOOD, WARN)
-        self._status_dot(rect.x + 230, y, "STARTER", sim.starter_engaged, ACCENT, DIM)
+        self._status_dot(rect.x + 28, y, T("IGNITION"), sim.ignition_on, GOOD, WARN)
+        self._status_dot(rect.x + 230, y, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
         y += 26
-        self._status_dot(rect.x + 28, y, "REV LIMIT", sim._fuel_cut, WARN, DIM)
-        self._status_dot(rect.x + 230, y, "AUDIO",
+        self._status_dot(rect.x + 28, y, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
+        self._status_dot(rect.x + 230, y, T("AUDIO"),
                          self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
         y += 26
-        self._status_dot(rect.x + 28, y, "CLUTCH IN", dt.clutch < 0.5, ACCENT, DIM)
-        self._status_dot(rect.x + 230, y, "IN GEAR", dt.gear > 0, GOOD, DIM)
+        self._status_dot(rect.x + 28, y, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
+        self._status_dot(rect.x + 230, y, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
 
         # --- controls reference (two tidy columns) ---
         y += 26
         pygame.draw.line(self.screen, (44, 48, 56),
                          (rect.x + 28, y - 6), (rect.right - 28, y - 6))
-        self.screen.blit(self.font_small.render("CONTROLS", True, DIM),
+        self.screen.blit(self.font_small.render(T("CONTROLS"), True, DIM),
                          (rect.x + 28, y))
         pairs = [
             ("A", "ignition"), ("S", "starter"),
@@ -1236,7 +1314,7 @@ class App:
             cx = cols[i % 2]
             ry = y + 22 + (i // 2) * 15
             self.screen.blit(self.font_small.render(k, True, ACCENT), (cx, ry))
-            self.screen.blit(self.font_small.render(act, True, DIM), (cx + 64, ry))
+            self.screen.blit(self.font_small.render(self.tr(act), True, DIM), (cx + 64, ry))
 
     def _draw_tach(self, cx, cy, r, rpm, redline):
         """A glossy iOS 6 / aircraft-style tachometer dial."""
@@ -1307,7 +1385,7 @@ class App:
         pygame.draw.rect(self.screen, (6, 7, 10), win, 1, border_radius=6)
         rt = self.font.render(f"{int(rpm):>5d}", True, col)
         self.screen.blit(rt, (win.centerx - rt.get_width() // 2, win.y + 4))
-        cap = self.font_small.render("rpm   x1000", True, DIM)
+        cap = self.font_small.render(self.tr("rpm   x1000"), True, DIM)
         self.screen.blit(cap, (cx - cap.get_width() // 2, win.bottom + 4))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
