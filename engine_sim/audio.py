@@ -545,9 +545,22 @@ class Synthesizer:
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
                 ramp = np.clip(d / self.params["attack_deg"], 0.0, 1.0)
                 ramp = 0.5 - 0.5 * np.cos(ramp * math.pi)   # blunt (soft) attack
-                decay = np.exp(-np.clip(d, 0.0, None) / tau_j)
+                dd = np.clip(d, 0.0, None)
+                # Two-stage exhaust pulse (real valve behaviour) instead of one
+                # flat blat: (1) BLOWDOWN — the valve cracks open and the still-high
+                # cylinder pressure dumps in a steep, short, HF-rich burst (the
+                # sharp leading edge); (2) DISPLACEMENT — the rising piston then
+                # pushes the rest of the gas out as a broader, lower, later hump
+                # (the body / low end).  Decays are in CRANK DEGREES, so the whole
+                # event is fixed-angle and naturally sounds sharper/brighter as rpm
+                # climbs and fatter when it drops — the load/rev character is real.
+                tau_blow = max(0.34 * tau_j, 5.0)
+                blow = ramp * np.exp(-dd / tau_blow)
+                tau_disp = tau_j * 1.5
+                disp = ramp * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
-                chans[self._channel_of[j]] += np.where(inwin, ramp * decay * close, 0.0) * amp_j
+                pulse = (blow + 0.7 * disp) * close * amp_j
+                chans[self._channel_of[j]] += np.where(inwin, pulse, 0.0)
 
             # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
             # noise gated by the pulse), so each gets its OWN mixer slider.
