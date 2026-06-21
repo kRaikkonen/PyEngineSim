@@ -334,6 +334,9 @@ class Synthesizer:
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "shear": 0.10,        # tail-pipe air-shear roar at the exit (mass-flow)
+            "whine": 1.0,         # high-rpm standing-wave whine/scream amount
+            "valve_open": 1.0,    # how far the active exhaust valve opens at revs
+            "muffler": 1.0,       # muffler internal-reflection (comb) depth
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -816,7 +819,7 @@ class Synthesizer:
                 fc = f_qw * n
                 if 2400.0 < fc < min(8000.0, self.sample_rate * 0.45):
                     Q = min(Qbase * math.sqrt(1.0 + 0.10 * n), 22.0)
-                    gain = (5.5 - 1.3 * k) * wamt          # upper peaks a touch lower
+                    gain = (5.5 - 1.3 * k) * wamt * P.get("whine", 1.0)
                     bw, aw = _peaking(fc, Q, gain, self.sample_rate)
                     sig, self._whine_zi[k] = lfilter(bw, aw, sig, zi=self._whine_zi[k])
 
@@ -849,12 +852,14 @@ class Synthesizer:
             if mcomb > 0.05:
                 d1 = self._muff_len[0] / c_runner * sr
                 d2 = self._muff_len[1] / c_runner * sr
-                sig = (sig + 0.32 * mcomb * self._muff_dl1.process(sig, d1)
-                       + 0.22 * mcomb * self._muff_dl2.process(sig, d2))
+                mg = mcomb * P.get("muffler", 1.0)
+                sig = (sig + 0.32 * mg * self._muff_dl1.process(sig, d1)
+                       + 0.22 * mg * self._muff_dl2.process(sig, d2))
             # active exhaust valve: above ~40% redline the bypass flap cracks open
             # and the bright straight-through tap is crossfaded back in — the note
             # gets louder and opens up at the top end, exactly like a valved system.
-            vo = min(max((self._valve - 0.40) / 0.5, 0.0), 1.0) * 0.5
+            vo = min(max((self._valve - 0.40) / 0.5, 0.0), 1.0) * 0.5 * P.get("valve_open", 1.0)
+            vo = min(vo, 0.85)
             if vo > 1e-3:
                 sig = (1.0 - vo) * sig + vo * bypass
         else:

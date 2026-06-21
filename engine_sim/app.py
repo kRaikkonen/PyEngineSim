@@ -124,6 +124,9 @@ TR_ZH = {
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
     "Pipe wall (anti-horn)": "管壁厚度(去小号)",
+    "Exhaust whine/scream": "排气啸叫/嘶吼",
+    "Active valve open": "主动阀门开度",
+    "Muffler reflections": "消音器反射",
     "Tailpipe air-shear": "尾管气流剪切",
     "MANIFOLD": "进气歧管", "AIR": "进气量", "VOL EFF": "容积效率",
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
@@ -166,6 +169,9 @@ SLIDER_DEFS = [
     ("pop_muff", "Pop muffle", 0.0, 1.0),
     ("pops_reverb", "Pop reverb", 0.0, 0.6),
     ("wall_thickness", "Pipe wall (anti-horn)", 0.0, 1.0),
+    ("whine", "Exhaust whine/scream", 0.0, 2.0),
+    ("valve_open", "Active valve open", 0.0, 1.5),
+    ("muffler", "Muffler reflections", 0.0, 1.5),
     ("shear", "Tailpipe air-shear", 0.0, 0.5),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
@@ -484,14 +490,14 @@ class App:
         panel = pygame.Rect(24, 24, 620, 632)
         x = panel.x + 196
         w = (panel.x + 400) - x          # shorter tracks -> room for the pad
-        y = panel.y + 42                 # clear the title/hint row
+        y = panel.y + 40                 # clear the title/hint row
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
                 "key": key, "label": label, "min": vmin, "max": vmax,
-                "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
+                "track": pygame.Rect(x, y + 4, w, 6), "row_y": y,
             })
-            y += 21
+            y += 18                       # tight rows so all fit one column
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
         # 2-D fire/bang tone IR pad (drag to morph the firing timbre)
         self._fire_pad_rect = pygame.Rect(panel.x + 462, panel.y + 320, 152, 152)
