@@ -7,8 +7,12 @@
 #
 # Output lands in dist/.  See PACKAGING.md for full instructions.
 
+import os
 import sys
 from PyInstaller.utils.hooks import collect_all
+
+# run.py lives one level up from this spec (in the project root).
+ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
 datas, binaries, hiddenimports = [], [], []
 # Pull in everything these packages need (DLLs, data, submodules) so the bundle
@@ -21,8 +25,8 @@ for pkg in ("numpy", "scipy", "sounddevice", "pygame", "soundfile"):
         pass
 
 a = Analysis(
-    ["run.py"],
-    pathex=["."],
+    [os.path.join(ROOT, "run.py")],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports + ["scipy.signal"],

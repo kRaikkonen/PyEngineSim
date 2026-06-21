@@ -22,3 +22,8 @@ configs/audio/*.json
 # OS
 .DS_Store
 Thumbs.db
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
