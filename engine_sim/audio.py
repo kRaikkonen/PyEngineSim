@@ -437,6 +437,7 @@ class Synthesizer:
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
             "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
+            "road_noise": 0.22,   # tyre/road rumble that swells with road speed
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -634,6 +635,12 @@ class Synthesizer:
             # low-pass on the tail round-trip reflection (only lows reflect strongly)
             self._tail_lp = butter(2, 720.0 / (sr / 2), btype="low")
             self._tail_lp_zi = np.zeros(2)
+            # road / tyre rumble: a low band (the car actually MOVING down a road,
+            # not bolted to a dyno) — band-passed noise that swells with road speed.
+            self._roadn = _bandpass(130.0, 0.5, sr)
+            self._roadn_lp = butter(2, 520.0 / (sr / 2), btype="low")
+            self._roadn_zi = np.zeros(2)
+            self._roadn_lp_zi = np.zeros(2)
             # (Step 4) pipe-wall metal resonance formants — a thin, small-bore pipe
             # rings higher and sharper; a thick, big-bore pipe lower and tighter.
             # The MATERIAL shifts the ring: titanium (stiff & light) sings high and
@@ -673,6 +680,15 @@ class Synthesizer:
                     n += 1                                   # odd harmonics only
                 self._whine_orders.append(n)
             self._whine_zi = [np.zeros(2) for _ in self._whine_orders]
+            # DISPLACEMENT THUNDER: a big cylinder shoves a big slug of gas, so it
+            # has a deep low-end ROAR under the note — the thing a Ferrari V12 has
+            # in the real world that pure scream lacks.  Low-shelf gain scales with
+            # litres-per-cylinder (a 0.5 L+ cyl thunders, a 0.25 L screamer barely).
+            cyl_l = (eng.total_displacement * 1000.0) / max(eng.num_cylinders, 1)
+            g_thunder = min(max((cyl_l - 0.30) * 12.0, 0.0), 7.5)
+            self._thunder = (_peaking(78.0, 0.5, g_thunder, sr)
+                             if g_thunder > 0.1 else None)
+            self._thunder_zi = np.zeros(2)
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -896,6 +912,11 @@ class Synthesizer:
         for ci in range(self._nchan):
             fizz += fizz_chans[ci]
         sig = bang + wet + P["turbulence"] * (fizz * inv)
+        # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
+        # enter HERE (at the header) and travel the whole pipe — cat, muffler,
+        # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
+        # pops get muffled by the cat/box; an open race system keeps them sharp.
+        sig = sig + self._overrun_pops(frames)
 
         # ================== EXHAUST PATH, IN PHYSICAL ORDER ==================
         # Head -> tail, the way the gas actually travels (so the chain matches a
@@ -1014,7 +1035,6 @@ class Synthesizer:
                 self._gear_reverb.mix = P["gearbox_reverb"]
                 gw = self._gear_reverb.process(gw)
             sig = sig + ind + gw
-            sig = sig + self._overrun_pops(frames)   # decel pops & bangs
 
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
@@ -1036,6 +1056,11 @@ class Synthesizer:
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
             bp2, ap2 = _peaking(f2, 4.2, 2.2 - 1.4 * wt, self.sample_rate)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
+        # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
+        # under the note (so a Ferrari V12 thunders, not just screams).
+        if _HAVE_SCIPY and self._thunder is not None:
+            sig, self._thunder_zi = lfilter(self._thunder[0], self._thunder[1],
+                                            sig, zi=self._thunder_zi)
 
         # --- (7b) full-system round-trip reflection: a weak, low-passed echo at
         # the pipe's round-trip time (2 x system length / sound speed) feeds a bit
@@ -1110,6 +1135,21 @@ class Synthesizer:
             b, a = butter(2, cut / (sr / 2), btype="low")
             sig, self._spatial_zi = lfilter(b, a, sig, zi=self._spatial_zi)
         sig = sig * (1.0 / (1.0 + 1.7 * d))
+
+        # --- road / tyre rumble: makes it sound like the car is MOVING down the
+        # street, not strapped to a dyno.  Low band-passed noise swelling with road
+        # speed (and a touch of throttle), sitting under the exhaust note.
+        rn = P.get("road_noise", 0.22)
+        if _HAVE_SCIPY and rn > 1e-3:
+            spd = min(getattr(sim.drivetrain, "v", 0.0) / 32.0, 1.0)   # ~115 km/h full
+            if spd > 0.015:
+                nz = self._rng.standard_normal(frames)
+                nz, self._roadn_zi = lfilter(self._roadn[0], self._roadn[1],
+                                             nz, zi=self._roadn_zi)
+                nz2 = self._rng.standard_normal(frames)
+                nz2, self._roadn_lp_zi = lfilter(self._roadn_lp[0], self._roadn_lp[1],
+                                                 nz2, zi=self._roadn_lp_zi)
+                sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
 
         out = np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
         # exhaust loudness meter (RMS of the final output) for the HUD readout
