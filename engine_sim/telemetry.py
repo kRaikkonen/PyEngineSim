@@ -40,6 +40,10 @@ _SLED = struct.Struct("<iIfff")
 _KNOWN_DASH = {311, 323, 324, 331}
 _BASE_ACCEL = 303
 _BASE_GEAR = 307
+# In the dash packet: Speed (f32, m/s) @244, Boost (f32) @272 — same +12 shift on
+# FH4/FH5.  Speed lets us drive the straight-cut gear whine at the real road
+# speed even in telemetry mode (no physics drivetrain running).
+_BASE_SPEED = 244
 
 
 class ForzaTelemetry:
@@ -60,6 +64,8 @@ class ForzaTelemetry:
         self.throttle = 0.0
         self.throttle_valid = False   # False on FH6/unknown -> derive from rpm
         self.gear = 0
+        self.speed = 0.0              # m/s, from the dash packet (known lengths)
+        self.speed_valid = False
         self.packet_len = 0
         self._last_packet = 0.0
         # car-local acceleration (m/s^2): X = lateral (right+), Z = longitudinal
@@ -137,7 +143,15 @@ class ForzaTelemetry:
                 self.throttle_valid = True
             except IndexError:
                 self.throttle_valid = False
+            try:
+                sp = struct.unpack_from("<f", data, _BASE_SPEED + shift)[0]
+                if 0.0 <= sp < 200.0:           # sane m/s
+                    self.speed = sp
+                    self.speed_valid = True
+            except struct.error:
+                self.speed_valid = False
         else:
             # FH6 / sled-only / future: rpm is exact, throttle derived from rpm
             self.throttle_valid = False
+            self.speed_valid = False
         self._last_packet = time.monotonic()

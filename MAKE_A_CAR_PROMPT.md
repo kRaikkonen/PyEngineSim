@@ -65,6 +65,8 @@ by 1000). Angles are in degrees. Omit a field only if you want its default.
   "turbo_spool_frac": 0.12,             // turbo only: rpm-frac before boost (laggy ~0.42)
   "turbo_spool_width": 0.5,             // turbo only: rpm-frac to reach full boost
   "anti_lag": false,                    // rally/Group-B bangs & crackle on overrun
+  "bov_flutter": false,                 // turbo lift-off: true = 'stututu' compressor
+                                        //   surge (no dump valve); false = clean pshhh
   "electric_turbo": false,              // e-turbo / e-compressor: near-instant, no lag
   "hybrid_kw": 0.0,                     // electric-motor peak power (kW); >0 = hybrid
   "hybrid_base_rpm": 2200,              // rpm below which the motor gives constant torque

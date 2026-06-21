@@ -136,6 +136,8 @@ class Engine:
     turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)
     turbo_spool_width: float = 0.5   # rpm frac over which boost ramps to full
     anti_lag: bool = False           # bangs/crackle + whoosh on overrun
+    bov_flutter: bool = False        # lift-off = compressor surge 'stututu' (no/closed
+                                     #   dump valve) instead of a clean 'pshhh' BOV
     electric_turbo: bool = False     # e-turbo / e-compressor: near-instant spool, no lag
 
     # hybrid electric drive ----------------------------------------------------

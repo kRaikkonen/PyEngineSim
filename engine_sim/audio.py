@@ -303,7 +303,9 @@ class Synthesizer:
         self.straight_cut = simulator.engine.straight_cut
         self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
         self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
-        self.flutter = False      # lift-off sound: False = BOV 'pshhh', True = surge 'stututu'
+        # lift-off sound: False = clean BOV 'pshhh', True = compressor-surge
+        # 'stututu' — defaults from the engine (some cars have no dump valve).
+        self.flutter = simulator.engine.bov_flutter
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase

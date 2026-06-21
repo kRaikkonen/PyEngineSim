@@ -557,6 +557,7 @@ def ferrari_f40_v8() -> Engine:
     return Engine(
         name="Ferrari F40 2.9 twin-turbo V8",
         cylinders=cylinders,
+        bov_flutter=True,                # 80s twin-turbo, no dump valve -> 'stututu'
         flywheel_inertia=0.16, redline_rpm=7750, idle_rpm=950,
         heat_release_k=2.1, ve_peak_frac=0.62, ve_width_frac=0.6,
         closed_map_fraction=0.17, idle_air_base=0.22,
@@ -944,6 +945,7 @@ def audi_sport_quattro_s1() -> Engine:
         name="Audi Sport Quattro S1 2.1 turbo I5",
         cylinders=cylinders,
         straight_cut=True, has_cat=False,   # Group B rally: dog box, no cat
+        bov_flutter=True,                   # no dump valve -> 'stututu' surge
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=950,
         heat_release_k=2.2, ve_width_frac=0.72, closed_map_fraction=0.24,
         ve_floor=0.72,

@@ -270,9 +270,9 @@ class App:
         on a CAR change it is False so GPF/Cat reset to the new engine's own
         has_gpf / has_cat instead of carrying the previous car's exhaust kit."""
         saved = dict(self.synth.params) if self.synth else None
-        _flags = ["cabin", "flutter"]
+        _flags = ["cabin"]
         if keep_engine_flags:
-            _flags += ["gpf", "cat", "straight_cut"]
+            _flags += ["gpf", "cat", "straight_cut", "flutter"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
                        if self.synth else None)
         if self.synth:
@@ -572,6 +572,19 @@ class App:
                 p = self.synth.params
                 p["spatial_x"] += (tx - p["spatial_x"]) * min(6.0 * dt, 1.0)
                 p["spatial_y"] += (ty - p["spatial_y"]) * min(6.0 * dt, 1.0)
+            # Feed the drivetrain a road speed + gear and spool boost off the
+            # broadcast rpm/throttle, so the straight-cut gear whine, turbo spool
+            # / supercharger whine and the BOV/flutter all work in Forza mode
+            # (the physics drivetrain isn't running here, so they'd be silent).
+            dtr = self.sim.drivetrain
+            if tm.speed_valid:
+                dtr.v = tm.speed
+            else:                       # FH6 / unknown: pseudo-speed from rpm
+                span = max(eng.redline_rpm - eng.idle_rpm, 1.0)
+                dtr.v = min(max((tm.rpm - eng.idle_rpm) / span, 0.0), 1.0) * 75.0
+            dtr.gear = tm.gear if (tm.throttle_valid and tm.gear > 0) else (
+                1 if dtr.v > 0.5 else 0)
+            self.sim._update_boost(dt)
         else:
             # not connected yet: idle quietly
             self.sim.throttle = 0.0
