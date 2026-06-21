@@ -502,7 +502,13 @@ class Synthesizer:
             self._fire_low_zi = np.zeros(2)   # fire-tone pad 'weight' low shelf
             # bent-pipe road exhaust: a low-pass + an upper-mid scoop that the
             # bends & cat impose, absorbing the raw straight-pipe high frequencies
-            self._road_lp = butter(2, min(5200.0, sr * 0.45) / (sr / 2), btype="low")
+            # cat high-frequency damping ~ cell density: A(f) grows with f^2 (a
+            # 2nd-order LP), and a denser honeycomb (more cells/in^2) pulls the
+            # cutoff down, magnetic of how a packed 400-cpsi stock cat smothers the
+            # top end while a 200-cpsi high-flow cat lets the whine through.
+            cells = max(getattr(eng, "cat_cells_cpsi", 400), 50)
+            cat_fc = min(max(5200.0 * math.sqrt(400.0 / cells), 2800.0), 9000.0)
+            self._road_lp = butter(2, min(cat_fc, sr * 0.45) / (sr / 2), btype="low")
             self._road_sh = _peaking(3400.0, 0.7, -5.5, sr)
             self._road_lp_zi = np.zeros(2)
             self._road_sh_zi = np.zeros(2)
@@ -522,11 +528,35 @@ class Synthesizer:
             self._tail_lp_zi = np.zeros(2)
             # (Step 4) pipe-wall metal resonance formants — a thin, small-bore pipe
             # rings higher and sharper; a thick, big-bore pipe lower and tighter.
+            # The MATERIAL shifts the ring: titanium (stiff & light) sings high and
+            # clear, steel sits mid, cast iron is low & dead.  f_wall ~ sqrt(E/rho).
             r = max(eng.exhaust_radius_m, 0.012)
-            self._wall_f1 = min(max(2300.0 * (0.024 / r), 1400.0), 3600.0)
+            mat = {"titanium": 1.28, "aluminium": 1.18, "aluminum": 1.18,
+                   "steel": 1.0, "stainless": 1.0, "iron": 0.72, "cast_iron": 0.72}
+            mf = mat.get(getattr(eng, "wall_material", "steel"), 1.0)
+            self._wall_f1 = min(max(2300.0 * (0.024 / r) * mf, 1300.0), 4200.0)
             self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
             self._wallpk1_zi = np.zeros(2)
             self._wallpk2_zi = np.zeros(2)
+            # (#2) HIGH-ORDER STANDING-WAVE WHINE: the odd harmonics of the pipe's
+            # quarter-wave that fall in 3-7 kHz ARE the whine.  Their sharpness (Q)
+            # scales with the pipe's length/diameter ratio — a long, thin, small-
+            # bore system (LFA) gives a high-Q soprano scream; a short fat-bore one
+            # gives a broad roar; a big lazy bore gives almost none.  Centre freqs
+            # are recomputed each block from the live sound speed (they drift with
+            # revs/heat).  We store the (odd) harmonic orders to hit ~3.5/5/6.5 kHz.
+            L_tot = max(eng.exhaust_total_m, 0.5)
+            d_pipe = 2.0 * r
+            self._whine_ld = L_tot / d_pipe                  # length / diameter
+            self._whine_amt = min(max((self._whine_ld - 32.0) / 36.0, 0.0), 1.0)
+            fqw0 = 540.0 / (4.0 * L_tot)                     # quarter-wave, nominal c
+            self._whine_orders = []
+            for target in (3500.0, 5000.0, 6500.0):
+                n = max(1, int(round(target / fqw0)))
+                if n % 2 == 0:
+                    n += 1                                   # odd harmonics only
+                self._whine_orders.append(n)
+            self._whine_zi = [np.zeros(2) for _ in self._whine_orders]
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -772,6 +802,23 @@ class Synthesizer:
                                             sig, zi=self._road_lp_zi)
             sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
                                             sig, zi=self._road_sh_zi)
+
+        # --- (4b) main-pipe HIGH-ORDER STANDING-WAVE WHINE ------------------
+        # The odd quarter-wave harmonics in 3-7 kHz, rung as resonant peaks whose
+        # Q scales with the pipe's length/diameter (thin small bore = sharp soprano
+        # scream, fat bore = broad roar / none).  Grows with the valve opening, so
+        # the whine climbs in with revs.  Centre freqs follow the live sound speed.
+        if _HAVE_SCIPY and self._whine_amt > 0.02:
+            f_qw = c_runner / (4.0 * max(sim.engine.exhaust_total_m, 0.5))
+            wamt = self._whine_amt * (0.25 + 0.75 * self._valve)
+            Qbase = min(2.0 + 0.16 * self._whine_ld, 14.0)
+            for k, n in enumerate(self._whine_orders):
+                fc = f_qw * n
+                if 2400.0 < fc < min(8000.0, self.sample_rate * 0.45):
+                    Q = min(Qbase * math.sqrt(1.0 + 0.10 * n), 22.0)
+                    gain = (5.5 - 1.3 * k) * wamt          # upper peaks a touch lower
+                    bw, aw = _peaking(fc, Q, gain, self.sample_rate)
+                    sig, self._whine_zi[k] = lfilter(bw, aw, sig, zi=self._whine_zi[k])
 
         # --- (5+6) resonator + muffler: DC-block, de-drone notch, valve roll-off
         if _HAVE_SCIPY:

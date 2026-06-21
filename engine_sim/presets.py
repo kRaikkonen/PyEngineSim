@@ -215,8 +215,9 @@ def lexus_lfa() -> Engine:
         friction_quad=6.0e-5,
         starter_torque=170.0,
         exhaust_tone=135.0,              # very high titanium voice
-        exhaust_primary_m=0.60, exhaust_total_m=1.9, exhaust_radius_m=0.024,
+        exhaust_primary_m=0.60, exhaust_total_m=2.1, exhaust_radius_m=0.019,
         exhaust_channels=1, exhaust_openness=0.95, muffler_volume_m3=0.0015,
+        wall_material="titanium", cat_cells_cpsi=200,   # thin titanium = soprano scream
         gear_ratios=[3.231, 2.188, 1.609, 1.233, 0.970, 0.795],
         final_drive=3.417,
         vehicle_mass=1480.0, wheel_radius=0.340, clutch_capacity=560.0,        gearbox_type="single",

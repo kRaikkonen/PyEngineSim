@@ -158,6 +158,10 @@ class Engine:
     has_gpf: bool = False            # came with a gasoline particulate filter
     has_cat: bool = True             # came with a catalytic converter
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
+    wall_material: str = "steel"     # exhaust pipe material: titanium / steel /
+                                     #   aluminium / iron -> wall-resonance pitch
+    cat_cells_cpsi: int = 400        # catalytic cell density (cells/in^2): higher =
+                                     #   denser honeycomb = more high-frequency damping
 
     def __post_init__(self) -> None:
         # Physically derive the exhaust 'pop' resonance pitch from the MEAN
