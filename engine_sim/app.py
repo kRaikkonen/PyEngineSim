@@ -86,6 +86,7 @@ SLIDER_DEFS = [
     ("cyl_spread", "Cylinder spread", 0.0, 1.0),
     ("super_vol", "Supercharger whine", 0.0, 1.2),
     ("turbo_vol", "Turbo spool / BOV", 0.0, 1.2),
+    ("spool_reverb", "Spool reverb", 0.0, 0.6),
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
@@ -111,7 +112,12 @@ class App:
     def __init__(self, preset_key="2"):
         pygame.init()
         pygame.display.set_caption("Engine Simulator — Python Edition")
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        # The whole UI is drawn onto a fixed-size canvas, then scaled to fit a
+        # freely resizable OS window — so you can drag the window to any size
+        # (or maximise it) and everything scales cleanly, keeping its layout.
+        self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+        self.screen = pygame.Surface((WIDTH, HEIGHT))
+        self._win_size = (WIDTH, HEIGHT)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
         self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
@@ -351,7 +357,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 29
+            y += 28
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
@@ -376,41 +382,55 @@ class App:
         self._disp_torque = 0.0
 
     # ----------------------------------------------------------------- input
+    def _map_mouse(self, pos):
+        """Map a real-window pixel position back onto the fixed UI canvas, so
+        clicks land correctly however the window has been resized."""
+        ww, wh = self._win_size
+        return (pos[0] * WIDTH / max(ww, 1), pos[1] * HEIGHT / max(wh, 1))
+
+    def canvas_mouse(self):
+        return self._map_mouse(pygame.mouse.get_pos())
+
     def handle_events(self):
         self._rebuild_toolbar(pygame.Rect(24, 24, 620, 632))
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 self.running = False
+            elif e.type == pygame.VIDEORESIZE:
+                self._win_size = (max(e.w, 320), max(e.h, 240))
+                self.window = pygame.display.set_mode(self._win_size, pygame.RESIZABLE)
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                mpos = self._map_mouse(e.pos)
                 if self._open_menu is not None:
                     m = self._open_menu
                     self._open_menu = None
                     for (lbl, cb), r in zip(m["items"], m["item_rects"]):
-                        if r.collidepoint(e.pos):
+                        if r.collidepoint(mpos):
                             cb()
                             break
                 elif self.mixer_open:
-                    if self._pad_rect.collidepoint(e.pos):
+                    if self._pad_rect.collidepoint(mpos):
                         self._drag = "pad"
-                        self._set_pad(e.pos)
+                        self._set_pad(mpos)
                     else:
                         for s in self._sliders:
-                            if s["track"].inflate(12, 26).collidepoint(e.pos):
+                            if s["track"].inflate(12, 26).collidepoint(mpos):
                                 self._drag = s
-                                self._set_slider(s, e.pos[0])
+                                self._set_slider(s, mpos[0])
                                 break
                 else:
                     for b in self._buttons:
-                        if b["rect"].collidepoint(e.pos):
+                        if b["rect"].collidepoint(mpos):
                             b["cb"]()
                             break
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
+                mpos = self._map_mouse(e.pos)
                 if self._drag == "pad":
-                    self._set_pad(e.pos)
+                    self._set_pad(mpos)
                 else:
-                    self._set_slider(self._drag, e.pos[0])
+                    self._set_slider(self._drag, mpos[0])
             elif e.type == pygame.KEYDOWN:
                 if e.key in (pygame.K_ESCAPE, pygame.K_q):
                     self.running = False
@@ -441,7 +461,8 @@ class App:
         # to hold anything), holding Shift fully disengages it for launches.
         dt = self.sim.drivetrain
         shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-        dt.manual_clutch(shift_held, 1.0 / FPS)
+        dt.manual_clutch(shift_held, self.sim.rpm,
+                         self.sim.engine.redline_rpm, 1.0 / FPS)
         # Up = throttle (ramps up while held, falls back when released).
         # Down = brake pedal.
         if keys[pygame.K_UP]:
@@ -504,6 +525,11 @@ class App:
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         if self._open_menu is not None:
             self._draw_menu()
+        # scale the fixed canvas onto the (possibly resized) window, then show
+        if self._win_size == (WIDTH, HEIGHT):
+            self.window.blit(self.screen, (0, 0))
+        else:
+            pygame.transform.smoothscale(self.screen, self._win_size, self.window)
         pygame.display.flip()
 
     def _draw_button(self, b, mouse):
@@ -523,13 +549,13 @@ class App:
         self.screen.blit(surf, (r.x + 10, r.y + 5))
 
     def _draw_toolbar(self):
-        mouse = pygame.mouse.get_pos()
+        mouse = self.canvas_mouse()
         for b in self._buttons:
             self._draw_button(b, mouse)
 
     def _draw_menu(self):
         m = self._open_menu
-        mouse = pygame.mouse.get_pos()
+        mouse = self.canvas_mouse()
         pygame.draw.rect(self.screen, (30, 33, 40), m["rect"].inflate(4, 4),
                          border_radius=8)
         pygame.draw.rect(self.screen, (80, 88, 104), m["rect"], width=1,
@@ -680,6 +706,13 @@ class App:
             label = self.font_small.render(f"{i+1}", True, DIM)
             self.screen.blit(label, (cx - 4, bottom + 8))
 
+    def _exhaust_db(self):
+        """A rough exhaust-loudness readout from the synth's last output RMS."""
+        lvl = getattr(self.synth, "last_level", 0.0) if self.synth else 0.0
+        if lvl < 1e-4:
+            return 0.0
+        return max(0.0, min(120.0, 108.0 + 20.0 * math.log10(lvl)))
+
     def _draw_telemetry(self, rect, top_y):
         """Physical engine readouts (manifold pressure, VE, AFR, airflow, O2)."""
         t = self.sim.telemetry()
@@ -692,6 +725,8 @@ class App:
             ("AIR / FUEL", f"{t['afr']:5.1f}   (lambda {t['lambda']:.2f})"),
             ("AIRFLOW", f"{t['scfm']:5.0f} SCFM"),
             ("EXHAUST O2", f"{t['o2_pct']:5.1f} %"),
+            ("EXHAUST CO2", f"{t['co2_pct']:5.1f} %"),
+            ("EXHAUST", f"{self._exhaust_db():5.0f} dB"),
         ]
         eng = self.sim.engine
         if eng.induction != "na":

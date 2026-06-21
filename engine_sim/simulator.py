@@ -339,13 +339,31 @@ class Simulator:
         flow_m3s = (self.engine.total_displacement * (self.omega / (2 * math.pi) / 2.0)
                     * ve * (map_pa / P_ATM))
         scfm = max(flow_m3s, 0.0) * 2118.88
+
+        # Exhaust gas composition.  When fuel is flowing and burning, the mix is
+        # stoich-to-rich: almost no leftover O2 and high CO2 (peaking at stoich).
+        # When fuel is CUT — rev limiter, gearshift, or closed-throttle overrun —
+        # the engine just pumps air, so O2 jumps to nearly atmospheric (~20.9%)
+        # and CO2 collapses.  That overrun O2 spike is why a real wideband reads
+        # lean on a trailing throttle; the old model could never show it.
+        combusting = self.ignition_on and not self._fuel_cut and not self._shift_cut
+        overrun = (combusting and self.throttle < 0.04
+                   and self.rpm > self.engine.idle_rpm * 1.4)
+        if (not combusting) or overrun:
+            o2_pct, co2_pct = 20.9, 0.4
+        else:
+            rich = max(0.0, 1.0 - lam)              # 0 at stoich, grows rich
+            lean = max(0.0, lam - 1.0)
+            o2_pct = 0.6 + lean * 21.0              # residual + any lean excess
+            co2_pct = max(6.0, 14.8 - 10.0 * rich - 9.0 * lean)
         return {
             "map_kpa": map_pa / 1000.0,
             "vacuum_inhg": (P_ATM - map_pa) / 3386.39,
             "ve_pct": ve * 100.0,
             "afr": afr,
             "lambda": lam,
-            "o2_pct": max(0.0, (lam - 1.0)) * 21.0,     # lean -> leftover O2
+            "o2_pct": o2_pct,
+            "co2_pct": co2_pct,
             "scfm": scfm,
         }
 

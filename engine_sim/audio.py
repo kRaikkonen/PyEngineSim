@@ -276,6 +276,7 @@ class Synthesizer:
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
             "turbo_vol": 0.6,     # turbo spool whistle + blow-off-valve level
             "gearbox_vol": 0.5,   # straight-cut gearbox whine level (when enabled)
+            "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
         }
 
         self._build_audio()
@@ -285,6 +286,7 @@ class Synthesizer:
         self.gpf = simulator.engine.has_gpf   # particulate filter (muffles a lot)
         self.cat = simulator.engine.has_cat   # catalytic converter (mild muffle)
         self.flutter = False      # lift-off sound: False = BOV 'pshhh', True = surge 'stututu'
+        self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
@@ -316,6 +318,9 @@ class Synthesizer:
         # different frequencies, like a real exhaust.
         self._wg = [(ExhaustWaveguide(), ExhaustWaveguide()) for _ in range(self._nchan)]
         self._reverb = Reverb(sr)
+        # A dedicated reverb for the forced-induction sounds (spool whistle /
+        # blower whine / BOV) so the user can wash them with their own space.
+        self._ind_reverb = Reverb(sr, room=0.7, feedback=0.7)
         # A short reverb on the explosion ITSELF, before the pipe — so the
         # waveguide resonates an already-reverberant bang (chamber/port acoustics).
         self._src_verb = [Reverb(sr, room=0.4, feedback=0.55)
@@ -535,7 +540,11 @@ class Synthesizer:
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:
-            sig = sig + self._induction_audio(frames)
+            ind = self._induction_audio(frames)
+            if _HAVE_SCIPY and P["spool_reverb"] > 1e-3:
+                self._ind_reverb.mix = P["spool_reverb"]
+                ind = self._ind_reverb.process(ind)
+            sig = sig + ind
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
@@ -578,7 +587,10 @@ class Synthesizer:
             sig, self._spatial_zi = lfilter(b, a, sig, zi=self._spatial_zi)
         sig = sig * (1.0 / (1.0 + 1.7 * d))
 
-        return np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
+        out = np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
+        # exhaust loudness meter (RMS of the final output) for the HUD readout
+        self.last_level = float(np.sqrt(np.mean(out * out))) if frames else 0.0
+        return out
 
     # ------------------------------------------------------------ callback
     # --------------------------------------------------- forced induction
