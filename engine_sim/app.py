@@ -125,6 +125,9 @@ TR_ZH = {
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
     "Pipe wall (anti-horn)": "管壁厚度(去小号)",
     "Tailpipe air-shear": "尾管气流剪切",
+    "MANIFOLD": "进气歧管", "AIR": "进气量", "VOL EFF": "容积效率",
+    "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
+    "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -198,6 +201,10 @@ class App:
         self._draw_offset = (0, 0)
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
+        self._flow_hist = [0.0] * 220   # exhaust-flow scope ring buffer
+        self._fuel_total_l = 0.0  # integrated fuel burned (L)
+        self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
+        self._ign_flash = {}      # per-cylinder ignition-light fade
         self.clock = pygame.time.Clock()
         self.lang = "en"          # "en" | "zh"
         self._init_fonts()
@@ -734,6 +741,7 @@ class App:
 
     # ----------------------------------------------------------- draw: parts
     def draw(self):
+        self._update_hud_signals()
         self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
         left = pygame.Rect(24, 24, 620, 632)
         if self.mixer_open:
@@ -956,6 +964,10 @@ class App:
 
         title = self.font.render(eng.name, True, INK)
         self.screen.blit(title, (rect.x + 18, ty))
+        disp_l = eng.total_displacement * 1000.0
+        dtxt = self.font_small.render(f"{disp_l:.1f} L  ·  {disp_l * 61.0237:.0f} CI",
+                                      True, DIM)
+        self.screen.blit(dtxt, (rect.right - 18 - dtxt.get_width(), ty + 5))
         voice = self.tr(FIRING_VOICES[self.voice_idx][0])
         cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
         self.screen.blit(self.font_small.render(
@@ -1006,21 +1018,20 @@ class App:
         ns = max(1, len(stations))
         maxang = max((abs(c.bank_angle_deg) for c in eng.cylinders), default=0.0)
 
-        # A V or a W is laid out VERTICALLY: the crankshaft runs DOWN the centre
-        # and the two banks fan out left & right (herringbone).  Spreading a wide
-        # V12 / W16 across the top made the tilted banks shoot off the panel edge;
-        # going vertical uses the tall axis for the stations and keeps every
-        # cylinder inside the frame.  (Inline = upright row, boxer = opposed: both
-        # still drawn the wide way below.)
-        if left and right and maxang < 80.0:
+        # Any two-bank engine (V, W or boxer) is laid out VERTICALLY: the
+        # crankshaft runs DOWN the centre and the banks fan out left & right.
+        # Spreading a wide V12 / W16 across the top made the tilted banks shoot
+        # off the panel edge; going vertical uses the tall axis for the stations
+        # and keeps every cylinder inside the frame.  (Inline = upright row below.)
+        if left and right:
             cxx = rect.centerx
             mtop, mbot = rect.y + 306, rect.bottom - 48
             dy = (mbot - mtop) / ns
-            # A V fans each side to a single up-angle; a W staggers each bank into
-            # TWO interleaved rows (cylinders alternately tilt up / down), giving
-            # the real \/\/ four-row W cross-section instead of a plain V.
+            # V fans each side to one up-angle; a boxer is ~horizontal opposed
+            # (tiny tilt); a W staggers each bank into TWO interleaved rows
+            # (cylinders alternately tilt up / down) for the real \/\/ shape.
             is_w = getattr(eng, "is_w", False)
-            trad = math.radians(max(8.0, min(22.0, (90.0 - maxang) * 0.30)))
+            trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
             wob = math.radians(26.0)                     # W: up/down stagger size
             width = min(dy * (0.46 if is_w else 0.60), 38.0)
             length = min((rect.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
@@ -1366,6 +1377,66 @@ class App:
             return 0.0
         return max(0.0, min(120.0, 108.0 + 20.0 * math.log10(lvl)))
 
+    def _update_hud_signals(self):
+        """Sample the exhaust-flow scope and integrate fuel burn — once per frame."""
+        sim = self.sim
+        # exhaust-flow scope: append the synth's recent (decimated) waveform, which
+        # IS the exhaust pressure wave, so the trace shows the real firing pulses.
+        w = getattr(self.synth, "last_wave", None) if self.synth else None
+        if w is not None and len(w):
+            self._flow_hist = (self._flow_hist + [float(v) for v in w])[-220:]
+        # fuel: burn = air-mass / AFR; only when actually combusting.
+        if sim.ignition_on and not sim._fuel_cut:
+            t = sim.telemetry()
+            afr = max(t["afr"], 5.0)
+            air_kgs = max(t["scfm"], 0.0) * 0.0283168 / 60.0 * 1.225   # scfm -> kg/s
+            fuel_ls = (air_kgs / afr) / 0.745                          # gasoline kg/L
+        else:
+            fuel_ls = 0.0
+        self._fuel_lph += (fuel_ls * 3600.0 - self._fuel_lph) * 0.12
+        self._fuel_total_l += fuel_ls / FPS
+
+    def _draw_ignition_bank(self, x, y, w):
+        """One light per cylinder, flashing as that cylinder fires (power stroke) —
+        the original game's IGNITION column.  Returns the y below the bank."""
+        sim, eng = self.sim, self.sim.engine
+        n = eng.num_cylinders
+        self.screen.blit(self.font_small.render(self.tr("IGNITION"), True, DIM), (x, y))
+        per_row = 8 if n > 8 else n
+        rows = (n + per_row - 1) // per_row
+        dx = min((w - 12) / per_row, 30.0)
+        r = 6
+        fade = self._ign_flash
+        for i in range(n):
+            rr, cc = i // per_row, i % per_row
+            cxp = int(x + 8 + dx * (cc + 0.5))
+            cyp = int(y + 20 + rr * 20)
+            phi = sim.cycle_phase_deg(i)
+            firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
+            fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
+            f = fade[i]
+            col = (int(38 + 214 * f), int(44 + 150 * f), int(52 + 36 * f))
+            pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
+            pygame.draw.circle(self.screen, col, (cxp, cyp), r)
+            pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
+        return y + 20 + rows * 20
+
+    def _draw_scope(self, x, y, w, h, label):
+        """Oscilloscope strip for the exhaust-flow waveform (orange, persistence)."""
+        pygame.draw.rect(self.screen, (12, 13, 16), (x, y, w, h))
+        pygame.draw.rect(self.screen, (44, 48, 56), (x, y, w, h), 1)
+        self.screen.blit(self.font_small.render(self.tr(label), True, DIM), (x + 6, y + 3))
+        hist = self._flow_hist
+        n = len(hist)
+        if n > 1:
+            midy = y + h * 0.60
+            amp = h * 0.34
+            pts = [(x + w * i / (n - 1), midy - max(-1.0, min(1.0, hist[i])) * amp)
+                   for i in range(n)]
+            for off, col in ((2, (90, 52, 18)), (1, (150, 86, 32)), (0, (236, 152, 60))):
+                pygame.draw.lines(self.screen, col, False,
+                                  [(px, py + off) for px, py in pts], 1)
+
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
         supercharger visualiser when the engine is forced-induction."""
@@ -1444,63 +1515,76 @@ class App:
         self._panel(rect)
         sim = self.sim
         eng = sim.engine
+        T = self.tr
 
         # --- tachometer ---
-        cx, cy, r = rect.centerx, rect.y + 158, 132
+        cx, cy, r = rect.centerx, rect.y + 114, 92
         self._draw_tach(cx, cy, r, sim.rpm, eng.redline_rpm)
+
+        # --- per-cylinder ignition bank (original-game IGNITION lights) ---
+        yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
 
         # --- digital readouts ---
         tq = self._disp_torque
         hp = nm_to_hp_at(max(tq, 0.0), max(sim.rpm, 1.0))
         dt = sim.drivetrain
-        y = rect.y + 296
-        T = self.tr
+        y = yb + 8
         mode = T("Auto") if dt.auto else T("Manual")
         rows = [
             ("RPM", f"{sim.rpm:6.0f}", ACCENT),
-            ("TORQUE", f"{tq:6.0f} Nm  ({nm_to_lbft(tq):.0f} lb-ft)", INK),
+            ("TORQUE", f"{tq:5.0f} Nm ({nm_to_lbft(tq):.0f} lb-ft)", INK),
             ("POWER", f"{hp:6.0f} hp", INK),
             ("THROTTLE", f"{sim.throttle*100:5.0f} %", INK),
-            ("GEAR", f"{dt.gear_name:>3}  {mode}"
-                     f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
-            ("SPEED", f"{dt.speed_kmh:6.0f} km/h", INK),
+            ("GEAR", f"{dt.gear_name:>3} {mode}"
+                     f" [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
+            ("SPEED", f"{dt.speed_kmh:5.0f} km/h", INK),
         ]
         for label, value, col in rows:
-            self.screen.blit(self.font.render(T(label), True, DIM), (rect.x + 28, y))
-            self.screen.blit(self.font.render(value, True, col), (rect.x + 150, y))
-            y += 28
+            self.screen.blit(self.font.render(T(label), True, DIM), (rect.x + 24, y))
+            self.screen.blit(self.font.render(value, True, col), (rect.x + 146, y))
+            y += 21
 
-        # --- status indicators ---
-        y += 6
-        self._status_dot(rect.x + 28, y, T("IGNITION"), sim.ignition_on, GOOD, WARN)
-        self._status_dot(rect.x + 230, y, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
-        y += 26
-        self._status_dot(rect.x + 28, y, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
-        self._status_dot(rect.x + 230, y, T("AUDIO"),
-                         self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
-        y += 26
-        self._status_dot(rect.x + 28, y, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
-        self._status_dot(rect.x + 230, y, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
-
-        # --- controls reference (two tidy columns) ---
-        y += 26
+        # --- engine flow / fuel instrument block (the original game's readouts) ---
+        t = sim.telemetry()
+        y += 5
         pygame.draw.line(self.screen, (44, 48, 56),
-                         (rect.x + 28, y - 6), (rect.right - 28, y - 6))
-        self.screen.blit(self.font_small.render(T("CONTROLS"), True, DIM),
-                         (rect.x + 28, y))
-        pairs = [
-            ("A", "ignition"), ("S", "starter"),
-            ("Up/Dn", "gas / brake"), ("Z X", "shift"),
-            ("Shift", "clutch"), ("T", "auto box"),
-            ("V", "voice"), ("I", "cabin"),
-            ("C", "mixer"), ("M / Esc", "mute / quit"),
+                         (rect.x + 24, y - 4), (rect.right - 24, y - 4))
+        flow = [
+            ("MANIFOLD", f"{t['vacuum_inhg']:+.1f} inHg"),
+            ("AIR", f"{t['scfm']:5.0f} scfm"),
+            ("VOL EFF", f"{t['ve_pct']:4.0f} %"),
+            ("IN AFR", f"{t['afr']:5.1f}"),
+            ("EX O2", f"{t['o2_pct']:4.1f} %"),
+            ("FUEL", f"{self._fuel_lph:4.1f} L/h"),
         ]
-        cols = [rect.x + 28, rect.x + 212]
-        for i, (k, act) in enumerate(pairs):
-            cx = cols[i % 2]
-            ry = y + 22 + (i // 2) * 15
-            self.screen.blit(self.font_small.render(k, True, ACCENT), (cx, ry))
-            self.screen.blit(self.font_small.render(self.tr(act), True, DIM), (cx + 64, ry))
+        cols = [rect.x + 24, rect.x + 220]
+        for i, (lab, val) in enumerate(flow):
+            bx, ry = cols[i % 2], y + (i // 2) * 18
+            self.screen.blit(self.font_small.render(T(lab), True, DIM), (bx, ry))
+            self.screen.blit(self.font_small.render(val, True, INK), (bx + 76, ry))
+        y += 3 * 18 + 2
+        used = (f"{T('USED')} {self._fuel_total_l:.3f} L  ·  "
+                f"${self._fuel_total_l * 1.5:.2f}")
+        self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
+        y += 19
+
+        # --- total exhaust-flow oscilloscope ---
+        self._draw_scope(rect.x + 24, y, rect.width - 48, 56, "TOTAL EXHAUST FLOW")
+        y += 56 + 7
+
+        # --- status indicators (compact) ---
+        self._status_dot(rect.x + 24, y, T("IGNITION"), sim.ignition_on, GOOD, WARN)
+        self._status_dot(rect.x + 150, y, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
+        self._status_dot(rect.x + 276, y, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
+        y += 21
+        self._status_dot(rect.x + 24, y, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
+        self._status_dot(rect.x + 150, y, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
+        self._status_dot(rect.x + 276, y, T("AUDIO"),
+                         self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
+        y += 21
+        keys = "↑↓ gas · ZX shift · A ign · S start · C mixer · M mute"
+        self.screen.blit(self.font_small.render(keys, True, (96, 102, 116)),
+                         (rect.x + 24, y))
 
     def _draw_tach(self, cx, cy, r, rpm, redline):
         """A glossy iOS 6 / aircraft-style tachometer dial."""

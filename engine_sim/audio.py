@@ -337,6 +337,7 @@ class Synthesizer:
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
+        self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
@@ -772,6 +773,10 @@ class Synthesizer:
         out = np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
         # exhaust loudness meter (RMS of the final output) for the HUD readout
         self.last_level = float(np.sqrt(np.mean(out * out))) if frames else 0.0
+        # keep a decimated copy of the waveform for the HUD exhaust-flow scope
+        if frames:
+            step = max(1, frames // 64)
+            self.last_wave = out[::step][:64].astype(np.float64).copy()
         return out
 
     # ------------------------------------------------------------ callback
