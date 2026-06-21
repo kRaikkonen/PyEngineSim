@@ -50,6 +50,19 @@ from .engine import P_ATM
 SAMPLE_RATE = 44100
 BLOCK = 256
 
+# The firing 'body' is voiced as a metal POWER CHORD — root + fifth, doubled
+# across octaves (NO third, so the perfect intervals lock solid instead of
+# floating).  Each entry is (pitch-ratio vs the firing pitch, level).  This
+# multi-note stack is what gives the bangs a full, high-yet-solid wall instead
+# of a thin single tone.  (ratio 1.5 = fifth, 0.5/2.0 = octave down/up.)
+_POWER_CHORD = (
+    (0.5, 0.70),    # octave below  (weight / chest)
+    (1.0, 1.00),    # root
+    (1.5, 0.85),    # fifth
+    (2.0, 0.55),    # octave above
+    (3.0, 0.38),    # fifth + octave (top sparkle, kept moderate)
+)
+
 # Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
 VALVE_OPEN = 505.0
 VALVE_CLOSE = 715.0
@@ -345,7 +358,7 @@ class Synthesizer:
             self._intake_lp_zi = np.zeros(max(len(self._intake_lp[0]),
                                                len(self._intake_lp[1])) - 1)
             # firing 'body' = a 1-3-5 major chord (3 band-passes) + 3-band EQ
-            self._chord_zi = [np.zeros(2), np.zeros(2), np.zeros(2)]
+            self._chord_zi = [np.zeros(2) for _ in _POWER_CHORD]
             self._eq_lo_zi = np.zeros(2)
             self._eq_mid_zi = np.zeros(2)
             self._eq_hi_zi = np.zeros(2)
@@ -353,6 +366,11 @@ class Synthesizer:
             self._cabin_lp = butter(2, 2400.0 / (sr / 2), btype="low")
             self._cabin_zi = np.zeros(max(len(self._cabin_lp[0]),
                                           len(self._cabin_lp[1])) - 1)
+            # band-limit the combustion 'crack': raw np.diff has harsh energy all
+            # the way to Nyquist (a piercing digital click).  Rolling it off above
+            # ~7 kHz keeps the bright, solid attack snap without the thin shriek.
+            self._crack_lp = butter(2, min(7000.0, sr * 0.46) / (sr / 2), btype="low")
+            self._crack_lp_zi = np.zeros(2)
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -482,6 +500,9 @@ class Synthesizer:
         dry *= inv
         wet *= inv
         crack = np.diff(dry, prepend=dry[:1])
+        if _HAVE_SCIPY:                                   # tame the piercing top
+            crack, self._crack_lp_zi = lfilter(
+                self._crack_lp[0], self._crack_lp[1], crack, zi=self._crack_lp_zi)
 
         # --- firing 'body' as a POWER CHORD (root + fifth + octave) ----------
         # A metal power chord is root+fifth (NO third) — perfect intervals lock
@@ -490,10 +511,13 @@ class Synthesizer:
         body = np.zeros(frames, dtype=np.float64)
         if _HAVE_SCIPY and P["body"] > 1e-3:
             root = min(max(P["firing_pitch"], 40.0), 500.0)
-            for k, (ratio, lvl) in enumerate(((1.0, 1.0), (1.5, 0.9), (0.5, 0.7))):
-                bb, ab = _bandpass(root * ratio, 2.0, self.sample_rate)
+            nyq = self.sample_rate * 0.45
+            for k, (ratio, lvl) in enumerate(_POWER_CHORD):
+                f = min(root * ratio, nyq)
+                bb, ab = _bandpass(f, 2.0, self.sample_rate)
                 tone, self._chord_zi[k] = lfilter(bb, ab, dry, zi=self._chord_zi[k])
                 body += lvl * tone
+            body *= 0.8                          # trim for the extra chord voices
 
         # Assemble the bang (pulse + snap + power chord) and SATURATE it for the
         # tight, solid 'metal power chord' grip (the fix for the floaty feel).

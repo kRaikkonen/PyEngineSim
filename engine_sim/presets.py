@@ -1167,6 +1167,302 @@ def porsche_918_v8_hybrid() -> Engine:
     )
 
 
+def ford_gt_2017_v6() -> Engine:
+    """Ford GT (2017) — 3.5 L EcoBoost twin-turbo 60-deg V6.
+
+    92.5 x 86.7 mm, ~9.5:1 CR, ~7000 rpm, ~647 hp.  Firing 1-4-2-5-3-6, twin
+    turbos.  7-speed dual-clutch.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 4, 2, 5, 3, 6])
+    cylinders = []
+    for i in range(6):
+        bank = -30.0 if i < 3 else 30.0
+        cylinders.append(
+            Cylinder(bore=mm(92.5), stroke=mm(86.7), rod_length=mm(152),
+                     compression_ratio=9.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Ford GT 3.5 EcoBoost twin-turbo V6",
+        cylinders=cylinders,
+        flywheel_inertia=0.24, redline_rpm=7000, idle_rpm=820,
+        heat_release_k=1.62, ve_width_frac=0.74, closed_map_fraction=0.18,
+        ve_floor=0.7,
+        exhaust_tone=84.0,
+        exhaust_primary_m=0.52, exhaust_total_m=2.0, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.66, muffler_volume_m3=0.0028,
+        induction="turbo", boost_bar=1.2, turbo_lag=0.4,
+        gear_ratios=[3.66, 2.43, 1.69, 1.32, 1.00, 0.79, 0.64], final_drive=3.61,
+        vehicle_mass=1565.0, wheel_radius=0.33, clutch_capacity=680.0,
+        gearbox_type="dct",
+    )
+
+
+def bugatti_veyron_w16() -> Engine:
+    """Bugatti Veyron — 8.0 L quad-turbo W16.
+
+    86 x 86 mm x 16, ~9.0:1 CR, ~6500 rpm, ~1001 hp.  Two narrow-vee banks in a
+    W; four turbos.  Modelled as a 16-pulse even-fire.  7-speed dual-clutch.
+    """
+    offsets = _even_offsets(16)
+    cylinders = []
+    for i in range(16):
+        bank = -45.0 if i < 8 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(86), stroke=mm(86), rod_length=mm(140),
+                     compression_ratio=9.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Bugatti Veyron 8.0 quad-turbo W16",
+        cylinders=cylinders,
+        flywheel_inertia=0.55, redline_rpm=6500, idle_rpm=800,
+        heat_release_k=1.47, ve_width_frac=0.78, closed_map_fraction=0.18,
+        friction_static=14.0, starter_torque=240.0,
+        exhaust_tone=64.0,
+        exhaust_primary_m=0.6, exhaust_total_m=2.3, exhaust_radius_m=0.030,
+        exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.004,
+        induction="turbo", boost_bar=1.0, turbo_lag=0.45,
+        gear_ratios=[2.99, 2.05, 1.52, 1.18, 0.94, 0.76, 0.62], final_drive=2.81,
+        vehicle_mass=1888.0, wheel_radius=0.34, clutch_capacity=1300.0,
+        gearbox_type="dct",
+    )
+
+
+def bentley_continental_w12() -> Engine:
+    """Bentley Continental GT — 6.0 L twin-turbo W12.
+
+    84 x 90.2 mm x 12, ~10.5:1 CR, ~6000 rpm, ~626 hp / vast torque.  A smooth,
+    deep, effortless twin-turbo W12.  8-speed dual-clutch.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -36.0 if i < 6 else 36.0
+        cylinders.append(
+            Cylinder(bore=mm(84), stroke=mm(90.2), rod_length=mm(152),
+                     compression_ratio=10.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Bentley Continental 6.0 twin-turbo W12",
+        cylinders=cylinders,
+        flywheel_inertia=0.45, redline_rpm=6000, idle_rpm=620,
+        heat_release_k=1.77, ve_width_frac=0.78, closed_map_fraction=0.18,
+        friction_static=12.0, starter_torque=220.0,
+        exhaust_tone=54.0,
+        exhaust_primary_m=0.72, exhaust_total_m=2.4, exhaust_radius_m=0.029,
+        exhaust_channels=2, exhaust_openness=0.55, muffler_volume_m3=0.0045,
+        induction="turbo", boost_bar=0.7, turbo_lag=0.45,
+        gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
+        final_drive=2.92, vehicle_mass=2244.0, wheel_radius=0.34,
+        clutch_capacity=1100.0, gearbox_type="dct",
+    )
+
+
+def bmw_44_v8() -> Engine:
+    """BMW 4.4 V8 (S63) — twin-turbo 90-deg 'hot-V' V8.
+
+    89 x 88.3 mm, ~10.0:1 CR, ~7000 rpm, ~600 hp.  Cross-plane, firing
+    1-5-4-8-6-3-7-2, turbos in the vee.  8-speed automatic (M Steptronic).
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 4, 8, 6, 3, 7, 2])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(89), stroke=mm(88.3), rod_length=mm(150),
+                     compression_ratio=10.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="BMW 4.4 twin-turbo V8 (S63)",
+        cylinders=cylinders,
+        flywheel_inertia=0.30, redline_rpm=7000, idle_rpm=650,
+        heat_release_k=1.35, ve_width_frac=0.74, closed_map_fraction=0.17,
+        exhaust_tone=58.0,
+        exhaust_primary_m=0.66, exhaust_total_m=2.1, exhaust_radius_m=0.028,
+        exhaust_channels=2, exhaust_openness=0.62, muffler_volume_m3=0.0034,
+        induction="turbo", boost_bar=1.1, turbo_lag=0.4,
+        gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
+        final_drive=3.15, vehicle_mass=1930.0, wheel_radius=0.33,
+        clutch_capacity=820.0, gearbox_type="at",
+    )
+
+
+def audi_42_v8() -> Engine:
+    """Audi 4.2 FSI V8 — naturally-aspirated 90-deg V8 (RS4 / R8).
+
+    84.5 x 92.8 mm, ~12.5:1 CR, ~8250 rpm, ~430 hp.  High-revving NA V8, firing
+    1-5-4-8-6-3-7-2.  Gated 6-speed manual (the R8).
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 4, 8, 6, 3, 7, 2])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(84.5), stroke=mm(92.8), rod_length=mm(154),
+                     compression_ratio=12.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Audi 4.2 FSI V8 (R8)",
+        cylinders=cylinders,
+        flywheel_inertia=0.26, redline_rpm=8250, idle_rpm=720,
+        heat_release_k=3.82, ve_peak_frac=0.66, closed_map_fraction=0.15,
+        friction_static=8.0, starter_torque=180.0,
+        exhaust_tone=70.0,
+        exhaust_primary_m=0.6, exhaust_total_m=2.05, exhaust_radius_m=0.027,
+        exhaust_channels=2, exhaust_openness=0.84, muffler_volume_m3=0.0024,
+        gear_ratios=[3.13, 2.05, 1.46, 1.09, 0.85, 0.68], final_drive=4.06,
+        vehicle_mass=1560.0, wheel_radius=0.34, clutch_capacity=560.0,
+        gearbox_type="manual",
+    )
+
+
+def mclaren_p1_v8_hybrid() -> Engine:
+    """McLaren P1 — M838TQ 3.8 L twin-turbo V8 + electric (hybrid).
+
+    93 x 69.9 mm, ~9.5:1 CR, ~8500 rpm, ~727 hp from the flat-plane V8 plus
+    ~133 kW electric for ~903 hp combined.  Firing 1-5-3-7-4-8-2-6.  7-speed
+    dual-clutch.  Toggle the e-motor with the Hybrid button.
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(93), stroke=mm(69.9), rod_length=mm(127),
+                     compression_ratio=9.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="McLaren P1 3.8 twin-turbo V8 hybrid",
+        cylinders=cylinders,
+        flywheel_inertia=0.22, redline_rpm=8500, idle_rpm=900,
+        heat_release_k=1.4, ve_width_frac=0.72, closed_map_fraction=0.15,
+        ve_floor=0.7,
+        exhaust_tone=88.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=2, exhaust_openness=0.84, muffler_volume_m3=0.0018,
+        induction="turbo", boost_bar=1.2, turbo_lag=0.35,
+        hybrid_kw=133.0, hybrid_base_rpm=2500.0,   # ~903 hp combined
+        gear_ratios=[3.61, 2.37, 1.70, 1.30, 1.03, 0.84, 0.69], final_drive=3.31,
+        vehicle_mass=1490.0, wheel_radius=0.34, clutch_capacity=1200.0,
+        gearbox_type="dct",
+    )
+
+
+def bmw_b48_i4() -> Engine:
+    """BMW B48 — 2.0 L turbo inline-four.
+
+    82 x 94.6 mm, ~11.0:1 CR, ~6500 rpm, ~255 hp.  Firing 1-3-4-2, single
+    twin-scroll turbo.  8-speed automatic.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cylinders = [
+        Cylinder(bore=mm(82), stroke=mm(94.6), rod_length=mm(150),
+                 compression_ratio=11.0, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="BMW B48 2.0 turbo I4",
+        cylinders=cylinders,
+        flywheel_inertia=0.18, redline_rpm=6500, idle_rpm=750,
+        heat_release_k=1.95, ve_width_frac=0.72, closed_map_fraction=0.22,
+        ve_floor=0.74,
+        exhaust_tone=82.0,
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.003,
+        induction="turbo", boost_bar=0.9, turbo_lag=0.4, has_gpf=True,
+        gear_ratios=[5.0, 3.2, 2.14, 1.72, 1.31, 1.0, 0.82, 0.64],
+        final_drive=3.15, vehicle_mass=1545.0, wheel_radius=0.32,
+        clutch_capacity=440.0, gearbox_type="at",
+    )
+
+
+def mercedes_a45_amg_i4() -> Engine:
+    """Mercedes-AMG A45 (M139) — 2.0 L turbo inline-four.
+
+    83 x 92 mm, ~9.0:1 CR, ~6750 rpm, ~416 hp — the most powerful production
+    2.0 turbo.  Firing 1-3-4-2, big single turbo.  8-speed dual-clutch.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cylinders = [
+        Cylinder(bore=mm(83), stroke=mm(92), rod_length=mm(149),
+                 compression_ratio=9.0, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="Mercedes-AMG A45 2.0 turbo I4 (M139)",
+        cylinders=cylinders,
+        flywheel_inertia=0.18, redline_rpm=6750, idle_rpm=820,
+        heat_release_k=1.6, ve_width_frac=0.72, closed_map_fraction=0.22,
+        ve_floor=0.72,
+        exhaust_tone=86.0,
+        exhaust_primary_m=0.48, exhaust_total_m=1.85, exhaust_radius_m=0.025,
+        exhaust_channels=1, exhaust_openness=0.66, muffler_volume_m3=0.0026,
+        induction="turbo", boost_bar=1.5, turbo_lag=0.4, has_gpf=True,
+        gear_ratios=[5.5, 3.36, 2.27, 1.72, 1.31, 1.0, 0.82, 0.65],
+        final_drive=3.06, vehicle_mass=1555.0, wheel_radius=0.32,
+        clutch_capacity=520.0, gearbox_type="dct",
+    )
+
+
+def bmw_m3_gtr_p60() -> Engine:
+    """BMW M3 GTR (E46) — P60B40 4.0 L naturally-aspirated flat-plane V8.
+
+    94 x 72 mm, ~11.5:1 CR, ~8000 rpm, ~444 hp.  The homologation race V8 (NFS
+    fame), firing 1-5-3-7-4-8-2-6 — a hard, flat-plane howl.  Sequential race
+    'box (kicks like a single-clutch).
+    """
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
+    cylinders = []
+    for i in range(8):
+        bank = -45.0 if i < 4 else 45.0
+        cylinders.append(
+            Cylinder(bore=mm(94), stroke=mm(72), rod_length=mm(139),
+                     compression_ratio=11.5, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="BMW M3 GTR E46 P60B40 4.0 V8",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=8000, idle_rpm=950,
+        heat_release_k=4.4, ve_peak_frac=0.66, closed_map_fraction=0.14,
+        friction_static=8.0, starter_torque=180.0,
+        exhaust_tone=78.0,
+        exhaust_primary_m=0.55, exhaust_total_m=1.95, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0016,
+        gear_ratios=[3.23, 2.19, 1.65, 1.30, 1.05, 0.85], final_drive=3.62,
+        vehicle_mass=1350.0, wheel_radius=0.33, clutch_capacity=600.0,
+        gearbox_type="single",
+    )
+
+
+def mclaren_f1_v12() -> Engine:
+    """McLaren F1 (1992) — BMW S70/2 6.1 L naturally-aspirated 60-deg V12.
+
+    86 x 87 mm, ~11.0:1 CR, ~7500 rpm, ~627 hp.  The original analogue hypercar:
+    a high-revving NA V12 with a famously hard, metallic top end.  Firing every
+    60 deg.  6-speed manual.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -30.0 if i < 6 else 30.0          # 60-deg V12
+        cylinders.append(
+            Cylinder(bore=mm(86), stroke=mm(87), rod_length=mm(145),
+                     compression_ratio=11.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="McLaren F1 6.1 V12 (BMW S70/2)",
+        cylinders=cylinders,
+        flywheel_inertia=0.24, redline_rpm=7500, idle_rpm=850,
+        heat_release_k=4.15, ve_peak_frac=0.7, closed_map_fraction=0.13,
+        friction_static=10.0, starter_torque=200.0,
+        exhaust_tone=72.0,
+        exhaust_primary_m=0.58, exhaust_total_m=2.05, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        gear_ratios=[2.83, 1.96, 1.52, 1.20, 0.96, 0.74], final_drive=2.37,
+        vehicle_mass=1140.0, wheel_radius=0.33, clutch_capacity=620.0,
+        gearbox_type="manual",
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -1207,6 +1503,16 @@ PRESETS = [
     ("singer", "Singer DLS 4.0", singer_dls_williams_flat6),
     ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
     ("918", "918 V8 hybrid", porsche_918_v8_hybrid),
+    ("fordgt", "Ford GT V6", ford_gt_2017_v6),
+    ("veyron", "Veyron W16", bugatti_veyron_w16),
+    ("conti", "Continental W12", bentley_continental_w12),
+    ("bmwv8", "BMW 4.4 V8", bmw_44_v8),
+    ("audiv8", "Audi 4.2 V8", audi_42_v8),
+    ("p1", "McLaren P1", mclaren_p1_v8_hybrid),
+    ("b48", "BMW B48 I4", bmw_b48_i4),
+    ("a45", "A45 AMG I4", mercedes_a45_amg_i4),
+    ("m3gtr", "M3 GTR V8", bmw_m3_gtr_p60),
+    ("mf1", "McLaren F1 V12", mclaren_f1_v12),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

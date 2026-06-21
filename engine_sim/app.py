@@ -96,10 +96,10 @@ SLIDER_DEFS = [
 
 # Firing-pulse timbre presets, cycled with V.  Each sets the single-firing tone.
 FIRING_VOICES = [
-    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.80, "body": 0.55,
-                  "crack": 0.22, "firing_pitch": 110.0}),
-    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.60, "body": 0.40,
-                  "crack": 0.36, "firing_pitch": 150.0}),
+    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.72, "body": 1.05,
+                  "crack": 0.16, "firing_pitch": 105.0}),
+    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.60, "body": 0.62,
+                  "crack": 0.30, "firing_pitch": 145.0}),
     ("Deep",     {"pulse_tau": 30.0, "turbulence": 0.70, "body": 0.95,
                   "crack": 0.16, "firing_pitch": 75.0}),
     ("Raspy",    {"pulse_tau": 18.0, "turbulence": 1.15, "body": 0.50,
