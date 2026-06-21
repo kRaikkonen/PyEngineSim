@@ -124,7 +124,7 @@ TR_ZH = {
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
     "Pipe wall (anti-horn)": "管壁厚度(去小号)",
-    "Per-cyl character": "逐缸特征",
+    "Per-cyl character": "逐缸特征", "Road / tyre rumble": "路噪/胎噪",
     "Exhaust whine/scream": "排气啸叫/嘶吼",
     "Active valve open": "主动阀门开度",
     "Muffler reflections": "消音器反射",
@@ -171,6 +171,7 @@ SLIDER_DEFS = [
     ("pops_reverb", "Pop reverb", 0.0, 0.6),
     ("wall_thickness", "Pipe wall (anti-horn)", 0.0, 1.0),
     ("cyl_voice", "Per-cyl character", 0.0, 2.0),
+    ("road_noise", "Road / tyre rumble", 0.0, 0.6),
     ("whine", "Exhaust whine/scream", 0.0, 2.0),
     ("valve_open", "Active valve open", 0.0, 1.5),
     ("muffler", "Muffler reflections", 0.0, 1.5),
@@ -213,6 +214,7 @@ class App:
         self._fuel_total_l = 0.0  # integrated fuel burned (L)
         self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
         self._ign_flash = {}      # per-cylinder ignition-light fade
+        self._wheel_ang = 0.0     # spinning road-wheel angle (rad)
         self.clock = pygame.time.Clock()
         self.lang = "en"          # "en" | "zh"
         self._init_fonts()
@@ -492,14 +494,14 @@ class App:
         panel = pygame.Rect(24, 24, 620, 632)
         x = panel.x + 196
         w = (panel.x + 400) - x          # shorter tracks -> room for the pad
-        y = panel.y + 40                 # clear the title/hint row
+        y = panel.y + 38                 # clear the title/hint row
         self._sliders = []
         for key, label, vmin, vmax in SLIDER_DEFS:
             self._sliders.append({
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 4, w, 6), "row_y": y,
             })
-            y += 18                       # tight rows so all fit one column
+            y += 17                       # tight rows so all fit one column
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
         # 2-D fire/bang tone IR pad (drag to morph the firing timbre)
         self._fire_pad_rect = pygame.Rect(panel.x + 462, panel.y + 320, 152, 152)
@@ -1125,6 +1127,26 @@ class App:
         self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
                                                 True, ACCENT), (rect.x + 18, bottom + 26))
 
+    def _flash_surf(self, radius, glow):
+        """A layered combustion FLASH (white-hot core -> yellow -> orange -> red
+        halo, plus a few spark rays) instead of one flat yellow disc."""
+        R = max(int(radius), 4)
+        g = min(max(glow, 0.0), 1.0)
+        pad = int(R * 1.7) + 4
+        gs = pygame.Surface((2 * pad, 2 * pad), pygame.SRCALPHA)
+        c = (pad, pad)
+        for rad, col, al in ((int(R * 1.5), (255, 64, 20), 30),
+                             (int(R * 1.15), (255, 110, 36), 70),
+                             (int(R * 0.80), (255, 168, 64), 140),
+                             (int(R * 0.48), (255, 224, 130), 205),
+                             (int(R * 0.24), (255, 252, 236), 255)):
+            pygame.draw.circle(gs, (col[0], col[1], col[2], int(al * g)), c, max(rad, 2))
+        for k in range(6):                         # spark rays (rotate with intensity)
+            ang = k * (math.pi / 3.0) + g * 1.6
+            ex, ey = c[0] + R * 1.45 * math.cos(ang), c[1] + R * 1.45 * math.sin(ang)
+            pygame.draw.line(gs, (255, 215, 130, int(110 * g)), c, (int(ex), int(ey)), 1)
+        return gs
+
     def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow):
         """Draw one cylinder + reciprocating piston + rod + crank journal along a
         bank axis tilted by angle ``a`` (radians) from vertical, hinged at the
@@ -1168,12 +1190,11 @@ class App:
             (bx + ux * length + qx * (hw - 2), by + uy * length + qy * (hw - 2)),
             (bx + ux * length - qx * (hw - 2), by + uy * length - qy * (hw - 2)),
             (bx + ux * 1 - qx * (hw - 2), by + uy * 1 - qy * (hw - 2))])
-        if glow > 0.02:                               # combustion glow near the top
-            gx, gy = bx + ux * (length - 8), by + uy * (length - 8)
-            gs = pygame.Surface((50, 50), pygame.SRCALPHA)
-            pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(210 * glow)),
-                               (25, 25), int(width * 0.55))
-            self.screen.blit(gs, (int(gx) - 25, int(gy) - 25))
+        if glow > 0.02:                               # combustion flash near the top
+            gx, gy = bx + ux * (length - 7), by + uy * (length - 7)
+            gs = self._flash_surf(width * 0.6, glow)
+            self.screen.blit(gs, (int(gx) - gs.get_width() // 2,
+                                  int(gy) - gs.get_height() // 2))
         # piston (brighter round metal) with ring lands
         plen = 15.0
         travel = max(length - plen - 14, 6.0)
@@ -1250,10 +1271,9 @@ class App:
                     if sim.ignition_on and not sim._fuel_cut else 0.0)
             if glow > 0.03:
                 gx, gy = cx + sx * R * 0.42, cy - R * 0.42
-                gs = pygame.Surface((54, 54), pygame.SRCALPHA)
-                pygame.draw.circle(gs, (FLASH[0], FLASH[1], FLASH[2], int(200 * glow)),
-                                   (27, 27), 24)
-                self.screen.blit(gs, (gx - 27, gy - 27))
+                gs = self._flash_surf(R * 0.5, glow)
+                self.screen.blit(gs, (int(gx) - gs.get_width() // 2,
+                                      int(gy) - gs.get_height() // 2))
             # --- Reuleaux rotor: centre orbits, body spins at 1/3 shaft speed ---
             rcx = cx + e * sx * math.cos(shaft)
             rcy = cy + e * math.sin(shaft)
@@ -1261,8 +1281,12 @@ class App:
             apex = [(rcx + R * 0.66 * sx * math.cos(rotang + k * TAU3),
                      rcy + R * 0.66 * math.sin(rotang + k * TAU3)) for k in range(3)]
             body = self._reuleaux(apex)
-            pygame.draw.polygon(self.screen, (150, 156, 170), body)
-            pygame.draw.polygon(self.screen, (96, 102, 116), body, 2)
+            pygame.draw.polygon(self.screen, (120, 126, 140), body)        # rotor base
+            # beveled metal sheen: a shrunk, brighter Reuleaux offset up-left
+            hi_apex = [(rcx + (ax - rcx) * 0.82 - R * 0.06,
+                        rcy + (ay - rcy) * 0.82 - R * 0.06) for ax, ay in apex]
+            pygame.draw.polygon(self.screen, (176, 182, 196), self._reuleaux(hi_apex))
+            pygame.draw.polygon(self.screen, (90, 96, 110), body, 2)
             # face recesses (the dish in each rotor flank) + side seal lines
             for k in range(3):
                 m = ((apex[k][0] + apex[(k + 1) % 3][0]) / 2,
@@ -1398,6 +1422,9 @@ class App:
             fuel_ls = 0.0
         self._fuel_lph += (fuel_ls * 3600.0 - self._fuel_lph) * 0.12
         self._fuel_total_l += fuel_ls / FPS
+        # spin the road wheel at the real wheel rate (v / wheel_radius)
+        dt = sim.drivetrain
+        self._wheel_ang += (dt.v / max(dt.wheel_radius, 0.1)) / FPS
 
     def _draw_ignition_bank(self, x, y, w):
         """One light per cylinder, flashing as that cylinder fires (power stroke) —
@@ -1548,6 +1575,9 @@ class App:
         # --- tachometer ---
         cx, cy, r = rect.centerx, rect.y + 114, 92
         self._draw_tach(cx, cy, r, sim.rpm, eng.redline_rpm)
+        # --- spinning road wheel (in the corner beside the tach) ---
+        self._draw_wheel(rect.x + 48, rect.y + 78, 34, self._wheel_ang,
+                         sim.drivetrain.speed_kmh)
 
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
         yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
@@ -1613,6 +1643,37 @@ class App:
         keys = "↑↓ gas · ZX shift · A ign · S start · C mixer · M mute"
         self.screen.blit(self.font_small.render(keys, True, (96, 102, 116)),
                          (rect.x + 24, y))
+
+    def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
+        """A spinning road wheel — tyre, alloy rim + spokes, brake disc & caliper —
+        turning at the real road rate so you can SEE the car is moving."""
+        cx, cy = int(cx), int(cy)
+        pygame.draw.circle(self.screen, (16, 17, 20), (cx, cy), R + 2)        # tyre
+        pygame.draw.circle(self.screen, (40, 43, 50), (cx, cy), R, 3)         # tread
+        pygame.draw.circle(self.screen, (28, 30, 36), (cx, cy), int(R * 0.74))
+        # brake disc behind the rim (with a hint of caliper)
+        pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), int(R * 0.66))
+        pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(R * 0.66), 1)
+        pygame.draw.rect(self.screen, (200, 90, 60),
+                         (cx - 3, cy - int(R * 0.7), 6, int(R * 0.22)), border_radius=2)
+        rim = int(R * 0.6)
+        # blur the spokes at speed: fade them out as the wheel spins fast
+        fast = min(speed_kmh / 90.0, 1.0)
+        spoke_col = (int(150 - 70 * fast), int(156 - 70 * fast), int(170 - 70 * fast))
+        for k in range(5):
+            a = ang + k * (2.0 * math.pi / 5.0)
+            ex, ey = cx + rim * math.cos(a), cy + rim * math.sin(a)
+            pygame.draw.line(self.screen, spoke_col, (cx, cy), (int(ex), int(ey)), 3)
+        if fast > 0.25:                                  # motion-blur ring at speed
+            br = pygame.Surface((2 * rim + 6, 2 * rim + 6), pygame.SRCALPHA)
+            pygame.draw.circle(br, (150, 156, 170, int(70 * fast)),
+                               (rim + 3, rim + 3), rim, 3)
+            self.screen.blit(br, (cx - rim - 3, cy - rim - 3))
+        pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), int(R * 0.6), 2)  # rim lip
+        pygame.draw.circle(self.screen, (120, 126, 140), (cx, cy), int(R * 0.16))    # hub
+        pygame.draw.circle(self.screen, (60, 64, 74), (cx, cy), int(R * 0.16), 1)
+        lab = self.font_small.render(f"{speed_kmh:.0f} km/h", True, DIM)
+        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + R + 4))
 
     def _draw_tach(self, cx, cy, r, rpm, redline):
         """A glossy iOS 6 / aircraft-style tachometer dial."""
