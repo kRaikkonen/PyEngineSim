@@ -537,10 +537,12 @@ def lamborghini_aventador_v12() -> Engine:
         # Hard, bright, raspy top-end — the Aventador's signature metallic howl.
         # Short primaries + open, near-unmuffled pipe set it apart from the
         # deeper Murcielago/Zonda and the smoother LaFerrari.
-        exhaust_tone=98.0,               # hard, metallic, sharp L539 scream
-        exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.020,
-        exhaust_channels=2, exhaust_openness=0.97, muffler_volume_m3=0.0011,
-        wall_material="titanium", cat_cells_cpsi=200,
+        exhaust_tone=86.0,               # raw, raspy 'chainsaw' L539 snarl (stock,
+                                         #   NOT an open Gintani straight-pipe)
+        exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.023,
+        exhaust_channels=2, exhaust_openness=0.84, muffler_volume_m3=0.0016,
+        wall_material="titanium", cat_cells_cpsi=350,
+        header_unequal_deg=9.0, backpressure_coupling=0.8,   # buzzy 60-deg rasp
         gear_ratios=[2.93, 2.15, 1.66, 1.32, 1.06, 0.86, 0.72], final_drive=3.91,
         vehicle_mass=1575.0, wheel_radius=0.35, clutch_capacity=720.0,
         gearbox_type="single",   # ISR single-clutch — the brutal Aventador kick
@@ -845,6 +847,7 @@ def porsche_992_gt3() -> Engine:
         exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.026,
         exhaust_channels=2, exhaust_openness=0.83, muffler_volume_m3=0.0020,
         wall_material="titanium", cat_cells_cpsi=200,
+        header_unequal_deg=13.0, backpressure_coupling=0.85,  # flat-six 'boil' burble
         gear_ratios=[3.91, 2.29, 1.65, 1.30, 1.08, 0.88, 0.62], final_drive=3.97,
         vehicle_mass=1435.0, wheel_radius=0.34, clutch_capacity=560.0,
         gearbox_type="dct",                      # PDK
