@@ -152,7 +152,7 @@ def ferrari_458() -> Engine:
     offsets = _even_offsets(8, firing_order=order)
     cylinders = []
     for i in range(8):
-        bank = -45.0 if i % 2 == 0 else 45.0     # 90 deg V
+        bank = -45.0 if i < 4 else 45.0          # 90-deg flat-plane V8
         cylinders.append(
             Cylinder(bore=mm(94), stroke=mm(81), rod_length=mm(149),
                      compression_ratio=12.5, cycle_offset_deg=offsets[i],
@@ -192,10 +192,10 @@ def lexus_lfa() -> Engine:
     ~12:1 CR.  6-speed ASG (3.231/2.188/1.609/1.233/0.970/0.795, final 3.417).
     Even-firing V10 -> a smooth, screaming, very high-pitched metallic note.
     """
-    offsets = _even_offsets(10)                      # even 72-deg firing
+    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])                      # even 72-deg firing
     cylinders = []
     for i in range(10):
-        bank = -36.0 if i % 2 == 0 else 36.0         # 72-deg V
+        bank = -36.0 if i < 5 else 36.0              # 72-deg V10
         cylinders.append(
             Cylinder(bore=mm(88), stroke=mm(79), rod_length=mm(130),
                      compression_ratio=12.0, cycle_offset_deg=offsets[i],
@@ -230,7 +230,7 @@ def lamborghini_murcielago() -> Engine:
     660 Nm @ 6000, redline ~8000 rpm.  6-speed (approx ratios).  Even-firing
     60-deg V12 -> a deep, complex, layered metallic howl.
     """
-    offsets = _even_offsets(12)                      # even 60-deg firing
+    offsets = _even_offsets(12, firing_order=[1, 7, 4, 10, 2, 8, 6, 12, 3, 9, 5, 11])                      # even 60-deg firing
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0              # banks 1-6 / 7-12
@@ -268,7 +268,7 @@ def lamborghini_diablo() -> Engine:
     primaries) — the point being that the SAME engine sounds different car-to-car
     because the exhaust system differs.  5-speed manual.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 7, 4, 10, 2, 8, 6, 12, 3, 9, 5, 11])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0
@@ -300,7 +300,7 @@ def ferrari_f2004_v10() -> Engine:
     ~13:1 CR, ~900 PS at ~18000 rpm, redline ~18500.  Almost no flywheel, so it
     spins up instantly.  Firing every 72 deg -> a 1500 Hz wail at full song.
     """
-    offsets = _even_offsets(10)                      # even 72-deg firing
+    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])                      # even 72-deg firing
     cylinders = []
     for i in range(10):
         bank = -45.0 if i < 5 else 45.0              # 90-deg V
@@ -485,7 +485,7 @@ def lamborghini_huracan_v10() -> Engine:
     84.5 x 92.8 mm, ~12.7:1 CR, ~8500 rpm, ~610 hp.  High-revving NA screamer
     with the raspy V10 voice.  DOHC 4-valve.
     """
-    offsets = _even_offsets(10)
+    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])
     cylinders = []
     for i in range(10):
         bank = -45.0 if i < 5 else 45.0          # 90-deg V
@@ -515,7 +515,7 @@ def lamborghini_aventador_v12() -> Engine:
     95 x 76.4 mm, ~11.8:1 CR, ~8500 rpm, ~700 hp.  The big NA V12 howl — fuller
     and smoother than the V10, twelve even 60-deg pulses.  DOHC 4-valve.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 7, 4, 10, 2, 8, 6, 12, 3, 9, 5, 11])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V
@@ -547,7 +547,7 @@ def ferrari_laferrari_v12() -> Engine:
     94 x 75.2 mm, ~13.5:1 CR, ~9000 rpm, ~800 hp (ICE only).  The ultimate NA
     Ferrari V12 scream — even higher-revving than the Lambos.  DOHC 4-valve.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9])
     cylinders = []
     for i in range(12):
         bank = -32.5 if i < 6 else 32.5          # 65-deg V
@@ -579,7 +579,7 @@ def ferrari_f40_v8() -> Engine:
     recreate that with a *late* spool threshold + a long lag time-constant.
     Flat-plane crank.  DOHC 4-valve.
     """
-    offsets = _even_offsets(8)
+    offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
     cylinders = []
     for i in range(8):
         bank = -45.0 if i < 4 else 45.0          # 90-deg V8, flat-plane
@@ -615,7 +615,7 @@ def pagani_zonda_v12() -> Engine:
     AMG V12: lower-revving and torquier than the Ferrari/Lambo screamers — a
     deep, brutal voice.  SOHC 4-valve.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V
@@ -700,7 +700,7 @@ def nissan_r35_vr38() -> Engine:
     95.5 x 88.4 mm, ~9.0:1 CR, ~7000 rpm, ~565 hp.  Twin turbos (~1.0 bar) and
     the GR6 6-speed dual-clutch — fast, brutal, seamless.
     """
-    offsets = _even_offsets(6)
+    offsets = _even_offsets(6, firing_order=[1, 4, 2, 5, 3, 6])
     cylinders = []
     for i in range(6):
         bank = -30.0 if i < 3 else 30.0          # 60-deg V6
@@ -790,7 +790,7 @@ def porsche_carrera_gt_v10() -> Engine:
     98 x 76 mm, ~12.0:1 CR, ~8400 rpm, ~612 hp.  A high-revving racing V10 in a
     road car — sharp, hard-edged wail.  6-speed manual.
     """
-    offsets = _even_offsets(10)
+    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])
     cylinders = []
     for i in range(10):
         bank = -34.0 if i < 5 else 34.0          # 68-deg V10
@@ -1029,7 +1029,7 @@ def audi_rs5_ea839() -> Engine:
     84.5 x 86 mm, ~10.5:1 CR, ~7000 rpm, ~450 hp.  Turbos nestled in the vee,
     fast spool (~1.2 bar).  8-speed... modelled as quick dual-clutch.
     """
-    offsets = _even_offsets(6)
+    offsets = _even_offsets(6, firing_order=[1, 4, 2, 5, 3, 6])
     cylinders = []
     for i in range(6):
         bank = -45.0 if i < 3 else 45.0          # 90-deg V6
@@ -1060,7 +1060,7 @@ def mercedes_sl65_m275() -> Engine:
     Effortless, deep, muffled twin-turbo V12 with a torque-converter automatic —
     soft, slushy shifts.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V12
@@ -1241,7 +1241,7 @@ def bugatti_veyron_w16() -> Engine:
     86 x 86 mm x 16, ~9.0:1 CR, ~6500 rpm, ~1001 hp.  Two narrow-vee banks in a
     W; four turbos.  Modelled as a 16-pulse even-fire.  7-speed dual-clutch.
     """
-    offsets = _even_offsets(16)
+    offsets = _even_offsets(16, firing_order=[1, 9, 5, 13, 3, 11, 7, 15, 2, 10, 6, 14, 4, 12, 8, 16])
     cylinders = []
     for i in range(16):
         bank = -45.0 if i < 8 else 45.0
@@ -1271,7 +1271,7 @@ def bentley_continental_w12() -> Engine:
     84 x 90.2 mm x 12, ~10.5:1 CR, ~6000 rpm, ~626 hp / vast torque.  A smooth,
     deep, effortless twin-turbo W12.  8-speed dual-clutch.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9])
     cylinders = []
     for i in range(12):
         bank = -36.0 if i < 6 else 36.0
@@ -1479,7 +1479,7 @@ def mclaren_f1_v12() -> Engine:
     a high-revving NA V12 with a famously hard, metallic top end.  Firing every
     60 deg.  6-speed manual.
     """
-    offsets = _even_offsets(12)
+    offsets = _even_offsets(12, firing_order=[1, 7, 5, 11, 3, 9, 6, 12, 2, 8, 4, 10])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V12
