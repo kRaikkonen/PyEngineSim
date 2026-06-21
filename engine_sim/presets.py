@@ -543,6 +543,7 @@ def lamborghini_aventador_v12() -> Engine:
         exhaust_channels=2, exhaust_openness=0.84, muffler_volume_m3=0.0016,
         wall_material="titanium", cat_cells_cpsi=350,
         header_unequal_deg=9.0, backpressure_coupling=0.8,   # buzzy 60-deg rasp
+        gear_grain=0.3,                  # a touch of fine gear-driven whir
         gear_ratios=[2.93, 2.15, 1.66, 1.32, 1.06, 0.86, 0.72], final_drive=3.91,
         vehicle_mass=1575.0, wheel_radius=0.35, clutch_capacity=720.0,
         gearbox_type="single",   # ISR single-clutch — the brutal Aventador kick
@@ -574,8 +575,7 @@ def ferrari_laferrari_v12() -> Engine:
         exhaust_primary_m=0.62, exhaust_total_m=2.1, exhaust_radius_m=0.026,
         exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0021,
         wall_material="titanium",        # smooth, rising, metallic 'waaang' wail
-        backpressure_coupling=0.7,       # fine gear-like grain ON the smooth wail
-                                         #   (no header offset -> grain, not 'cough')
+        backpressure_coupling=0.7, gear_grain=0.5,   # smooth wail + fine gear whir
         gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.71,
         vehicle_mass=1585.0, wheel_radius=0.34, clutch_capacity=750.0,
         gearbox_type="dct",      # 7-speed dual-clutch — seamless
@@ -1521,6 +1521,126 @@ def mclaren_f1_v12() -> Engine:
     )
 
 
+def peterbilt_389_diesel() -> Engine:
+    """Peterbilt 389 — Cummins X15 15 L turbo-diesel inline-six big rig.
+
+    137 x 169 mm x 6, ~17:1 CR, ~565 hp @ 1800, ~1850 lb-ft @ 1200, redline
+    ~2100, idle ~600.  A huge, slow, lumpy diesel rumble with a big turbo.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 5, 3, 6, 2, 4])
+    cylinders = [
+        Cylinder(bore=mm(137), stroke=mm(169), rod_length=mm(262),
+                 compression_ratio=17.0, cycle_offset_deg=offsets[i])
+        for i in range(6)
+    ]
+    return Engine(
+        name="Peterbilt 389 Cummins X15 15L diesel I6",
+        cylinders=cylinders,
+        flywheel_inertia=2.4, redline_rpm=2100, idle_rpm=600,
+        heat_release_k=4.8,              # hard diesel knock
+        ve_peak_frac=0.5, ve_width_frac=0.7, closed_map_fraction=0.20,
+        friction_static=34.0, starter_torque=1100.0, starter_speed_rpm=180.0,
+        exhaust_tone=44.0,               # very deep diesel
+        exhaust_primary_m=0.9, exhaust_total_m=3.2, exhaust_radius_m=0.046,
+        exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.02,
+        induction="turbo", boost_bar=1.7, turbo_lag=0.9, turbo_spool_frac=0.08,
+        valvetrain="ohv", valves_per_cyl=4, has_cat=False,
+        backpressure_coupling=0.7,       # lumpy diesel beat
+        gear_ratios=[12.8, 9.0, 6.5, 4.7, 3.4, 2.5, 1.8, 1.35, 1.0, 0.74],
+        final_drive=3.55, vehicle_mass=15000.0, wheel_radius=0.50,
+        clutch_capacity=3200.0, gearbox_type="manual",
+    )
+
+
+def ford_focus_ecoboost_i3() -> Engine:
+    """Ford Focus 1.0 EcoBoost — 999 cc turbo inline-THREE.
+
+    71.9 x 82 mm x 3, ~10:1 CR, ~125 hp, redline ~6500.  Even 240-deg firing
+    1-2-3 — the thrummy, off-beat, characterful little three.
+    """
+    offsets = _even_offsets(3, firing_order=[1, 2, 3])
+    cylinders = [
+        Cylinder(bore=mm(71.9), stroke=mm(82.0), rod_length=mm(135),
+                 compression_ratio=10.0, cycle_offset_deg=offsets[i])
+        for i in range(3)
+    ]
+    return Engine(
+        name="Ford Focus 1.0 EcoBoost I3",
+        cylinders=cylinders,
+        flywheel_inertia=0.13, redline_rpm=6500, idle_rpm=800,
+        heat_release_k=3.4, ve_peak_frac=0.42, ve_width_frac=0.66,
+        friction_static=4.0, starter_torque=120.0,
+        exhaust_tone=92.0,
+        exhaust_primary_m=0.45, exhaust_total_m=1.8, exhaust_radius_m=0.024,
+        exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.003,
+        induction="turbo", boost_bar=0.95, turbo_lag=0.35, turbo_spool_frac=0.09,
+        backpressure_coupling=0.9,       # the three-cylinder thrum / off-beat
+        gear_ratios=[3.58, 1.93, 1.28, 0.95, 0.76, 0.62], final_drive=4.06,
+        vehicle_mass=1300.0, wheel_radius=0.31, clutch_capacity=300.0,
+        gearbox_type="manual",
+    )
+
+
+def spitfire_merlin_v12() -> Engine:
+    """Supermarine Spitfire — Rolls-Royce Merlin 27 L supercharged 60-deg V12.
+
+    137 x 152 mm x 12, ~6:1 CR, ~1030-1600 hp, ~3000 rpm.  Open exhaust stubs,
+    a single/two-stage supercharger — the deep, throaty WWII fighter snarl.
+    """
+    offsets = _even_offsets(12, firing_order=[1, 8, 5, 10, 3, 7, 6, 11, 2, 9, 4, 12])
+    cylinders = [
+        Cylinder(bore=mm(137), stroke=mm(152), rod_length=mm(280),
+                 compression_ratio=6.0, cycle_offset_deg=offsets[i],
+                 bank_angle_deg=(-30.0 if i < 6 else 30.0))
+        for i in range(12)
+    ]
+    return Engine(
+        name="Spitfire RR Merlin 27L supercharged V12",
+        cylinders=cylinders,
+        flywheel_inertia=3.2, redline_rpm=3000, idle_rpm=550,
+        heat_release_k=3.6, ve_peak_frac=0.7, ve_width_frac=0.72,
+        friction_static=22.0, starter_torque=700.0, starter_speed_rpm=140.0,
+        exhaust_tone=52.0,
+        exhaust_primary_m=0.32, exhaust_total_m=0.55, exhaust_radius_m=0.040,
+        exhaust_channels=2, exhaust_openness=0.97, muffler_volume_m3=0.0008,
+        induction="centrifugal", boost_bar=0.6, blower_ratio=8.5,
+        valvetrain="sohc", valves_per_cyl=4, has_cat=False,
+        backpressure_coupling=0.6, gear_grain=0.35,
+        gear_ratios=[1.0], final_drive=0.42,   # direct prop drive (no gearbox)
+        vehicle_mass=3000.0, wheel_radius=0.55, clutch_capacity=2500.0,
+        gearbox_type="manual",
+    )
+
+
+def f4f_wildcat_radial() -> Engine:
+    """Grumman F4F Wildcat — Pratt & Whitney R-1830 Twin Wasp 30 L 14-cylinder
+    twin-row radial.  140 x 140 mm x 14, ~6.7:1 CR, ~1200 hp, ~2700 rpm.  The
+    classic deep, throbbing WWII carrier-fighter radial drone."""
+    offsets = _even_offsets(14, firing_order=[1, 10, 5, 14, 9, 4, 13, 8, 3, 12, 7, 2, 11, 6])
+    cylinders = [
+        Cylinder(bore=mm(140), stroke=mm(140), rod_length=mm(310),
+                 compression_ratio=6.7, cycle_offset_deg=offsets[i],
+                 bank_angle_deg=(i * 360.0 / 14.0))   # radial position (star)
+        for i in range(14)
+    ]
+    return Engine(
+        name="F4F Wildcat P&W R-1830 30L 14-cyl radial",
+        cylinders=cylinders,
+        flywheel_inertia=3.5, redline_rpm=2700, idle_rpm=500,
+        heat_release_k=3.5, ve_peak_frac=0.65, ve_width_frac=0.72,
+        friction_static=24.0, starter_torque=600.0, starter_speed_rpm=130.0,
+        exhaust_tone=50.0,
+        exhaust_primary_m=0.3, exhaust_total_m=0.5, exhaust_radius_m=0.038,
+        exhaust_channels=1, exhaust_openness=0.95, muffler_volume_m3=0.0008,
+        induction="centrifugal", boost_bar=0.45, blower_ratio=7.5,
+        valvetrain="ohv", valves_per_cyl=2, has_cat=False, is_radial=True,
+        backpressure_coupling=0.55, gear_grain=0.3,
+        gear_ratios=[1.0], final_drive=0.40,
+        vehicle_mass=3600.0, wheel_radius=0.55, clutch_capacity=2500.0,
+        gearbox_type="manual",
+    )
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -1572,6 +1692,10 @@ PRESETS = [
     ("m3gtr", "M3 GTR V8", bmw_m3_gtr_p60),
     ("mf1", "McLaren F1 V12", mclaren_f1_v12),
     ("diablo", "Diablo V12", lamborghini_diablo),
+    ("pete", "Peterbilt 389 diesel", peterbilt_389_diesel),
+    ("focus3", "Focus 1.0 I3", ford_focus_ecoboost_i3),
+    ("merlin", "Spitfire Merlin V12", spitfire_merlin_v12),
+    ("wildcat", "F4F Wildcat radial", f4f_wildcat_radial),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
