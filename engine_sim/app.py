@@ -1161,6 +1161,9 @@ class App:
         if eng.is_rotary:
             self._draw_rotary(rect, top, bottom)
             return
+        if getattr(eng, "is_radial", False):
+            self._draw_radial(rect, top, bottom)
+            return
         # Group cylinders by bank so the drawing matches the real layout: an
         # inline engine is one upright row, a V is two angled banks meeting at a
         # shared crank, a boxer opposes left/right, a W is a wide double-V.
@@ -1385,6 +1388,38 @@ class App:
                 a = a0 + d * k / samples
                 pts.append((vc[0] + rad * math.cos(a), vc[1] + rad * math.sin(a)))
         return pts
+
+    def _draw_radial(self, rect, top, bottom):
+        """Aircraft radial: cylinders arranged in a STAR around a central crank,
+        each one reusing the metal cylinder/piston/rod drawing radiating outward."""
+        sim, eng = self.sim, self.sim.engine
+        n = eng.num_cylinders
+        cx = rect.centerx
+        cy = int((top + bottom) / 2 + 6)
+        Rc = min(rect.width * 0.18, (bottom - top) * 0.40)
+        length = Rc * 1.05
+        width = min(40.0, Rc * 2.0 * math.pi / n * 0.5)
+        # central crankcase
+        pygame.draw.circle(self.screen, (30, 32, 38), (cx, cy), int(Rc * 0.46))
+        pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), int(Rc * 0.40))
+        pygame.draw.circle(self.screen, (96, 102, 116), (cx, cy), int(Rc * 0.46), 2)
+        for i in range(n):
+            cyl = eng.cylinders[i]
+            a = math.radians(cyl.bank_angle_deg)        # radial position (0=up, CW)
+            phi = sim.cycle_phase_deg(i)
+            theta = math.radians(phi % 360.0)
+            frac = sim.piston_fraction(i)
+            glow = (min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
+                        / (5.0 * 101325.0), 1.0)
+                    if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
+                    else 0.0)
+            self._draw_cyl(cx, cy, a, length, width, frac, theta, glow)
+        # hub on top of all the rod big-ends
+        pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
+        pygame.draw.circle(self.screen, ACCENT, (cx, cy), 4)
+        fo = "-".join(str(x) for x in eng.firing_order)
+        self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+                         True, ACCENT), (rect.x + 18, rect.bottom - 14))
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
