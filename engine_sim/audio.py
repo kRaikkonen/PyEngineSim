@@ -338,6 +338,7 @@ class Synthesizer:
         self.flutter = simulator.engine.bov_flutter
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
+        self._cold = 1.0          # cold-start factor (1 cold .. 0 warmed up)
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
@@ -376,6 +377,27 @@ class Synthesizer:
         hu = eng.header_unequal_deg
         self._header_offset = [hu if c.bank_angle_deg < 0 else 0.0
                                for c in eng.cylinders]
+        # --- (Step 2) per-cylinder header-runner DELAY LINES --------------------
+        # Each cylinder sits a different distance from the collector, so its pulse
+        # reaches the merge point at a slightly different time.  Firing order x
+        # runner-length spread = the comb interference that makes an inline-4, a
+        # cross-plane V8 and a flat-plane V10 sound fundamentally different (not
+        # just the same pulse at another pitch).  Runner length is derived from the
+        # header primary length with a per-cylinder gradient along each bank, so it
+        # works for every preset without hand-tuning 47 of them.
+        prim = max(eng.exhaust_primary_m, 0.15)
+        c_gas = 500.0                                   # hot-gas speed (m/s), nominal
+        seen, posn = {}, []
+        for c in eng.cylinders:
+            ch = 0 if (self._nchan == 1 or c.bank_angle_deg < 0) else 1
+            posn.append(seen.get(ch, 0)); seen[ch] = seen.get(ch, 0) + 1
+        self._runner_samp = []
+        for j, c in enumerate(eng.cylinders):
+            ch = self._channel_of[j]
+            frac = posn[j] / max(seen[ch] - 1, 1)        # 0 (near) .. 1 (far)
+            length = prim * (0.55 + 0.9 * frac)          # spread of runner lengths
+            self._runner_samp.append(int(round(length / c_gas * sr)))
+        self._runner_hist = [np.zeros(max(d, 0)) for d in self._runner_samp]
         # TWO waveguides per channel: a short primary runner (high resonance) and
         # the full system length (low resonance) -> several pipe resonances at
         # different frequencies, like a real exhaust.
@@ -449,6 +471,17 @@ class Synthesizer:
             self._shear_hp = butter(2, 900.0 / (sr / 2), btype="high")
             self._shear_bp_zi = np.zeros(2)
             self._shear_hp_zi = np.zeros(2)
+            # (Step 3) cylinder-head / exhaust-port cavity: a gentle low-pass that
+            # 'rounds' the raw pulse so it reads as metal, not a digital click.
+            self._head_lp = butter(2, min(7200.0, sr * 0.45) / (sr / 2), btype="low")
+            self._head_lp_zi = np.zeros(2)
+            # (Step 4) pipe-wall metal resonance formants — a thin, small-bore pipe
+            # rings higher and sharper; a thick, big-bore pipe lower and tighter.
+            r = max(eng.exhaust_radius_m, 0.012)
+            self._wall_f1 = min(max(2300.0 * (0.024 / r), 1400.0), 3600.0)
+            self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
+            self._wallpk1_zi = np.zeros(2)
+            self._wallpk2_zi = np.zeros(2)
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -516,6 +549,13 @@ class Synthesizer:
         omega = sim.omega
         # time_scale < 1 = slow motion (the whole engine note slows + drops)
         dps = math.degrees(omega) / self.sample_rate * self.time_scale
+        # (Step 5) cold-start: the engine warms over ~8 s of running (note brightens
+        # as it warms); it slowly re-cools when shut off.  Drives the head-LP above.
+        dt_blk = frames / self.sample_rate
+        if sim.ignition_on and sim.rpm > 300.0:
+            self._cold = max(0.0, self._cold - dt_blk / 8.0)
+        else:
+            self._cold = min(1.0, self._cold + dt_blk / 40.0)
 
         D1, D2, g, lp_a, f_helm = self._resonance_params()
         s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
@@ -559,8 +599,15 @@ class Synthesizer:
                 tau_disp = tau_j * 1.5
                 disp = ramp * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
-                pulse = (blow + 0.7 * disp) * close * amp_j
-                chans[self._channel_of[j]] += np.where(inwin, pulse, 0.0)
+                pulse = np.where(inwin, (blow + 0.7 * disp) * close * amp_j, 0.0)
+                # delay this cylinder's pulse down its own runner before it merges
+                # at the collector (carries the tail across blocks) -> interference.
+                d_samp = self._runner_samp[j]
+                if d_samp > 0:
+                    comb = np.concatenate([self._runner_hist[j], pulse])
+                    pulse = comb[:frames]
+                    self._runner_hist[j] = comb[frames:]
+                chans[self._channel_of[j]] += pulse
 
             # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
             # noise gated by the pulse), so each gets its OWN mixer slider.
@@ -654,6 +701,18 @@ class Synthesizer:
         #   8. tail-pipe air-shear at the exit (broadband roar into open air)
         #   9. room / environment reverb  (the space — added last, below)
 
+        # --- (3a) cylinder-head / exhaust-port cavity low-pass: round the raw
+        # pulse so it reads as a metal port, not an electronic click.  A touch
+        # duller while the engine is still cold.
+        if _HAVE_SCIPY:
+            if self._cold > 0.02:
+                hc = min(7200.0 * (1.0 - 0.22 * self._cold), self.sample_rate * 0.45)
+                bhd, ahd = butter(2, hc / (self.sample_rate / 2), btype="low")
+                sig, self._head_lp_zi = lfilter(bhd, ahd, sig, zi=self._head_lp_zi)
+            else:
+                sig, self._head_lp_zi = lfilter(self._head_lp[0], self._head_lp[1],
+                                                sig, zi=self._head_lp_zi)
+
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
         # straight-pipe top end FIRST, upstream of the muffler — a stock car with
         # a cat can't sound like an open header no matter what the muffler does.
@@ -718,6 +777,17 @@ class Synthesizer:
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
             b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
             sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
+        # (Step 4) stainless-wall resonance formants: two narrow peaks give the
+        # note its METAL ring.  A thicker wall (wt up) drops the peaks lower and
+        # tightens them (fat & solid); a thin wall keeps them high & open (bright,
+        # 'tinny').  Always on — it's the pipe material itself, not an effect.
+        if _HAVE_SCIPY:
+            f1 = self._wall_f1 * (1.0 - 0.18 * wt)
+            f2 = self._wall_f2 * (1.0 - 0.22 * wt)
+            bp1, ap1 = _peaking(f1, 3.4, 3.0 - 1.2 * wt, self.sample_rate)
+            sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
+            bp2, ap2 = _peaking(f2, 4.2, 2.2 - 1.4 * wt, self.sample_rate)
+            sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
 
         # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
         # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
