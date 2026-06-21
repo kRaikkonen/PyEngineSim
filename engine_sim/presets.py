@@ -63,7 +63,7 @@ def porsche_911_h6() -> Engine:
         exhaust_channels=2, exhaust_openness=0.78, muffler_volume_m3=0.002,
         gear_ratios=[3.82, 2.05, 1.41, 1.12, 0.92, 0.75],   # 993 G50 6-speed
         final_drive=3.44,
-        vehicle_mass=1370.0, wheel_radius=0.32, clutch_capacity=470.0,
+        vehicle_mass=1370.0, wheel_radius=0.32, clutch_capacity=470.0,        gearbox_type="manual",
     )
 
 
@@ -133,7 +133,7 @@ def ford_coyote_v8() -> Engine:
         exhaust_channels=2, exhaust_openness=0.62, muffler_volume_m3=0.0035,
         gear_ratios=[3.66, 2.43, 1.69, 1.32, 1.00, 0.65],   # Mustang GT MT82
         final_drive=3.55,
-        vehicle_mass=1750.0, wheel_radius=0.34, clutch_capacity=640.0,
+        vehicle_mass=1750.0, wheel_radius=0.34, clutch_capacity=640.0,        gearbox_type="manual",
     )
 
 
@@ -219,7 +219,7 @@ def lexus_lfa() -> Engine:
         exhaust_channels=1, exhaust_openness=0.95, muffler_volume_m3=0.0015,
         gear_ratios=[3.231, 2.188, 1.609, 1.233, 0.970, 0.795],
         final_drive=3.417,
-        vehicle_mass=1480.0, wheel_radius=0.340, clutch_capacity=560.0,
+        vehicle_mass=1480.0, wheel_radius=0.340, clutch_capacity=560.0,        gearbox_type="single",
     )
 
 
@@ -256,7 +256,7 @@ def lamborghini_murcielago() -> Engine:
         exhaust_channels=2, exhaust_openness=0.80, muffler_volume_m3=0.0035,
         gear_ratios=[2.94, 2.06, 1.52, 1.18, 0.94, 0.76],
         final_drive=3.45,
-        vehicle_mass=1665.0, wheel_radius=0.345, clutch_capacity=720.0,
+        vehicle_mass=1665.0, wheel_radius=0.345, clutch_capacity=720.0,        gearbox_type="manual",
     )
 
 
@@ -329,7 +329,7 @@ def ferrari_f2004_v10() -> Engine:
         has_cat=False,                           # open race exhaust, no cat/GPF
         gear_ratios=[2.50, 1.95, 1.60, 1.36, 1.18, 1.04, 0.92],  # close F1 7-speed
         final_drive=4.20,
-        vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,
+        vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,        gearbox_type="single",
     )
 
 
@@ -360,7 +360,7 @@ def dodge_hellcat_v8() -> Engine:
         induction="roots", boost_bar=0.8, blower_ratio=9.0,
         valvetrain="ohv", valves_per_cyl=2,      # pushrod 2-valve HEMI
         gear_ratios=[2.97, 2.07, 1.43, 1.00, 0.84, 0.57], final_drive=2.62,
-        vehicle_mass=2020.0, wheel_radius=0.34, clutch_capacity=900.0,
+        vehicle_mass=2020.0, wheel_radius=0.34, clutch_capacity=900.0,        gearbox_type="at",
     )
 
 
@@ -387,7 +387,7 @@ def toyota_2jz_supra() -> Engine:
         exhaust_channels=1, exhaust_openness=0.62, muffler_volume_m3=0.003,
         induction="turbo", boost_bar=1.0, turbo_lag=0.55,
         gear_ratios=[3.83, 2.36, 1.69, 1.31, 1.00, 0.79], final_drive=3.13,
-        vehicle_mass=1560.0, wheel_radius=0.32, clutch_capacity=520.0,
+        vehicle_mass=1560.0, wheel_radius=0.32, clutch_capacity=520.0,        gearbox_type="manual",
     )
 
 
@@ -415,7 +415,7 @@ def bmw_s58() -> Engine:
         has_gpf=True,                            # modern EU emissions
         gear_ratios=[4.11, 2.32, 1.54, 1.18, 0.94, 0.76, 0.63, 0.51],
         final_drive=3.15, vehicle_mass=1780.0, wheel_radius=0.33,
-        clutch_capacity=700.0,
+        clutch_capacity=700.0,        gearbox_type="at",
     )
 
 
@@ -445,7 +445,7 @@ def mazda_rx7_rotary() -> Engine:
         is_rotary=True,
         induction="turbo", boost_bar=0.8, turbo_lag=0.45,
         gear_ratios=[3.48, 2.02, 1.39, 1.00, 0.72], final_drive=4.10,
-        vehicle_mass=1310.0, wheel_radius=0.31, clutch_capacity=420.0,
+        vehicle_mass=1310.0, wheel_radius=0.31, clutch_capacity=420.0,        gearbox_type="manual",
     )
 
 
@@ -475,7 +475,7 @@ def subaru_22b() -> Engine:
         header_unequal_deg=28.0,                 # the boxer-rumble delay
         induction="turbo", boost_bar=0.9, turbo_lag=0.5,
         gear_ratios=[3.45, 2.06, 1.45, 1.09, 0.82], final_drive=4.44,
-        vehicle_mass=1270.0, wheel_radius=0.31, clutch_capacity=480.0,
+        vehicle_mass=1270.0, wheel_radius=0.31, clutch_capacity=480.0,        gearbox_type="manual",
     )
 
 
@@ -515,7 +515,7 @@ def lamborghini_aventador_v12() -> Engine:
     95 x 76.4 mm, ~11.8:1 CR, ~8500 rpm, ~700 hp.  The big NA V12 howl — fuller
     and smoother than the V10, twelve even 60-deg pulses.  DOHC 4-valve.
     """
-    offsets = _even_offsets(12, firing_order=[1, 7, 4, 10, 2, 8, 6, 12, 3, 9, 5, 11])
+    offsets = _even_offsets(12, firing_order=[1, 12, 3, 10, 6, 7, 2, 11, 4, 9, 5, 8])
     cylinders = []
     for i in range(12):
         bank = -30.0 if i < 6 else 30.0          # 60-deg V
@@ -1049,7 +1049,7 @@ def audi_rs5_ea839() -> Engine:
         has_gpf=True,
         gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
         final_drive=3.20, vehicle_mass=1730.0, wheel_radius=0.33,
-        clutch_capacity=640.0, gearbox_type="dct",
+        clutch_capacity=640.0, gearbox_type="at",
     )
 
 
