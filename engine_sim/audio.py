@@ -293,6 +293,7 @@ class Synthesizer:
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
+            "pops": 0.5,          # overrun exhaust pops/bangs (deceleration crackle)
         }
 
         self._build_audio()
@@ -312,6 +313,9 @@ class Synthesizer:
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
         self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
+        self._pop_env = 0.0       # current overrun pop/bang envelope
+        self._pop_bang = False    # this pop is a big bang (vs a small crackle)
+        self._was_on_gas = 0.0    # recent on-throttle memory (fuels the crackle)
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -584,6 +588,7 @@ class Synthesizer:
                 self._gear_reverb.mix = P["gearbox_reverb"]
                 gw = self._gear_reverb.process(gw)
             sig = sig + ind + gw
+            sig = sig + self._overrun_pops(frames)   # decel pops & bangs
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
@@ -735,6 +740,47 @@ class Synthesizer:
                 out += (hv * 0.22 * bfrac) * self._whine(
                     min(fe, sr * 0.45), frames, [(1, 1.0)], phase_attr="_ecomp_phase")
         return out, gw
+
+    def _overrun_pops(self, frames):
+        """Exhaust pops & bangs on a closed-throttle overrun — unburnt fuel
+        lighting off in the hot pipe (the deceleration '放炮' crackle).  More
+        frequent and bigger 'BANG's for anti-lag cars."""
+        P = self.params
+        lvl = P["pops"]
+        if lvl < 1e-3:
+            return 0.0
+        sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
+        rpm = sim.rpm
+        # being on the gas loads the pipe with fuel that then lights off on lift
+        if sim.throttle > 0.5:
+            self._was_on_gas = min(1.0, self._was_on_gas + 0.05)
+        else:
+            self._was_on_gas *= 0.996
+        overrun = (sim.ignition_on and sim.throttle < 0.06
+                   and rpm > eng.idle_rpm * 1.5)
+        out = np.zeros(frames, dtype=np.float64)
+        if overrun and self._pop_env < 0.05:
+            rf = min(rpm / max(eng.redline_rpm, 1.0), 1.0)
+            aggr = 2.4 if eng.anti_lag else 1.0
+            rate = lvl * aggr * (0.05 + 0.5 * rf) * (0.3 + 0.7 * self._was_on_gas)
+            if self._rng.random() < rate:
+                self._pop_bang = self._rng.random() < (0.28 if eng.anti_lag else 0.12)
+                self._pop_env = ((0.9 if self._pop_bang else 0.5)
+                                 * (0.6 + 0.8 * self._rng.random()))
+        if self._pop_env > 1e-3:
+            n = np.arange(frames)
+            noise = self._rng.standard_normal(frames)
+            if self._pop_bang:                       # a BANG: low thump + crackle
+                env = np.exp(-n / (sr * 0.045)) * self._pop_env
+                thump = (np.sin(2 * math.pi * 80.0 * n / sr)
+                         * np.exp(-n / (sr * 0.03)) * self._pop_env)
+                out += (lvl * 1.3) * (noise * env) + (lvl * 0.7) * thump
+                self._pop_env *= math.exp(-frames / (sr * 0.05))
+            else:                                    # a small bright crackle/spit
+                env = np.exp(-n / (sr * 0.010)) * self._pop_env
+                out += (lvl * 0.9) * noise * env
+                self._pop_env *= math.exp(-frames / (sr * 0.012))
+        return out
 
     def _callback(self, outdata, frames, time_info, status):
         mono = self._render_block(frames)

@@ -260,6 +260,39 @@ def lamborghini_murcielago() -> Engine:
     )
 
 
+def lamborghini_diablo() -> Engine:
+    """Lamborghini Diablo 6.0 VT — 6.0 L 60-deg V12 (the pre-Murcielago raw one).
+
+    87.5 x 84 mm, ~10.7:1 CR, ~7100 rpm, ~550 hp.  Same V12 family as the
+    Murcielago but a harder, rawer, brighter exhaust voice (less muffled, shorter
+    primaries) — the point being that the SAME engine sounds different car-to-car
+    because the exhaust system differs.  5-speed manual.
+    """
+    offsets = _even_offsets(12)
+    cylinders = []
+    for i in range(12):
+        bank = -30.0 if i < 6 else 30.0
+        cylinders.append(
+            Cylinder(bore=mm(87.5), stroke=mm(84), rod_length=mm(154),
+                     compression_ratio=10.7, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Lamborghini Diablo 6.0 V12",
+        cylinders=cylinders,
+        flywheel_inertia=0.30, redline_rpm=7100, idle_rpm=900,
+        heat_release_k=3.8, ve_peak_frac=0.7, ve_width_frac=0.6,
+        closed_map_fraction=0.10, friction_static=10.0, starter_torque=200.0,
+        # rawer / harder than the Murcielago: brighter tone, shorter & more open
+        # primaries, far less muffler.
+        exhaust_tone=82.0,
+        exhaust_primary_m=0.56, exhaust_total_m=2.05, exhaust_radius_m=0.027,
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0016,
+        gear_ratios=[2.31, 1.58, 1.24, 0.94, 0.76], final_drive=4.09,
+        vehicle_mass=1625.0, wheel_radius=0.34, clutch_capacity=720.0,
+        gearbox_type="manual",
+    )
+
+
 def ferrari_f2004_v10() -> Engine:
     """Ferrari F2004 — Tipo 053 3.0 L 90-deg V10 Formula 1 engine.
 
@@ -1519,6 +1552,7 @@ PRESETS = [
     ("a45", "A45 AMG I4", mercedes_a45_amg_i4),
     ("m3gtr", "M3 GTR V8", bmw_m3_gtr_p60),
     ("mf1", "McLaren F1 V12", mclaren_f1_v12),
+    ("diablo", "Diablo V12", lamborghini_diablo),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}

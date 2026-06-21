@@ -117,7 +117,8 @@ TR_ZH = {
     "Cylinder spread": "缸间差异", "Supercharger whine": "机增啸叫",
     "Turbo spool / BOV": "涡轮/泄压", "Spool reverb": "增压混响",
     "Straight-cut whine": "直齿啸叫", "Gear-whine reverb": "直齿混响",
-    "Electric / e-turbo": "电机/电涡轮", "EQ low (dB)": "EQ低频(dB)",
+    "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
+    "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
 }
@@ -151,6 +152,7 @@ SLIDER_DEFS = [
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
     ("gearbox_reverb", "Gear-whine reverb", 0.0, 0.6),
     ("hybrid_vol", "Electric / e-turbo", 0.0, 1.2),
+    ("pops", "Overrun pops", 0.0, 1.2),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -454,7 +456,7 @@ class App:
                 "key": key, "label": label, "min": vmin, "max": vmax,
                 "track": pygame.Rect(x, y + 5, w, 6), "row_y": y,
             })
-            y += 25
+            y += 24
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
 
     def _set_pad(self, pos):
