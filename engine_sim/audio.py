@@ -438,6 +438,7 @@ class Synthesizer:
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
             "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
             "road_noise": 0.22,   # tyre/road rumble that swells with road speed
+            "gear_grain": 1.0,    # gear-driven valvetrain whir mix (x eng.gear_grain)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -466,6 +467,7 @@ class Synthesizer:
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         self._cold = 1.0          # cold-start factor (1 cold .. 0 warmed up)
+        self._gear_phase = 0.0    # gear-mesh phase for the gear-grain whir
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
@@ -641,6 +643,9 @@ class Synthesizer:
             self._roadn_lp = butter(2, 520.0 / (sr / 2), btype="low")
             self._roadn_zi = np.zeros(2)
             self._roadn_lp_zi = np.zeros(2)
+            # gear-grain: band-passed noise for the gear-driven valvetrain whir
+            self._grain_bp = _bandpass(3200.0, 0.7, sr)
+            self._grain_zi = np.zeros(2)
             # (Step 4) pipe-wall metal resonance formants — a thin, small-bore pipe
             # rings higher and sharper; a thick, big-bore pipe lower and tighter.
             # The MATERIAL shifts the ring: titanium (stiff & light) sings high and
@@ -1061,6 +1066,22 @@ class Synthesizer:
         if _HAVE_SCIPY and self._thunder is not None:
             sig, self._thunder_zi = lfilter(self._thunder[0], self._thunder[1],
                                             sig, zi=self._thunder_zi)
+        # gear-grain: gear-driven valvetrain / timing-gear WHIR — a fine, dense
+        # band-passed noise modulated by a gear-mesh tone, so it's a 'grind-like'
+        # (but not actual grinding) grain riding ON the smooth note.  Rises with
+        # rpm; per-engine amount = eng.gear_grain (Ferrari V12s etc.).
+        gg = getattr(sim.engine, "gear_grain", 0.0) * P.get("gear_grain", 1.0)
+        if _HAVE_SCIPY and gg > 1e-3 and dps > 1e-12:
+            rf = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            f_mesh = max(sim.rpm / 60.0 * 8.5, 50.0)        # ~8.5x rev = a fine whir
+            inc = 2.0 * math.pi * f_mesh / self.sample_rate
+            ph = self._gear_phase + inc * np.arange(1, frames + 1)
+            self._gear_phase = float(ph[-1] % (2.0 * math.pi))
+            am = 0.55 + 0.45 * np.sin(ph)                   # gear-mesh modulation
+            ngr = self._rng.standard_normal(frames)
+            ngr, self._grain_zi = lfilter(self._grain_bp[0], self._grain_bp[1],
+                                          ngr, zi=self._grain_zi)
+            sig = sig + gg * (0.04 + 0.34 * rf) * ngr * am
 
         # --- (7b) full-system round-trip reflection: a weak, low-passed echo at
         # the pipe's round-trip time (2 x system length / sound speed) feeds a bit

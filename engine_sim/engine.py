@@ -155,6 +155,7 @@ class Engine:
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
     is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
     is_w: bool = False               # W engine (two narrow-vee banks) -> draw 4 rows
+    is_radial: bool = False          # aircraft radial -> draw cylinders in a star
     has_gpf: bool = False            # came with a gasoline particulate filter
     has_cat: bool = True             # came with a catalytic converter
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
@@ -166,6 +167,8 @@ class Engine:
                                      #   breathing (+/-3%) variation in the voicing model
     backpressure_coupling: float = 0.5  # 0..1: how strongly each exhaust pulse loads the
                                      #   next cylinder to fire (cyl-to-cyl strong/weak beat)
+    gear_grain: float = 0.0          # gear-driven valvetrain/timing-gear whir: a fine,
+                                     #   dense 'grind-like' grain (Ferrari V12 etc.), 0=off
 
     def __post_init__(self) -> None:
         # Physically derive the exhaust 'pop' resonance pitch from the MEAN
