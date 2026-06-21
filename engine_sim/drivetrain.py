@@ -203,7 +203,27 @@ class Drivetrain:
                 self._shift_lock = 0.30
             return
 
-        # --- single-clutch / manual / AT: a genuine declutch + re-engage ------
+        # --- TORQUE-CONVERTER AUTO: a fluid coupling never fully decouples, so an
+        # AT shift is a SOFT, overlapping clutch-to-clutch handover smoothed by the
+        # converter — slushy, no torque hole, no kick.  (It used to fully declutch
+        # like a manual, which is what felt wrong.)  Some residual slip stays until
+        # the converter re-locks at cruise.
+        if self.gearbox_type == "at":
+            if self._shift_phase == 1:
+                self.gear = self._pending_gear
+                self._pending_gear = None
+                self._shift_phase = 3
+            if self._shift_elapsed < 0.14:
+                self._ease_clutch(0.42, dt, 7.0)   # converter slips through the swap
+            else:
+                self._ease_clutch(0.92, dt, 2.3)   # slow, soft, slushy feed-in
+            if self.clutch > 0.90 or self._shift_elapsed > 0.75:
+                self._shifting = False
+                self._shift_phase = 0
+                self._shift_lock = 0.55
+            return
+
+        # --- single-clutch / manual: a genuine declutch + re-engage ----------
         dc_rate, tol_frac, timeout, re_rate, lock = self._SHIFT_PROFILES.get(
             self.gearbox_type, self._SHIFT_PROFILES["single"])
         downshift = self._pending_gear is not None and self._pending_gear < self.gear
