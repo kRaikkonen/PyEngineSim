@@ -135,6 +135,7 @@ class App:
         self._win_size = (WIDTH, HEIGHT)
         self._draw_offset = (0, 0)
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
+        self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
         self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
@@ -1040,14 +1041,27 @@ class App:
         supercharger visualiser when the engine is forced-induction."""
         t = self.sim.telemetry()
         eng = self.sim.engine
-        db = self._exhaust_db()
+        # Ease every reading so the needles glide instead of snapping — O2/CO2 in
+        # particular jump hard on the brief fuel-cuts of each gearshift, which
+        # made the needles spasm.  Slower ease on those two.
+        sm = self._tele_smooth
+
+        def ez(k, v, rate=0.12):
+            sm[k] = sm.get(k, v) + (v - sm.get(k, v)) * rate
+            return sm[k]
+        mapk = ez('map', t['map_kpa'])
+        ve = ez('ve', t['ve_pct'])
+        afr = ez('afr', t['afr'])
+        o2 = ez('o2', t['o2_pct'], 0.05)
+        co2 = ez('co2', t['co2_pct'], 0.05)
+        db = ez('db', self._exhaust_db())
         # (label, value-text, fraction 0..1, danger?)
         gauges = [
-            ("MAP", f"{t['map_kpa']:.0f}", t['map_kpa'] / 250.0, t['map_kpa'] > 200),
-            ("VE", f"{t['ve_pct']:.0f}%", t['ve_pct'] / 120.0, False),
-            ("AFR", f"{t['afr']:.1f}", (t['afr'] - 10.0) / 6.0, t['afr'] < 11.5),
-            ("O2", f"{t['o2_pct']:.1f}", t['o2_pct'] / 21.0, False),
-            ("CO2", f"{t['co2_pct']:.0f}%", t['co2_pct'] / 16.0, False),
+            ("MAP", f"{mapk:.0f}", mapk / 250.0, mapk > 200),
+            ("VE", f"{ve:.0f}%", ve / 120.0, False),
+            ("AFR", f"{afr:.1f}", (afr - 10.0) / 6.0, afr < 11.5),
+            ("O2", f"{o2:.1f}", o2 / 21.0, False),
+            ("CO2", f"{co2:.0f}%", co2 / 16.0, False),
             ("dB", f"{db:.0f}", (db - 60.0) / 60.0, db > 108),
         ]
         r = 30
@@ -1157,37 +1171,76 @@ class App:
             self.screen.blit(self.font_small.render(act, True, DIM), (cx + 64, ry))
 
     def _draw_tach(self, cx, cy, r, rpm, redline):
-        # Sweep from 225deg down to -45deg (270deg span).
-        start, end = math.radians(225), math.radians(-45)
-        span = start - end
+        """A glossy iOS 6 / aircraft-style tachometer dial."""
+        cx, cy = int(cx), int(cy)
+        start = math.radians(225)
+        span = math.radians(270)
         max_rpm = math.ceil((redline + 500) / 1000.0) * 1000
 
-        # Tick marks + redline arc
-        for k in range(0, int(max_rpm) + 1, 1000):
+        def pt(rad, ang):
+            return (cx + rad * math.cos(ang), cy - rad * math.sin(ang))
+
+        # metal bezel (beveled ring) + dark glossy face
+        pygame.draw.circle(self.screen, (38, 41, 48), (cx, cy), r + 12)
+        pygame.draw.circle(self.screen, (120, 127, 142), (cx, cy), r + 12, 3)
+        pygame.draw.circle(self.screen, (80, 86, 98), (cx, cy), r + 6)
+        pygame.draw.circle(self.screen, (158, 166, 180), (cx, cy), r + 6, 1)
+        pygame.draw.circle(self.screen, (20, 22, 27), (cx, cy), r)
+        pygame.draw.circle(self.screen, (8, 9, 12), (cx, cy), r, 2)
+
+        # redline band
+        seg = 26
+        for i in range(seg + 1):
+            k = redline + (max_rpm - redline) * i / seg
             a = start - span * (k / max_rpm)
+            pygame.draw.line(self.screen, (212, 60, 52), pt(r - 3, a), pt(r - 8, a), 4)
+
+        # ticks (every 500) + numbers (every 1000)
+        for k in range(0, int(max_rpm) + 1, 500):
+            a = start - span * (k / max_rpm)
+            major = (k % 1000 == 0)
             over = k >= redline
-            r0 = r - (14 if k % 1000 == 0 else 8)
-            col = WARN if over else DIM
-            p0 = (cx + r0 * math.cos(a), cy - r0 * math.sin(a))
-            p1 = (cx + r * math.cos(a), cy - r * math.sin(a))
-            pygame.draw.line(self.screen, col, p0, p1, 3)
-            num = self.font_small.render(str(k // 1000), True, col)
-            lx = cx + (r - 32) * math.cos(a) - 6
-            ly = cy - (r - 32) * math.sin(a) - 8
-            self.screen.blit(num, (lx, ly))
+            r0 = r - (16 if major else 8)
+            col = WARN if over else (214, 219, 228) if major else (110, 116, 128)
+            pygame.draw.line(self.screen, col, pt(r0, a), pt(r - 3, a),
+                             3 if major else 1)
+            if major:
+                num = self.font.render(str(k // 1000), True, col)
+                nx, ny = pt(r - 36, a)
+                self.screen.blit(num, (nx - num.get_width() // 2,
+                                       ny - num.get_height() // 2))
 
-        pygame.draw.circle(self.screen, (44, 48, 56), (cx, cy), r, 3)
+        # glass gloss highlight (upper arc)
+        gl = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+        pygame.draw.ellipse(gl, (255, 255, 255, 20),
+                            (int(r * 0.22), int(r * 0.08), int(r * 1.56), int(r * 0.92)))
+        self.screen.blit(gl, (cx - r, cy - r))
 
-        # Needle
+        # tapered needle + counterweight tail
         frac = min(max(rpm / max_rpm, 0.0), 1.0)
         a = start - span * frac
-        tip = (cx + (r - 18) * math.cos(a), cy - (r - 18) * math.sin(a))
-        needle_col = WARN if rpm >= redline else ACCENT
-        pygame.draw.line(self.screen, needle_col, (cx, cy), tip, 4)
-        pygame.draw.circle(self.screen, INK, (cx, cy), 8)
+        ct, st = math.cos(a), math.sin(a)
+        col = WARN if rpm >= redline else ACCENT
+        tip = (cx + (r - 16) * ct, cy - (r - 16) * st)
+        b1 = (cx + st * 5, cy + ct * 5)
+        b2 = (cx - st * 5, cy - ct * 5)
+        pygame.draw.polygon(self.screen, col, [tip, b1, b2])
+        pygame.draw.line(self.screen, col, (cx, cy), (cx - 20 * ct, cy + 20 * st), 4)
 
-        cap = self.font_small.render("x1000 rpm", True, DIM)
-        self.screen.blit(cap, (cx - 34, cy + 40))
+        # chrome hub
+        self.screen.blit(self._grad_surf(22, 22, (224, 230, 238), (118, 126, 140),
+                                         11, gloss=True), (cx - 11, cy - 11))
+        pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), 11, 1)
+
+        # digital rpm window
+        win = pygame.Rect(cx - 46, cy + int(r * 0.44), 92, 26)
+        self.screen.blit(self._grad_surf(win.w, win.h, (14, 16, 20), (32, 35, 42), 6),
+                         win.topleft)
+        pygame.draw.rect(self.screen, (6, 7, 10), win, 1, border_radius=6)
+        rt = self.font.render(f"{int(rpm):>5d}", True, col)
+        self.screen.blit(rt, (win.centerx - rt.get_width() // 2, win.y + 4))
+        cap = self.font_small.render("rpm   x1000", True, DIM)
+        self.screen.blit(cap, (cx - cap.get_width() // 2, win.bottom + 4))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
         col = on_col if on else off_col
