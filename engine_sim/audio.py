@@ -515,7 +515,7 @@ class Synthesizer:
             self._shear_hp_zi = np.zeros(2)
             # (Step 3) cylinder-head / exhaust-port cavity: a gentle low-pass that
             # 'rounds' the raw pulse so it reads as metal, not a digital click.
-            self._head_lp = butter(2, min(7200.0, sr * 0.45) / (sr / 2), btype="low")
+            self._head_lp = butter(2, min(11000.0, sr * 0.45) / (sr / 2), btype="low")
             self._head_lp_zi = np.zeros(2)
             # low-pass on the tail round-trip reflection (only lows reflect strongly)
             self._tail_lp = butter(2, 720.0 / (sr / 2), btype="low")
@@ -616,6 +616,9 @@ class Synthesizer:
             crank = self._audio_crank + dps * idx
             p_open = sim.blowdown_pressure() - 1.05 * P_ATM
             strength = math.copysign(math.sqrt(abs(p_open)), p_open) / math.sqrt(6 * P_ATM)
+            # load 0..1 from the cylinder pressure at valve-open: drives how steep
+            # and tall the blowdown edge is (high load = sharper edge = more scream).
+            load = min(max(abs(strength) * 1.25, 0.08), 1.0)
             self._jit += (1.0 + 0.12 * (self._rng.random(len(self._jit)) - 0.5)
                           - self._jit) * 0.25
 
@@ -631,21 +634,24 @@ class Synthesizer:
                 phi = np.mod(crank + off + self._header_offset[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
-                ramp = np.clip(d / self.params["attack_deg"], 0.0, 1.0)
-                ramp = 0.5 - 0.5 * np.cos(ramp * math.pi)   # blunt (soft) attack
                 dd = np.clip(d, 0.0, None)
-                # Two-stage exhaust pulse (real valve behaviour) instead of one
-                # flat blat: (1) BLOWDOWN — the valve cracks open and the still-high
-                # cylinder pressure dumps in a steep, short, HF-rich burst (the
-                # sharp leading edge); (2) DISPLACEMENT — the rising piston then
-                # pushes the rest of the gas out as a broader, lower, later hump
-                # (the body / low end).  Decays are in CRANK DEGREES, so the whole
-                # event is fixed-angle and naturally sounds sharper/brighter as rpm
-                # climbs and fatter when it drops — the load/rev character is real.
-                tau_blow = max(0.34 * tau_j, 5.0)
-                blow = ramp * np.exp(-dd / tau_blow)
+                # Two-stage exhaust pulse instead of one flat blat:
+                # (1) BLOWDOWN — the valve cracks and the still-high cylinder
+                #   pressure bursts out as a HARD edge that rises in just a couple
+                #   of audio SAMPLES (a TIME, not a fixed crank angle).  At high
+                #   load the edge is sharper and taller, so the metallic HF scream
+                #   grows straight from the SOURCE and tracks the throttle — never a
+                #   global treble boost (which would just hiss).
+                rise_deg = max((2.0 + 4.0 * (1.0 - load)) * dps, 1e-4)
+                hard = np.clip(d / rise_deg, 0.0, 1.0)        # linear hard edge
+                tau_blow = max(0.30 * tau_j, 4.0)
+                blow = (0.7 + 1.0 * load) * hard * np.exp(-dd / tau_blow)
+                # (2) DISPLACEMENT — the rising piston then pushes the rest out: a
+                #   soft, broad, lower, later hump (the body / low end).
+                soft = np.clip(d / self.params["attack_deg"], 0.0, 1.0)
+                soft = 0.5 - 0.5 * np.cos(soft * math.pi)
                 tau_disp = tau_j * 1.5
-                disp = ramp * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
+                disp = soft * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
                 pulse = np.where(inwin, (blow + 0.7 * disp) * close * amp_j, 0.0)
                 # delay this cylinder's pulse down its own runner (length / live
@@ -751,7 +757,7 @@ class Synthesizer:
         # duller while the engine is still cold.
         if _HAVE_SCIPY:
             if self._cold > 0.02:
-                hc = min(7200.0 * (1.0 - 0.22 * self._cold), self.sample_rate * 0.45)
+                hc = min(11000.0 * (1.0 - 0.30 * self._cold), self.sample_rate * 0.45)
                 bhd, ahd = butter(2, hc / (self.sample_rate / 2), btype="low")
                 sig, self._head_lp_zi = lfilter(bhd, ahd, sig, zi=self._head_lp_zi)
             else:
@@ -770,6 +776,10 @@ class Synthesizer:
         # --- (5+6) resonator + muffler: DC-block, de-drone notch, valve roll-off
         if _HAVE_SCIPY:
             sig, self._hp_zi = lfilter(self._hp[0], self._hp[1], sig, zi=self._hp_zi)
+            # active-exhaust-valve BYPASS tap: this bright, un-muffled signal is
+            # crossfaded back in as the flap cracks open with rpm (below) — the
+            # straight-through path around the muffler.
+            bypass = sig
             # (5) resonator: Helmholtz used as a NOTCH (Akrapovic-style: remove the
             # drone boom, do not add yet another resonance).
             bH, aH = _peaking(f_helm, 1.2, -4.0, self.sample_rate)
@@ -794,6 +804,12 @@ class Synthesizer:
                 d2 = self._muff_len[1] / c_runner * sr
                 sig = (sig + 0.32 * mcomb * self._muff_dl1.process(sig, d1)
                        + 0.22 * mcomb * self._muff_dl2.process(sig, d2))
+            # active exhaust valve: above ~40% redline the bypass flap cracks open
+            # and the bright straight-through tap is crossfaded back in — the note
+            # gets louder and opens up at the top end, exactly like a valved system.
+            vo = min(max((self._valve - 0.40) / 0.5, 0.0), 1.0) * 0.5
+            if vo > 1e-3:
+                sig = (1.0 - vo) * sig + vo * bypass
         else:
             sig = np.diff(sig, prepend=sig[:1])
 
