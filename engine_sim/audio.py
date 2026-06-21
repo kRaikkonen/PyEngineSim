@@ -63,10 +63,13 @@ _POWER_CHORD = (
     (3.0, 0.38),    # fifth + octave (top sparkle, kept moderate)
 )
 
-# A DOMINANT-7th chord voicing for the turbo spool / gear whine — stacking the
-# root, major third, fifth and (flat) seventh thickens the single brassy tone
-# into a fuller, less 'small-trumpet' sound.  (ratios vs the whine fundamental)
-_DOM7 = ((1.0, 1.0), (1.25, 0.5), (1.5, 0.62), (1.78, 0.42))
+# Whine voicings (ratios vs the whine fundamental).
+_PERFECT_FIFTH = ((1.0, 1.0), (1.5, 0.6))                 # turbo spool: root + 5th
+_AUG_TRIAD = ((1.0, 1.0), (1.26, 0.5), (1.587, 0.45))     # gear whine: augmented triad
+# Hidden 'o' easter egg: the turbo's perfect fifth gets a root-bass layer and a
+# DOMINANT-7th (V7) hung on top; the blow-off then resolves as a B-diminished.
+_TURBO_V7 = ((0.5, 0.55), (1.0, 1.0), (1.25, 0.5), (1.5, 0.62), (1.78, 0.42))
+_BDIM_HZ = (246.94, 293.66, 349.23)                       # B - D - F  (Bdim triad)
 
 # Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
 VALVE_OPEN = 505.0
@@ -328,6 +331,8 @@ class Synthesizer:
         self._pop_len = 1         # length of the current pop (samples)
         self._pop_f0 = 180.0      # pop base pitch (glides down)
         self._pop_amp = 0.0       # pop strength
+        self.o_chord = False      # hidden 'o' easter egg: turbo V7 + Bdim blow-off
+        self._bdim_phase = 0.0    # Bdim blow-off oscillator phase
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
@@ -710,8 +715,10 @@ class Synthesizer:
             if bfrac > 0.02:
                 f = 900.0 + bfrac * 5200.0                    # whistle rises with boost
                 amp = tv * bfrac * 0.30
-                # dominant-7th stack thickens the single brassy whistle tone
-                out += amp * self._whine(min(f, sr * 0.45), frames, list(_DOM7))
+                # perfect fifth (root + 5th); the hidden 'o' mode adds a root
+                # bass layer + a dominant-7th (V7) hung on top.
+                voicing = _TURBO_V7 if self.o_chord else _PERFECT_FIFTH
+                out += amp * self._whine(min(f, sr * 0.45), frames, list(voicing))
                 out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
             # Throttle snaps shut while on boost -> the lift-off sound.  Which
             # one you hear depends on where the pressurised air goes:
@@ -721,7 +728,19 @@ class Synthesizer:
             #     surge, the rapid 'stu-tu-tu-tu' flutter.
             if (self._prev_throttle - sim.throttle) > 0.25 and sim.boost > 0.15:
                 self._bov_env = 1.0
-            if self._bov_env > 1e-3:
+                self._bdim_phase = 0.0
+            if self._bov_env > 1e-3 and self.o_chord:
+                # easter egg: the blow-off resolves as a B-diminished chord
+                n = np.arange(frames)
+                env = np.exp(-n / (sr * 0.18)) * self._bov_env
+                chord = np.zeros(frames, dtype=np.float64)
+                inc = 2.0 * math.pi / sr
+                for fz in _BDIM_HZ:
+                    chord += np.sin(self._bdim_phase * (fz / _BDIM_HZ[0]) + inc * fz * n)
+                self._bdim_phase = (self._bdim_phase + inc * _BDIM_HZ[0] * frames)
+                out += (tv * 0.7) * chord * env
+                self._bov_env *= math.exp(-frames / (sr * 0.2))
+            elif self._bov_env > 1e-3:
                 n = np.arange(frames)
                 noise = self._rng.standard_normal(frames)
                 if self.flutter:
@@ -749,9 +768,9 @@ class Synthesizer:
             wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
             f = wheel_rps * dt.final_drive * 9.0             # final-drive mesh ~ speed
             if 30.0 < f < sr * 0.45:
-                # dominant-7th stack for a thicker, less small-trumpet whine
+                # augmented-triad voicing (root + maj3 + aug5) for the gear whine
                 gw += (gv * 0.4) * self._whine(
-                    f, frames, list(_DOM7), phase_attr="_gearbox_phase")
+                    f, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
 
         # --- hybrid: electric-motor whine + e-turbo e-compressor whine ----------
         hv = P["hybrid_vol"]

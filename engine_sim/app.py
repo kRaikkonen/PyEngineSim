@@ -594,6 +594,9 @@ class App:
                     self.sim.ignition_on = not self.sim.ignition_on
                 elif e.key == pygame.K_m:
                     self.synth.volume = 0.0 if self.synth.volume > 0 else 1.0
+                elif e.key == pygame.K_o:                # hidden: turbo V7 + Bdim
+                    self.synth.o_chord = not self.synth.o_chord
+                    self._flash("♪ V7" if self.synth.o_chord else "")
                 elif e.key == pygame.K_x:
                     if not self.sim.drivetrain.auto:
                         self.sim.drivetrain.shift_up()
