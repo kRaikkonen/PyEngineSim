@@ -286,9 +286,9 @@ def lamborghini_diablo() -> Engine:
         closed_map_fraction=0.10, friction_static=10.0, starter_torque=200.0,
         # rawer / harder than the Murcielago via the EXHAUST SYSTEM (physics):
         # shorter, more open primaries + far less muffler.  Pitch auto-derives.
-        exhaust_tone=0.0,
-        exhaust_primary_m=0.56, exhaust_total_m=2.05, exhaust_radius_m=0.027,
-        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0016,
+        exhaust_tone=56.0,               # rawer, deeper, analog '90s V12 growl
+        exhaust_primary_m=0.58, exhaust_total_m=2.1, exhaust_radius_m=0.029,
+        exhaust_channels=2, exhaust_openness=0.83, muffler_volume_m3=0.0024,
         gear_ratios=[2.31, 1.58, 1.24, 0.94, 0.76], final_drive=4.09,
         vehicle_mass=1625.0, wheel_radius=0.34, clutch_capacity=720.0,
         gearbox_type="manual",
@@ -536,9 +536,10 @@ def lamborghini_aventador_v12() -> Engine:
         # Hard, bright, raspy top-end — the Aventador's signature metallic howl.
         # Short primaries + open, near-unmuffled pipe set it apart from the
         # deeper Murcielago/Zonda and the smoother LaFerrari.
-        exhaust_tone=84.0,
-        exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.0235,
-        exhaust_channels=2, exhaust_openness=0.95, muffler_volume_m3=0.0012,
+        exhaust_tone=98.0,               # hard, metallic, sharp L539 scream
+        exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.020,
+        exhaust_channels=2, exhaust_openness=0.97, muffler_volume_m3=0.0011,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[2.93, 2.15, 1.66, 1.32, 1.06, 0.86, 0.72], final_drive=3.91,
         vehicle_mass=1575.0, wheel_radius=0.35, clutch_capacity=720.0,
         gearbox_type="single",   # ISR single-clutch — the brutal Aventador kick
@@ -839,9 +840,9 @@ def porsche_992_gt3() -> Engine:
         flywheel_inertia=0.17, redline_rpm=9000, idle_rpm=900,
         heat_release_k=4.2, ve_peak_frac=0.72, closed_map_fraction=0.12,
         friction_static=7.0, starter_torque=170.0,
-        exhaust_tone=86.0,
-        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
-        exhaust_channels=2, exhaust_openness=0.86, muffler_volume_m3=0.0018,
+        exhaust_tone=80.0,               # refined modern GT3 flat-six (vs DLS wail)
+        exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.026,
+        exhaust_channels=2, exhaust_openness=0.83, muffler_volume_m3=0.0020,
         wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.91, 2.29, 1.65, 1.30, 1.08, 0.88, 0.62], final_drive=3.97,
         vehicle_mass=1435.0, wheel_radius=0.34, clutch_capacity=560.0,
@@ -1141,9 +1142,10 @@ def singer_dls_williams_flat6() -> Engine:
         flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=900,
         heat_release_k=4.3, ve_peak_frac=0.72, closed_map_fraction=0.12,
         friction_static=7.0, starter_torque=170.0,
-        exhaust_tone=94.0,
-        exhaust_primary_m=0.48, exhaust_total_m=1.85, exhaust_radius_m=0.024,
-        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0014,
+        exhaust_tone=104.0,              # the screaming Williams-built 4.0 wail
+        exhaust_primary_m=0.46, exhaust_total_m=1.8, exhaust_radius_m=0.0195,
+        exhaust_channels=2, exhaust_openness=0.97, muffler_volume_m3=0.0012,
+        wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.50, 2.12, 1.58, 1.24, 1.00, 0.82], final_drive=3.44,
         vehicle_mass=1170.0, wheel_radius=0.33, clutch_capacity=520.0,
         gearbox_type="manual",
