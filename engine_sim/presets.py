@@ -1262,7 +1262,7 @@ def bugatti_veyron_w16() -> Engine:
         induction="turbo", boost_bar=1.0, turbo_lag=0.45,
         gear_ratios=[2.99, 2.05, 1.52, 1.18, 0.94, 0.76, 0.62], final_drive=2.81,
         vehicle_mass=1888.0, wheel_radius=0.34, clutch_capacity=1300.0,
-        gearbox_type="dct",
+        gearbox_type="dct", is_w=True,
     )
 
 
@@ -1292,7 +1292,7 @@ def bentley_continental_w12() -> Engine:
         induction="turbo", boost_bar=0.7, turbo_lag=0.45,
         gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
         final_drive=2.92, vehicle_mass=2244.0, wheel_radius=0.34,
-        clutch_capacity=1100.0, gearbox_type="dct",
+        clutch_capacity=1100.0, gearbox_type="dct", is_w=True,
     )
 
 

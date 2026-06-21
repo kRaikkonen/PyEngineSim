@@ -154,6 +154,7 @@ class Engine:
     valvetrain: str = "dohc"         # dohc | sohc | ohv -> breathing + tick
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
     is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
+    is_w: bool = False               # W engine (two narrow-vee banks) -> draw 4 rows
     has_gpf: bool = False            # came with a gasoline particulate filter
     has_cat: bool = True             # came with a catalytic converter
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default

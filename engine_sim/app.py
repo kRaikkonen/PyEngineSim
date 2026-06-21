@@ -124,6 +124,7 @@ TR_ZH = {
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
     "Pipe wall (anti-horn)": "管壁厚度(去小号)",
+    "Tailpipe air-shear": "尾管气流剪切",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -162,6 +163,7 @@ SLIDER_DEFS = [
     ("pop_muff", "Pop muffle", 0.0, 1.0),
     ("pops_reverb", "Pop reverb", 0.0, 0.6),
     ("wall_thickness", "Pipe wall (anti-horn)", 0.0, 1.0),
+    ("shear", "Tailpipe air-shear", 0.0, 0.5),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
     ("eq_high", "EQ high (dB)", -12.0, 12.0),
@@ -1014,11 +1016,15 @@ class App:
             cxx = rect.centerx
             mtop, mbot = rect.y + 306, rect.bottom - 48
             dy = (mbot - mtop) / ns
-            tilt = max(8.0, min(22.0, (90.0 - maxang) * 0.30))   # gentle up-angle
-            trad = math.radians(tilt)
-            width = min(dy * 0.60, 38.0)
+            # A V fans each side to a single up-angle; a W staggers each bank into
+            # TWO interleaved rows (cylinders alternately tilt up / down), giving
+            # the real \/\/ four-row W cross-section instead of a plain V.
+            is_w = getattr(eng, "is_w", False)
+            trad = math.radians(max(8.0, min(22.0, (90.0 - maxang) * 0.30)))
+            wob = math.radians(26.0)                     # W: up/down stagger size
+            width = min(dy * (0.46 if is_w else 0.60), 38.0)
             length = min((rect.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
-                         dy * 2.7, 172.0)
+                         dy * (1.55 if is_w else 2.7), 172.0)
             # vertical metallic crankshaft behind every journal (strip-shaded)
             cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
             chw = max(width * 0.30, 9.0)
@@ -1043,10 +1049,13 @@ class App:
                             if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                             else 0.0)
                     side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
-                    a = side * (math.pi / 2.0 - trad)        # point left / right, up
+                    # V: every cylinder of a bank tilts up by trad.  W: alternate
+                    # up / down by station so each side splits into two rows (\/\/).
+                    t = (wob if (s % 2 == 0) else -wob) if is_w else trad
+                    a = side * (math.pi / 2.0 - t)           # left/right, up or down
                     self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
-                    lx = cxx + math.sin(a) * (length + 14)
-                    ly = jy - math.cos(a) * (length + 14)
+                    lx = cxx + math.sin(a) * (length + 16)
+                    ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
             fo = "-".join(str(x) for x in eng.firing_order)

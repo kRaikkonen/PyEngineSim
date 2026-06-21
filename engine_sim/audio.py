@@ -310,6 +310,7 @@ class Synthesizer:
             "turbo_vol": 0.45,    # turbo spool whistle + BOV (was 0.6 -> 75%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
+            "shear": 0.10,        # tail-pipe air-shear roar at the exit (mass-flow)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -440,6 +441,13 @@ class Synthesizer:
             self._road_sh = _peaking(3400.0, 0.7, -5.5, sr)
             self._road_lp_zi = np.zeros(2)
             self._road_sh_zi = np.zeros(2)
+            # tailpipe air-shear: high-pressure gas tearing into still air at the
+            # exit — a broadband hiss/roar swelling with exhaust mass-flow, the
+            # OUTERMOST layer you hear at the back of the car.
+            self._shear_bp = _bandpass(2600.0, 0.6, sr)
+            self._shear_hp = butter(2, 900.0 / (sr / 2), btype="high")
+            self._shear_bp_zi = np.zeros(2)
+            self._shear_hp_zi = np.zeros(2)
         self._audio_crank = 0.0
 
     def _rebuild_for_rate(self, sr: int):
@@ -619,19 +627,42 @@ class Synthesizer:
             fizz += fizz_chans[ci]
         sig = bang + wet + P["turbulence"] * (fizz * inv)
 
-        # --- voice shaping: DC-block, de-drone notch, radiation roll-off -----
+        # ================== EXHAUST PATH, IN PHYSICAL ORDER ==================
+        # Head -> tail, the way the gas actually travels (so the chain matches a
+        # real car):
+        #   1. combustion bang + exhaust-valve impact   -> dry + crack (above)
+        #   2. head / port cavity reverb                -> src_verb     (above)
+        #   3. header (primary runner) resonance + wall -> wet + wall    (above/below)
+        #   4. CATALYTIC CONVERTER  (honeycomb absorbs the highs) -- BEFORE muffler
+        #   5. resonator  (Helmholtz NOTCH, kills the boom drone)
+        #   6. main muffler  (expansion low-pass + low-end body)
+        #   7. tail-pipe wall thickness (de-honk, see wall_thickness below)
+        #   8. tail-pipe air-shear at the exit (broadband roar into open air)
+        #   9. room / environment reverb  (the space — added last, below)
+
+        # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
+        # straight-pipe top end FIRST, upstream of the muffler — a stock car with
+        # a cat can't sound like an open header no matter what the muffler does.
+        if self.road_pipe and _HAVE_SCIPY:
+            sig, self._road_lp_zi = lfilter(self._road_lp[0], self._road_lp[1],
+                                            sig, zi=self._road_lp_zi)
+            sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
+                                            sig, zi=self._road_sh_zi)
+
+        # --- (5+6) resonator + muffler: DC-block, de-drone notch, valve roll-off
         if _HAVE_SCIPY:
             sig, self._hp_zi = lfilter(self._hp[0], self._hp[1], sig, zi=self._hp_zi)
-            # Helmholtz used as a NOTCH (Akrapovic-style: remove the drone, do
-            # not add yet another resonance).
+            # (5) resonator: Helmholtz used as a NOTCH (Akrapovic-style: remove the
+            # drone boom, do not add yet another resonance).
             bH, aH = _peaking(f_helm, 1.2, -4.0, self.sample_rate)
             sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
-            # variable-valve post low-pass: muffled at idle, wide open at redline
+            # (6) muffler: variable-valve expansion low-pass — muffled at idle,
+            # wide open at redline.
             sr = self.sample_rate
             cutoff = min(self._post_fc, sr * 0.45)
             blp, alp = butter(2, cutoff / (sr / 2), btype="low")
             sig, self._lp_zi = lfilter(blp, alp, sig, zi=self._lp_zi)
-            # boost the low end when the valve is shut -> the heavy low-rpm roar
+            # ...and its expansion-chamber low-end body when the valve is shut.
             if self._valve < 0.75:
                 bL, aL = _peaking(110.0, 0.6, (1.0 - self._valve) * 7.0, sr)
                 sig, self._lowboost_zi = lfilter(bL, aL, sig, zi=self._lowboost_zi)
@@ -664,9 +695,9 @@ class Synthesizer:
             sig = sig + ind + gw
             sig = sig + self._overrun_pops(frames)   # decel pops & bangs
 
-        # --- pipe-wall thickness: kill the 'small-trumpet' shriek WITHOUT losing
-        # low end.  The brass honk lives in a ~1.8 kHz formant — scoop THAT band
-        # and add a touch of low-shelf body, so the note gets thicker, not thinner.
+        # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
+        # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
+        # scoop THAT band and add a touch of low-shelf body (thicker, not thinner).
         wt = P["wall_thickness"]
         if _HAVE_SCIPY and wt > 1e-3:
             b, a = _peaking(1850.0, 1.1, -16.0 * wt, self.sample_rate)   # de-honk
@@ -674,13 +705,22 @@ class Synthesizer:
             b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
             sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
 
-        # --- bent stainless road exhaust + cat: absorb the raw straight-pipe
-        # high frequencies so an ordinary car doesn't sound like an open header.
-        if self.road_pipe and _HAVE_SCIPY:
-            sig, self._road_lp_zi = lfilter(self._road_lp[0], self._road_lp[1],
-                                            sig, zi=self._road_lp_zi)
-            sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
-                                            sig, zi=self._road_sh_zi)
+        # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
+        # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
+        # This is the outermost 'whoosh' you hear standing behind the car.
+        if _HAVE_SCIPY and dps > 1e-12:
+            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            flow = rpm_frac * (0.35 + 0.65 * sim.throttle)
+            shear_gain = P.get("shear", 0.10) * flow
+            if shear_gain > 1e-4:
+                ns_ = self._rng.standard_normal(frames)
+                ns_, self._shear_bp_zi = lfilter(self._shear_bp[0], self._shear_bp[1],
+                                                 ns_, zi=self._shear_bp_zi)
+                ns_, self._shear_hp_zi = lfilter(self._shear_hp[0], self._shear_hp[1],
+                                                 ns_, zi=self._shear_hp_zi)
+                if self.road_pipe:                 # a cat car's tip is breathier
+                    shear_gain *= 0.7
+                sig = sig + shear_gain * ns_
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
