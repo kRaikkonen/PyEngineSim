@@ -245,6 +245,29 @@ class Reverb:
         return (1.0 - self.mix) * x + self.mix * acc
 
 
+class _BlockDelay:
+    """Vectorised ring-buffer delay line.  The delay is a READ OFFSET (samples)
+    that may change every block, so it can track the live (temperature-dependent)
+    speed of sound — the delay 'breathes' with rpm/load instead of being frozen.
+    Feed-forward read only (no recursion), so it is always stable and needs no
+    Python sample loop."""
+
+    def __init__(self, max_delay):
+        self.buf = np.zeros(int(max_delay) + 4, dtype=np.float64)
+        self.wp = 0
+
+    def process(self, x, delay):
+        n = len(x)
+        N = len(self.buf)
+        d = int(min(max(delay, 1), N - 2))
+        wi = (self.wp + np.arange(n)) % N
+        self.buf[wi] = x                              # write this block first
+        ri = (self.wp + np.arange(n) - d) % N         # ...then read it delayed
+        out = self.buf[ri]
+        self.wp = (self.wp + n) % N
+        return out
+
+
 class Synthesizer:
     """Streams physics-driven engine audio from a live :class:`Simulator`."""
 
@@ -386,18 +409,37 @@ class Synthesizer:
         # header primary length with a per-cylinder gradient along each bank, so it
         # works for every preset without hand-tuning 47 of them.
         prim = max(eng.exhaust_primary_m, 0.15)
-        c_gas = 500.0                                   # hot-gas speed (m/s), nominal
+        # Equal-length headers (race / high-revving exotics) keep every runner the
+        # same length -> pulses stack tightly -> a clean, linear, high scream.
+        # Unequal headers (muscle / road V8s) spread the lengths -> staggered
+        # arrival -> the low-rpm 'boil' / rumble.  Derived from the car's own
+        # nature so no preset needs hand-editing.
+        self._equal_headers = (eng.straight_cut or eng.gearbox_type == "single"
+                               or eng.redline_rpm >= 8400)
+        spread = 0.10 if self._equal_headers else 0.95
         seen, posn = {}, []
         for c in eng.cylinders:
             ch = 0 if (self._nchan == 1 or c.bank_angle_deg < 0) else 1
             posn.append(seen.get(ch, 0)); seen[ch] = seen.get(ch, 0) + 1
-        self._runner_samp = []
+        # store each runner's LENGTH (m); the per-block delay is L / c(live) so the
+        # whole manifold interference pattern breathes with exhaust temperature.
+        self._runner_len = []
         for j, c in enumerate(eng.cylinders):
             ch = self._channel_of[j]
             frac = posn[j] / max(seen[ch] - 1, 1)        # 0 (near) .. 1 (far)
-            length = prim * (0.55 + 0.9 * frac)          # spread of runner lengths
-            self._runner_samp.append(int(round(length / c_gas * sr)))
-        self._runner_hist = [np.zeros(max(d, 0)) for d in self._runner_samp]
+            self._runner_len.append(prim * (1.0 - spread * 0.5 + spread * frac))
+        maxd = int(max(self._runner_len) / 380.0 * sr) + BLOCK + 8
+        self._runner_dl = [_BlockDelay(maxd) for _ in eng.cylinders]
+        # (#3) muffler internal reflections: two short feed-forward taps (expansion
+        # chamber + baffle path lengths) -> comb notches that give the box its
+        # TIMBRE, not just attenuation.
+        md = int(0.5 / 380.0 * sr) + BLOCK + 8
+        self._muff_dl1, self._muff_dl2 = _BlockDelay(md), _BlockDelay(md)
+        self._muff_len = (0.17, 0.31)
+        # (#4) full-system round-trip reflection: a weak low-passed echo at the
+        # pipe's round-trip time -> low-frequency elasticity + a longer, rounder tail.
+        self._tail_len = 2.0 * max(eng.exhaust_total_m, 0.5)
+        self._tail_dl = _BlockDelay(int(self._tail_len / 380.0 * sr) + BLOCK + 8)
         # TWO waveguides per channel: a short primary runner (high resonance) and
         # the full system length (low resonance) -> several pipe resonances at
         # different frequencies, like a real exhaust.
@@ -475,6 +517,9 @@ class Synthesizer:
             # 'rounds' the raw pulse so it reads as metal, not a digital click.
             self._head_lp = butter(2, min(7200.0, sr * 0.45) / (sr / 2), btype="low")
             self._head_lp_zi = np.zeros(2)
+            # low-pass on the tail round-trip reflection (only lows reflect strongly)
+            self._tail_lp = butter(2, 720.0 / (sr / 2), btype="low")
+            self._tail_lp_zi = np.zeros(2)
             # (Step 4) pipe-wall metal resonance formants — a thin, small-bore pipe
             # rings higher and sharper; a thick, big-bore pipe lower and tighter.
             r = max(eng.exhaust_radius_m, 0.012)
@@ -559,6 +604,9 @@ class Synthesizer:
 
         D1, D2, g, lp_a, f_helm = self._resonance_params()
         s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
+        # live hot-gas sound speed (~470-670 m/s, climbs with rpm/load) -> the
+        # runner-delay interference pattern shifts slightly as the engine heats.
+        c_runner = max(sim.exhaust_sound_speed(), 300.0)
 
         # --- per-channel excitation, sampled from the physics ---------------
         chans = [np.zeros(frames, dtype=np.float64) for _ in range(self._nchan)]
@@ -600,13 +648,10 @@ class Synthesizer:
                 disp = ramp * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
                 pulse = np.where(inwin, (blow + 0.7 * disp) * close * amp_j, 0.0)
-                # delay this cylinder's pulse down its own runner before it merges
-                # at the collector (carries the tail across blocks) -> interference.
-                d_samp = self._runner_samp[j]
-                if d_samp > 0:
-                    comb = np.concatenate([self._runner_hist[j], pulse])
-                    pulse = comb[:frames]
-                    self._runner_hist[j] = comb[frames:]
+                # delay this cylinder's pulse down its own runner (length / live
+                # sound speed) before it merges at the collector -> interference.
+                d_samp = self._runner_len[j] / c_runner * self.sample_rate
+                pulse = self._runner_dl[j].process(pulse, d_samp)
                 chans[self._channel_of[j]] += pulse
 
             # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
@@ -739,6 +784,16 @@ class Synthesizer:
             if self._valve < 0.75:
                 bL, aL = _peaking(110.0, 0.6, (1.0 - self._valve) * 7.0, sr)
                 sig, self._lowboost_zi = lfilter(bL, aL, sig, zi=self._lowboost_zi)
+            # (6b) muffler internal reflections: two short feed-forward comb taps
+            # (expansion chamber + baffle paths) -> periodic notches = the muffler's
+            # own colour, not just a low-pass.  Stronger in a packed/quiet box, light
+            # on an open system.
+            mcomb = (1.0 - sim.engine.exhaust_openness)
+            if mcomb > 0.05:
+                d1 = self._muff_len[0] / c_runner * sr
+                d2 = self._muff_len[1] / c_runner * sr
+                sig = (sig + 0.32 * mcomb * self._muff_dl1.process(sig, d1)
+                       + 0.22 * mcomb * self._muff_dl2.process(sig, d2))
         else:
             sig = np.diff(sig, prepend=sig[:1])
 
@@ -788,6 +843,16 @@ class Synthesizer:
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
             bp2, ap2 = _peaking(f2, 4.2, 2.2 - 1.4 * wt, self.sample_rate)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
+
+        # --- (7b) full-system round-trip reflection: a weak, low-passed echo at
+        # the pipe's round-trip time (2 x system length / sound speed) feeds a bit
+        # of low end back in -> bouncy low frequencies and a longer, rounder tail,
+        # instead of a dry abrupt cut-off.
+        if _HAVE_SCIPY and dps > 1e-12:
+            refl = self._tail_dl.process(sig, self._tail_len / c_runner * self.sample_rate)
+            refl, self._tail_lp_zi = lfilter(self._tail_lp[0], self._tail_lp[1],
+                                             refl, zi=self._tail_lp_zi)
+            sig = sig + 0.16 * refl
 
         # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
         # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
