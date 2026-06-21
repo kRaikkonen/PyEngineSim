@@ -572,8 +572,10 @@ def ferrari_laferrari_v12() -> Engine:
         friction_static=10.0, starter_torque=200.0,
         exhaust_tone=70.0,
         exhaust_primary_m=0.62, exhaust_total_m=2.1, exhaust_radius_m=0.026,
-        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0024,
+        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0021,
         wall_material="titanium",        # smooth, rising, metallic 'waaang' wail
+        backpressure_coupling=0.7,       # fine gear-like grain ON the smooth wail
+                                         #   (no header offset -> grain, not 'cough')
         gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.71,
         vehicle_mass=1585.0, wheel_radius=0.34, clutch_capacity=750.0,
         gearbox_type="dct",      # 7-speed dual-clutch — seamless
