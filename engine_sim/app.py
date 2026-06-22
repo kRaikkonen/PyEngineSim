@@ -1428,6 +1428,11 @@ class App:
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         top = bay.y + 26
         bottom = bay.bottom - 24
+        # Per-cylinder size scaled by DISPLACEMENT, with the Bugatti W16's
+        # ~500 cc/cylinder as the reference 1.0 (linear scale = cube-root of the
+        # volume ratio so an 8x-volume cylinder is ~2x bigger each way).
+        per_cc = eng.total_displacement * 1.0e6 / max(n, 1)
+        cyl_scale = max(0.55, min(1.30, (per_cc / 500.0) ** (1.0 / 3.0)))
         if eng.is_rotary:
             self._draw_rotary(bay, top, bottom)
             return
@@ -1467,15 +1472,20 @@ class App:
             return
         if left and right:
             cxx = bay.centerx
-            mtop, mbot = top, bottom
-            dy = (mbot - mtop) / ns
-            # V fans each side to one up-angle; a boxer is ~horizontal opposed.
-            is_w = getattr(eng, "is_w", False)
-            # V tilt: a gentle up-angle from horizontal (W uses real bank angles).
+            # V tilt: a gentle up-angle from horizontal.
             trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
-            width = min(dy * (0.46 if is_w else 0.60), 38.0)
-            length = min((bay.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
-                         dy * (1.55 if is_w else 2.7), 172.0)
+            width = 36.0 * cyl_scale
+            length = 124.0 * cyl_scale
+            # fit the horizontal reach inside the bay half-width
+            reach = length * max(math.cos(trad), 0.4) + width
+            maxreach = bay.width * 0.5 - 18.0
+            if reach > maxreach:
+                f = maxreach / reach; width *= f; length *= f
+            dy = max(width * 1.5, 20.0)               # TIGHT vertical pitch
+            avail = bottom - top
+            if ns * dy > avail:                       # shrink to fit the bay height
+                f = avail / (ns * dy); dy *= f; width *= f; length *= f
+            mtop = (top + bottom) * 0.5 - ns * dy * 0.5   # centre the engine
             # vertical metallic crankshaft behind every journal (strip-shaded)
             cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
             chw = max(width * 0.30, 9.0)
@@ -1500,14 +1510,8 @@ class App:
                             if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                             else 0.0)
                     side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
-                    # V: every cylinder of a bank tilts up by trad.  W: use the
-                    # cylinder's REAL bank angle so the two VR sub-banks per side
-                    # (15 deg apart, 90 deg between groups) draw as two tight,
-                    # authentic \/ pairs -> the true four-column W.
-                    if is_w:
-                        a = math.radians(cyl.bank_angle_deg)
-                    else:
-                        a = side * (math.pi / 2.0 - trad)    # left/right, tilt up
+                    # each bank tilts up by trad (V) — W is handled separately
+                    a = side * (math.pi / 2.0 - trad)        # left/right, tilt up
                     self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
                     lx = cxx + math.sin(a) * (length + 16)
                     ly = jy - math.cos(a) * (length + 16)
@@ -1516,16 +1520,20 @@ class App:
             self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
             return
 
-        sw = bay.width / ns
+        # size the cylinder by displacement, then space the stations TIGHTLY
+        # around it (no huge gaps for small cylinders) and centre the row.
+        width = 36.0 * cyl_scale
+        length = 124.0 * cyl_scale
+        sw = max(width * 1.5, 22.0)
+        if ns * sw > bay.width - 24:                  # shrink to fit the bay width
+            f = (bay.width - 24) / (ns * sw); sw *= f; width *= f; length *= f
         crank_y = bottom - 30 - (bottom - top - 70) * min(maxang / 90.0, 1.0) * 0.5
-        # cap the length so a tilted bank's HORIZONTAL reach never runs into the
-        # neighbouring station or off the bay (matters most for wide V / boxer).
-        sinmax = math.sin(math.radians(maxang))
-        length = min((crank_y - top) * 0.9, sw * 0.95, 0.46 * sw / max(sinmax, 0.34))
-        width = min(sw * 0.32, 40)
+        if length > (crank_y - top) * 0.92:           # fit the height too
+            f = (crank_y - top) * 0.92 / length; length *= f; width *= f
+        x_start = bay.centerx - ns * sw * 0.5
         # metallic crankshaft running behind every journal (round strip-shaded)
-        cx0 = bay.x + sw * 0.5 - 16
-        cx1 = bay.x + sw * (ns - 0.5) + 16
+        cx0 = x_start + sw * 0.5 - 16
+        cx1 = x_start + sw * (ns - 0.5) + 16
         chh = max(width * 0.30, 9.0)
         for si in range(7):
             e0 = (si / 7 * 2 - 1) * chh; e1 = ((si + 1) / 7 * 2 - 1) * chh
@@ -1537,7 +1545,7 @@ class App:
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
         for s, st in enumerate(stations):
-            jx = bay.x + sw * (s + 0.5)
+            jx = x_start + sw * (s + 0.5)
             for i in st:
                 cyl = eng.cylinders[i]
                 a = math.radians(cyl.bank_angle_deg)
@@ -1588,10 +1596,12 @@ class App:
         bx, by = jx + ux * cr * 1.4, jy + uy * cr * 1.4   # bore base (off the crank)
         hw = width / 2.0
 
-        def shaded(d0, d1, halfw, base, n=7):         # round-metal strip gradient
+        def shaded(d0, d1, halfw, base, n=9):         # round-metal strip gradient
+            # light from the upper-left: brightest just left of centre, dark edges
             for si in range(n):
                 e0 = (si / n * 2 - 1) * halfw; e1 = ((si + 1) / n * 2 - 1) * halfw
-                f = 0.42 + 0.62 * (1.0 - abs((si + 0.5) / n * 2 - 1))
+                t = (si + 0.5) / n * 2 - 1             # -1 edge .. +1 edge
+                f = 0.30 + 0.85 * max(0.0, 1.0 - abs(t - 0.18)) ** 1.3   # off-centre hi
                 col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
                        min(255, int(base[2] * f)))
                 pygame.draw.polygon(self.screen, col, [
@@ -1600,6 +1610,11 @@ class App:
                     (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
                     (bx + ux * d0 + qx * e1, by + uy * d0 + qy * e1)])
 
+        def cap(d, halfw, base):                      # rounded end-cap (circle)
+            cxp = int(bx + ux * d); cyp = int(by + uy * d)
+            pygame.draw.circle(self.screen, base, (cxp, cyp), int(halfw))
+            pygame.draw.circle(self.screen, (24, 26, 32), (cxp, cyp), int(halfw), 1)
+
         def edge(d0, d1, halfw, col, w=1):
             pygame.draw.polygon(self.screen, col, [
                 (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
@@ -1607,7 +1622,10 @@ class App:
                 (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
                 (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
 
+        cap(length + 4, hw + 3, (92, 98, 112))        # rounded head + base caps
         shaded(-2, length + 4, hw + 3, (78, 84, 96))  # finned metal sleeve
+        cap(-2, hw + 3, (66, 72, 84))
+        cap(length + 4, hw + 3, (88, 94, 108))
         for fz in range(4):                           # cooling fins near the head
             d = length - 2 - fz * 5
             pygame.draw.line(self.screen, (40, 44, 54),
