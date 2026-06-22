@@ -1636,6 +1636,7 @@ class App:
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
             # manifolds ON TOP of the banks so the red/green pipes are never hidden
+            self._draw_v_timing(cxx, mtop, dy, (cy0 + cy1) * 0.5, sim, eng)
             self._draw_v_manifolds(eng, stations, cxx, mtop, dy, bank, length, width, bay)
             self._draw_bay_induction(bay, eng, sim)
             return
@@ -2178,6 +2179,67 @@ class App:
             ctrl = (mx + math.cos(a) * rad * 1.6, my)      # bow the runner outward
             self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad, cols=cols, joint=True)
         self._collector_slug(collector, rad)
+
+    def _draw_v_timing(self, cxx, mtop, dy, crank_cy, sim, eng):
+        """The DOHC valvetrain DRIVE up the front of the V valley: a crank sprocket
+        at the bottom, two overhead-cam sprockets at the top (one per bank for a
+        DOHC head), a timing chain wrapping them, and — if the engine has VVT — a
+        blue cam phaser whose vane advances with rpm."""
+        sc = self.screen
+        cxx = int(cxx)
+        cs = (cxx, int(crank_cy))                      # crank sprocket
+        cam_y = int(mtop + dy * 0.2)                   # cam line, high in the valley
+        vt = getattr(eng, "valvetrain", "dohc")
+        if vt == "ohv":                                # pushrod: cam-in-block, no OHC
+            cams = [(cxx, int(crank_cy - dy * 0.7))]
+        elif vt == "sohc":
+            cams = [(cxx, cam_y)]
+        else:                                          # DOHC: one cam each bank
+            cams = [(cxx - 20, cam_y), (cxx + 20, cam_y)]
+        ang = sim.crank_angle
+        cam_ang = -ang * 0.5                            # cams turn at half crank speed
+        cr_r, cam_r = 8, 11
+        vvt = bool(getattr(eng, "variable_valve", ""))
+        adv = vvt * (min(sim.rpm / max(eng.redline_rpm, 1.0), 1.0)) * 0.5  # phaser swing
+
+        def chain(a, b, ra, rb):                       # a dark linked band between sprockets
+            dx, dy2 = b[0] - a[0], b[1] - a[1]
+            d = math.hypot(dx, dy2) or 1.0
+            nx, ny = -dy2 / d, dx / d                  # normal, for the two strands
+            for s in (1, -1):
+                p0 = (a[0] + nx * ra * s, a[1] + ny * ra * s)
+                p1 = (b[0] + nx * rb * s, b[1] + ny * rb * s)
+                pygame.draw.line(sc, (32, 35, 44), p0, p1, 3)
+                pygame.draw.line(sc, (96, 102, 116), p0, p1, 1)
+
+        for c in cams:                                 # chain: crank -> each cam
+            chain(cs, c, cr_r, cam_r)
+        if len(cams) == 2:
+            chain(cams[0], cams[1], cam_r, cam_r)
+
+        def sprocket(c, r, teeth, spin):
+            pygame.draw.circle(sc, (60, 65, 78), c, r)
+            for k in range(teeth):
+                t = spin + k * 2 * math.pi / teeth
+                pygame.draw.circle(sc, (120, 126, 140),
+                                   (int(c[0] + math.cos(t) * r), int(c[1] + math.sin(t) * r)), 1)
+            pygame.draw.circle(sc, (30, 33, 42), c, r, 1)
+
+        sprocket(cs, cr_r, 12, ang)
+        for c in cams:
+            sprocket(c, cam_r, 16, cam_ang)
+            if vvt:                                    # VVT cam phaser: blue vane that swings
+                pygame.draw.circle(sc, (44, 96, 150), c, int(cam_r * 0.62))
+                pygame.draw.circle(sc, (120, 196, 255), c, int(cam_r * 0.62), 1)
+                va = cam_ang + adv * math.pi
+                pygame.draw.line(sc, (150, 210, 255), c,
+                                 (int(c[0] + math.cos(va) * cam_r * 0.55),
+                                  int(c[1] + math.sin(va) * cam_r * 0.55)), 2)
+            else:
+                pygame.draw.circle(sc, (110, 116, 130), c, int(cam_r * 0.4))
+        if vvt and cams:                               # tiny VVT tag
+            tag = self.font_small.render("VVT", True, (120, 196, 255))
+            sc.blit(tag, (cams[-1][0] + cam_r + 2, cams[-1][1] - 6))
 
     def _draw_v_manifolds(self, eng, stations, cxx, mtop, dy, bank, length, width, bay):
         """V-engine manifolds on top of the banks, per the cold-V reference: smooth
