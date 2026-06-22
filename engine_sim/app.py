@@ -2261,11 +2261,26 @@ class App:
         draws a divided housing (a dividing rib + a second inlet throat)."""
         cx, cy, r = int(cx), int(cy), int(r)
         sc = self.screen
+        # soft cast shadow grounding the turbo on whatever is behind it
+        shp = pygame.Surface((2 * r + 12, 2 * r + 12), pygame.SRCALPHA)
+        pygame.draw.circle(shp, (0, 0, 0, 110), (r + 6, r + 6), r + 2)
+        shp = pygame.transform.smoothscale(shp, (2 * r + 12, 2 * r + 12))
+        sc.blit(shp, (cx - r - 2, cy - r + 2))
         # compressor housing — brushed alloy disc
         sc.blit(self._grad_surf(2 * r, 2 * r, (152, 158, 172), (68, 74, 88), r, gloss=True),
                 (cx - r, cy - r))
         sc.blit(self._brushed(2 * r, 2 * r, r), (cx - r, cy - r))
         pygame.draw.circle(sc, (32, 35, 44), (cx, cy), r, 2)
+        # smooth specular bloom (blurred) on the upper-left + a bright rim arc so
+        # the alloy reads as polished, not pixel-grainy
+        bloom = pygame.Surface((max(r // 2, 4), max(r // 2, 4)), pygame.SRCALPHA)
+        pygame.draw.circle(bloom, (255, 255, 255, 110),
+                           (int(bloom.get_width() * 0.4), int(bloom.get_height() * 0.36)),
+                           max(2, bloom.get_width() // 3))
+        sc.blit(pygame.transform.smoothscale(bloom, (2 * r, 2 * r)), (cx - r, cy - r),
+                special_flags=pygame.BLEND_RGBA_ADD)
+        rimr = pygame.Rect(cx - r + 1, cy - r + 1, 2 * r - 2, 2 * r - 2)
+        pygame.draw.arc(sc, (214, 220, 232), rimr, math.radians(120), math.radians(220), 2)
         # volute scroll (the snail) — two tapering wrapped arcs
         for rad, wd, col in ((r * 0.92, 4, (58, 62, 76)), (r * 0.72, 3, (46, 50, 62))):
             rr = pygame.Rect(cx - int(rad), cy - int(rad), int(2 * rad), int(2 * rad))
@@ -2294,14 +2309,18 @@ class App:
             x2 = cx + ir * 0.9 * math.cos(a + 0.5)
             y2 = cy + ir * 0.9 * math.sin(a + 0.5)
             pygame.draw.line(sc, (188, 194, 208), (x1, y1), (int(x2), int(y2)), 2)
-        if load > 0.02:                               # hot-side glow
-            gs = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
-            pygame.draw.circle(gs, (255, 120, 44, int(130 * min(load, 1.0))),
-                               (r, r), int(r * 0.55))
-            sc.blit(gs, (cx - r, cy - r))
+        if load > 0.02:                               # hot-side glow — soft, blurred
+            g = max(4, r // 2)
+            gs = pygame.Surface((g, g), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (255, 120, 44, int(150 * min(load, 1.0))),
+                               (g // 2, g // 2), g // 3)
+            sc.blit(pygame.transform.smoothscale(gs, (2 * r, 2 * r)), (cx - r, cy - r),
+                    special_flags=pygame.BLEND_RGBA_ADD)
         sc.blit(self._grad_surf(2 * hub, 2 * hub, (226, 232, 242), (110, 118, 132),
                                 hub, gloss=True), (cx - hub, cy - hub))
         pygame.draw.circle(sc, (60, 64, 74), (cx, cy), hub, 1)
+        pygame.draw.circle(sc, (255, 255, 255), (cx - max(1, hub // 3),
+                                                 cy - max(1, hub // 3)), max(1, hub // 4))
         if electric:                                  # e-turbo: a blue stator ring
             pygame.draw.circle(sc, (88, 178, 255), (cx, cy), r + 2, 2)
 
@@ -2497,10 +2516,22 @@ class App:
             lab("quad-turbo", bay.centerx, bay.y + 26)
         elif has_banks:
             r = 22
-            if hot:                                    # in the valley (centre)
-                for x in (bay.centerx - 36, bay.centerx + 36):
-                    self._bay_turbo(x, cyv, r, spin, load, electric=etb)
-                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 26)
+            if hot:
+                # Wedged in the V valley at mid-stroke height, staged in DEPTH:
+                # the far turbo sits higher/back and smaller, the near one lower/
+                # front and bigger, overlapping it — with a connecting rod passing
+                # BETWEEN them (in front of the far turbo, behind the near one).
+                sc = self.screen
+                self._bay_turbo(bay.centerx + 24, cyv - 13, int(r * 0.82),
+                                spin, load * 0.9, electric=etb)
+                rx0, ry0 = bay.centerx + 8, cyv - 34          # a conrod crossing
+                rx1, ry1 = bay.centerx + 20, cyv + 4          # in front of the far turbo
+                pygame.draw.line(sc, (26, 28, 36), (rx0, ry0), (rx1, ry1), 8)
+                pygame.draw.line(sc, (118, 124, 140), (rx0, ry0), (rx1, ry1), 5)
+                pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
+                self._bay_turbo(bay.centerx - 24, cyv + 11, int(r * 1.1),
+                                spin, load, electric=etb)
+                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
             else:                                      # outside the banks
                 for x in (bay.x + 48, bay.right - 48):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
