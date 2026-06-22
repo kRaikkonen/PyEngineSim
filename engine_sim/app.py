@@ -133,9 +133,12 @@ TR_ZH = {
     "MANIFOLD": "进气歧管", "AIR": "进气量", "VOL EFF": "容积效率",
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
-    "Scope": "波形", "EXHAUST PATH — STAGE WAVEFORMS": "排气路径 — 各级波形",
-    "each window = that stage's output  ·  E / Scope to close":
-        "每个窗口 = 该级输出  ·  按 E 或 波形 关闭",
+    "Scope": "波形",
+    "EXHAUST FLOW — STAGE WAVEFORMS": "排气流 — 各级波形",
+    "LISTENER AUDIO — STAGE WAVEFORMS": "听感音频 — 各级波形",
+    "each window = that stage's output  ·  E / click to close":
+        "每个窗口 = 该级输出  ·  按 E 或点击关闭",
+    "show: FLOW": "显示：排气流", "show: AUDIO": "显示：音频",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -261,6 +264,8 @@ class App:
         self._chip_rects = {}     # preset selector hit-boxes, keyed by preset key
         self.mixer_open = False   # audio console overlay (press C)
         self.scope_open = False   # exhaust-path per-stage waveform overlay (press E)
+        self.scope_mode = "flow"  # "flow" (exhaust gas) | "audio" (listener chain)
+        self._scope_toggle_rect = None
         self._drag = None         # slider currently being dragged
         self._buttons = []        # toolbar buttons (rebuilt each frame)
         self._open_menu = None    # active dropdown {items, rect, item_rects}
@@ -673,8 +678,11 @@ class App:
 
     def _handle_press(self, mpos):
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
-        if self.scope_open:                  # modal overlay: any click dismisses it
-            self.scope_open = False
+        if self.scope_open:                  # modal overlay
+            if self._scope_toggle_rect and self._scope_toggle_rect.collidepoint(mpos):
+                self.scope_mode = "audio" if self.scope_mode == "flow" else "flow"
+            else:                            # any other click dismisses it
+                self.scope_open = False
         elif self._open_menu is not None:
             m = self._open_menu
             self._open_menu = None
@@ -1318,8 +1326,8 @@ class App:
             # (tiny tilt); a W staggers each bank into TWO interleaved rows
             # (cylinders alternately tilt up / down) for the real \/\/ shape.
             is_w = getattr(eng, "is_w", False)
+            # V tilt: a gentle up-angle from horizontal (W uses real bank angles).
             trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
-            wob = math.radians(26.0)                     # W: up/down stagger size
             width = min(dy * (0.46 if is_w else 0.60), 38.0)
             length = min((rect.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
                          dy * (1.55 if is_w else 2.7), 172.0)
@@ -1347,10 +1355,14 @@ class App:
                             if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                             else 0.0)
                     side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
-                    # V: every cylinder of a bank tilts up by trad.  W: alternate
-                    # up / down by station so each side splits into two rows (\/\/).
-                    t = (wob if (s % 2 == 0) else -wob) if is_w else trad
-                    a = side * (math.pi / 2.0 - t)           # left/right, up or down
+                    # V: every cylinder of a bank tilts up by trad.  W: use the
+                    # cylinder's REAL bank angle so the two VR sub-banks per side
+                    # (15 deg apart, 90 deg between groups) draw as two tight,
+                    # authentic \/ pairs -> the true four-column W.
+                    if is_w:
+                        a = math.radians(cyl.bank_angle_deg)
+                    else:
+                        a = side * (math.pi / 2.0 - trad)    # left/right, tilt up
                     self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
                     lx = cxx + math.sin(a) * (length + 16)
                     ly = jy - math.cos(a) * (length + 16)
@@ -1752,14 +1764,20 @@ class App:
                 banks.setdefault(round(eng.cylinders[i].bank_angle_deg, 1), []).append(i)
             rows_list = ([list(range(n))] if len(banks) <= 1
                          else [banks[k] for k in sorted(banks)])
+        nrows = len(rows_list)
         per_row = max((len(rw) for rw in rows_list), default=1)
         dx = min((w - 12) / max(per_row, 1), 30.0)
-        r = 6
+        # Keep the whole bank within a fixed height (so a 4-bank W doesn't shove
+        # the readouts/scope/hints below it off the bottom of the panel): squeeze
+        # the row pitch when there are many banks.
+        max_h = 60
+        pitch = min(20, (max_h - 16) // max(nrows, 1))
+        r = 6 if pitch >= 17 else (5 if pitch >= 13 else 4)
         fade = self._ign_flash
         for rr, rw in enumerate(rows_list):
             for cc, i in enumerate(rw):
                 cxp = int(x + 8 + dx * (cc + 0.5))
-                cyp = int(y + 20 + rr * 20)
+                cyp = int(y + 16 + rr * pitch)
                 phi = sim.cycle_phase_deg(i)
                 firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
                 fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
@@ -1768,15 +1786,14 @@ class App:
                 pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
                 pygame.draw.circle(self.screen, col, (cxp, cyp), r)
                 pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
-        return y + 20 + len(rows_list) * 20
+        return y + 16 + min(nrows * pitch + 4, 44)   # never taller than a 2-bank V
 
     def _draw_scope(self, x, y, w, h, label):
         """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
-        cylinder.  Each cylinder's blowdown pulse is drawn analytically vs crank
-        angle (the whole 720-deg cycle across the width, scrolling with the crank),
-        so it never aliases at high rpm; the pulses are staggered by firing order
-        and their heights differ with load x the cylinder's own voicing amplitude
-        — you literally watch the cylinders fire in sequence, lumpy at idle."""
+        cylinder.  The whole 720-deg cycle maps across the width with the pulses
+        at FIXED positions (refresh-style, not scrolling): each cylinder's blip
+        sits where it fires and LIGHTS UP live as that cylinder actually fires,
+        its height scaling with load x the cylinder's own voicing amplitude."""
         pygame.draw.rect(self.screen, (12, 13, 16), (x, y, w, h))
         pygame.draw.rect(self.screen, (44, 48, 56), (x, y, w, h), 1)
         self.screen.blit(self.font_small.render(self.tr(label), True, DIM), (x + 6, y + 3))
@@ -1786,12 +1803,11 @@ class App:
             return
         offs = sim._offset_deg
         voice = getattr(self.synth, "_cyl_voice", None) if self.synth else None
-        crank_deg = math.degrees(sim.crank_angle) % 720.0
         # overall flow strength from the real blowdown pressure (grows with load)
         load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
                        0.30), 1.05)
         base, amp = h - 4, h - 12
-        ang = (np.arange(w) / (w - 1) * 720.0 + crank_deg) % 720.0   # scroll w/ crank
+        ang = np.arange(w) / (w - 1) * 720.0          # FIXED window (refresh, no scroll)
         surf = pygame.Surface((w, h), pygame.SRCALPHA)
         for i in range(n):
             phi = (ang + offs[i]) % 720.0
@@ -1802,11 +1818,16 @@ class App:
             # exaggerate the (small) per-cylinder voicing x3 so the strong/weak
             # difference is legible on screen (display only — audio is unchanged)
             vdev = (voice.amp[i] - 1.0) * 3.0 if voice and i < len(voice.amp) else 0.0
-            amp_i = load * (1.0 + vdev)
+            # live firing flash: each pulse brightens & swells as its cylinder
+            # actually fires now (reuses the ignition-light fade), so a fixed-axis
+            # refresh scope still shows the cylinders firing in sequence.
+            flash = self._ign_flash.get(i, 0.0)
+            amp_i = load * (1.0 + vdev) * (0.45 + 0.55 * flash)
             yv = base - np.clip(env * amp_i, 0.0, 1.1) * amp
             sh = (i % 6) * 8
+            a = int(90 + 150 * flash)                    # brighter as it fires
             pts = np.column_stack((np.arange(w), yv)).astype(np.int32).tolist()
-            pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, 130), False, pts, 1)
+            pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, a), False, pts, 1)
         self.screen.blit(surf, (x, y))
         cap = self.font_small.render(f"x{n}", True, (130, 96, 54))
         self.screen.blit(cap, (x + w - cap.get_width() - 6, y + 3))
@@ -1830,15 +1851,30 @@ class App:
 
     def _draw_exhaust_scopes(self, rect):
         """Overlay: a grid of per-stage waveform windows tracing one signal block
-        as it travels the exhaust chain head -> tail (refresh-style, not scroll)."""
+        down the chain (refresh-style, not scroll).  Toggles between the EXHAUST
+        GAS path (flow) and the full LISTENER AUDIO chain."""
         self._panel(rect)
-        self.screen.blit(self.font.render(self.tr("EXHAUST PATH — STAGE WAVEFORMS"),
-                                          True, INK), (rect.x + 18, rect.y + 14))
-        hint = self.tr("each window = that stage's output  ·  E / Scope to close")
+        flow = self.scope_mode == "flow"
+        title = (self.tr("EXHAUST FLOW — STAGE WAVEFORMS") if flow
+                 else self.tr("LISTENER AUDIO — STAGE WAVEFORMS"))
+        self.screen.blit(self.font.render(title, True, INK), (rect.x + 18, rect.y + 14))
+        hint = self.tr("each window = that stage's output  ·  E / click to close")
         self.screen.blit(self.font_small.render(hint, True, DIM),
                          (rect.x + 18, rect.y + 40))
+        # flow / audio toggle button (top-right) — click switches, doesn't close
+        bw, bh = 150, 26
+        btn = pygame.Rect(rect.right - 18 - bw, rect.y + 12, bw, bh)
+        self._scope_toggle_rect = btn
+        self.screen.blit(self._grad_surf(btn.w, btn.h, BTN_ON_HI, BTN_ON_LO, 5,
+                                         gloss=True), btn.topleft)
+        pygame.draw.rect(self.screen, BEVEL_LO, btn, width=1, border_radius=5)
+        bl = self.tr("show: FLOW") if flow else self.tr("show: AUDIO")
+        bt = self.font_small.render(bl, True, (255, 255, 255))
+        self.screen.blit(bt, (btn.centerx - bt.get_width() // 2,
+                              btn.centery - bt.get_height() // 2))
         taps = getattr(self.synth, "_stage_taps", {}) if self.synth else {}
-        order = getattr(self.synth, "_stage_order", []) if self.synth else []
+        order = ((self.synth._flow_stages if flow else self.synth._audio_stages)
+                 if self.synth else [])
         if not order:
             return
         cols, rows = 4, 3
@@ -1850,8 +1886,8 @@ class App:
             r, c = divmod(idx, cols)
             cx = gx + c * (cw + 12)
             cy = gy + r * (ch + 12)
-            self._mini_scope(int(cx), int(cy), int(cw), int(ch), name,
-                             taps.get(name))
+            self._mini_scope(int(cx), int(cy), int(cw), int(ch),
+                             f"{idx + 1} {self.tr(name)}", taps.get(name))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /

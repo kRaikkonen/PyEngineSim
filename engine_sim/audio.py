@@ -470,11 +470,19 @@ class Synthesizer:
         # Only captured while the UI overlay is open (scope_enabled) to keep the
         # audio callback cheap otherwise.
         self.scope_enabled = False
-        self._stage_taps = {}     # stage name -> decimated np.float64 snapshot
-        self._stage_order = [
-            "1 combustion", "2 head/port", "3 catalytic", "4 standing-wave",
-            "5 muffler", "6 turbo+gears", "7 pipe wall", "8 reflection",
-            "9 air-shear", "10 EQ", "11 cabin/room", "12 output",
+        self._stage_taps = {}     # tap name -> decimated np.float64 snapshot
+        # Two selectable display orders over the SAME captured taps: the EXHAUST
+        # GAS path (flow, header -> tailpipe exit) and the full LISTENER AUDIO
+        # chain (... -> EQ -> cabin -> output).  The UI toggles between them.
+        self._flow_stages = [
+            "header", "head/port", "catalytic", "standing-wave", "resonator",
+            "muffler", "valve bypass", "wall de-honk", "metal ring", "thunder",
+            "reflection", "tailpipe exit",
+        ]
+        self._audio_stages = [
+            "header", "head/port", "catalytic", "standing-wave", "muffler",
+            "induction+gears", "metal ring", "thunder", "reflection",
+            "EQ", "cabin/room", "output",
         ]
         self._cold = 1.0          # cold-start factor (1 cold .. 0 warmed up)
         self._gear_phase = 0.0    # gear-mesh phase for the gear-grain whir
@@ -958,7 +966,7 @@ class Synthesizer:
         #   8. tail-pipe air-shear at the exit (broadband roar into open air)
         #   9. room / environment reverb  (the space — added last, below)
 
-        self._tap("1 combustion", sig)        # raw bang + pipe resonance, head
+        self._tap("header", sig)              # exhaust gas at the header collector
         # --- (3a) cylinder-head / exhaust-port cavity low-pass: round the raw
         # pulse so it reads as a metal port, not an electronic click.  A touch
         # duller while the engine is still cold.
@@ -970,7 +978,7 @@ class Synthesizer:
             else:
                 sig, self._head_lp_zi = lfilter(self._head_lp[0], self._head_lp[1],
                                                 sig, zi=self._head_lp_zi)
-        self._tap("2 head/port", sig)
+        self._tap("head/port", sig)
 
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
         # straight-pipe top end FIRST, upstream of the muffler — a stock car with
@@ -980,7 +988,7 @@ class Synthesizer:
                                             sig, zi=self._road_lp_zi)
             sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
                                             sig, zi=self._road_sh_zi)
-        self._tap("3 catalytic", sig)
+        self._tap("catalytic", sig)
 
         # --- (4b) main-pipe HIGH-ORDER STANDING-WAVE WHINE ------------------
         # The odd quarter-wave harmonics in 3-7 kHz, rung as resonant peaks whose
@@ -998,7 +1006,7 @@ class Synthesizer:
                     gain = (5.5 - 1.3 * k) * wamt * P.get("whine", 1.0)
                     bw, aw = _peaking(fc, Q, gain, self.sample_rate)
                     sig, self._whine_zi[k] = lfilter(bw, aw, sig, zi=self._whine_zi[k])
-        self._tap("4 standing-wave", sig)
+        self._tap("standing-wave", sig)
 
         # --- (5+6) resonator + muffler: DC-block, de-drone notch, valve roll-off
         if _HAVE_SCIPY:
@@ -1011,6 +1019,7 @@ class Synthesizer:
             # drone boom, do not add yet another resonance).
             bH, aH = _peaking(f_helm, 1.2, -4.0, self.sample_rate)
             sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
+            self._tap("resonator", sig)       # Helmholtz de-drone notch
             # (6) muffler: variable-valve expansion low-pass — muffled at idle,
             # wide open at redline.
             sr = self.sample_rate
@@ -1032,6 +1041,7 @@ class Synthesizer:
                 mg = mcomb * P.get("muffler", 1.0)
                 sig = (sig + 0.32 * mg * self._muff_dl1.process(sig, d1)
                        + 0.22 * mg * self._muff_dl2.process(sig, d2))
+            self._tap("muffler", sig)         # expansion low-pass + comb baffles
             # active exhaust valve: above ~40% redline the bypass flap cracks open
             # and the bright straight-through tap is crossfaded back in — the note
             # gets louder and opens up at the top end, exactly like a valved system.
@@ -1041,7 +1051,7 @@ class Synthesizer:
                 sig = (1.0 - vo) * sig + vo * bypass
         else:
             sig = np.diff(sig, prepend=sig[:1])
-        self._tap("5 muffler", sig)
+        self._tap("valve bypass", sig)        # active-valve straight-through mix
 
         # --- intake / induction roar (the OTHER half a real car you hear) ---
         # Broadband 'sucking' noise through the airbox resonance, swelling with
@@ -1067,7 +1077,7 @@ class Synthesizer:
                 self._gear_reverb.mix = P["gearbox_reverb"]
                 gw = self._gear_reverb.process(gw)
             sig = sig + ind + gw
-        self._tap("6 turbo+gears", sig)
+        self._tap("induction+gears", sig)     # + intake roar, turbo, gearbox whine
 
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
@@ -1078,6 +1088,7 @@ class Synthesizer:
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
             b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
             sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
+        self._tap("wall de-honk", sig)        # tail-pipe wall thickness scoop
         # (Step 4) stainless-wall resonance formants: two narrow peaks give the
         # note its METAL ring.  A thicker wall (wt up) drops the peaks lower and
         # tightens them (fat & solid); a thin wall keeps them high & open (bright,
@@ -1089,12 +1100,13 @@ class Synthesizer:
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
             bp2, ap2 = _peaking(f2, 4.2, 2.2 - 1.4 * wt, self.sample_rate)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
+        self._tap("metal ring", sig)          # stainless wall-resonance formants
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
         # under the note (so a Ferrari V12 thunders, not just screams).
         if _HAVE_SCIPY and self._thunder is not None:
             sig, self._thunder_zi = lfilter(self._thunder[0], self._thunder[1],
                                             sig, zi=self._thunder_zi)
-        self._tap("7 pipe wall", sig)        # wall thickness + metal formants + thunder
+        self._tap("thunder", sig)             # deep displacement low-end roar
         # gear-grain: gear-driven valvetrain / timing-gear WHIR — a fine, dense
         # band-passed noise modulated by a gear-mesh tone, so it's a 'grind-like'
         # (but not actual grinding) grain riding ON the smooth note.  Rises with
@@ -1121,7 +1133,7 @@ class Synthesizer:
             refl, self._tail_lp_zi = lfilter(self._tail_lp[0], self._tail_lp[1],
                                              refl, zi=self._tail_lp_zi)
             sig = sig + 0.16 * refl
-        self._tap("8 reflection", sig)       # + gear-grain, round-trip echo
+        self._tap("reflection", sig)         # + gear-grain, round-trip echo
 
         # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
         # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
@@ -1139,7 +1151,7 @@ class Synthesizer:
                 if self.road_pipe:                 # a cat car's tip is breathier
                     shear_gain *= 0.7
                 sig = sig + shear_gain * ns_
-        self._tap("9 air-shear", sig)
+        self._tap("tailpipe exit", sig)       # gas tearing out of the tip
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
@@ -1155,7 +1167,7 @@ class Synthesizer:
             if abs(P["presence"]) > 0.1:        # amp 'presence': broad upper-mid lift
                 b, a = _peaking(3000.0, 0.6, P["presence"], self.sample_rate)
                 sig, self._eq_pres_zi = lfilter(b, a, sig, zi=self._eq_pres_zi)
-        self._tap("10 EQ", sig)
+        self._tap("EQ", sig)
 
         # --- cabin effect: muffle the highs, as if heard from inside the car -
         if self.cabin and _HAVE_SCIPY:
@@ -1170,7 +1182,7 @@ class Synthesizer:
         self._reverb.mix = (P["reverb"] + (0.10 if self.cabin else 0.0)
                             + (0.12 if self.road_pipe else 0.0))
         sig = self._reverb.process(sig)
-        self._tap("11 cabin/room", sig)
+        self._tap("cabin/room", sig)
 
         # --- auto-level (or fixed gain) + soft saturation + master volume ----
         if self.agc_enabled:
@@ -1212,7 +1224,7 @@ class Synthesizer:
         if frames:
             step = max(1, frames // 64)
             self.last_wave = out[::step][:64].astype(np.float64).copy()
-        self._tap("12 output", out)          # final post-master signal
+        self._tap("output", out)             # final post-master signal
         return out
 
     # ------------------------------------------------------------ callback
