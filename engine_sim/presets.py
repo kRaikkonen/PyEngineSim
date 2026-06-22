@@ -3004,6 +3004,10 @@ _HOT_V = {"e63", "amggt", "valhalla", "488", "pista", "rs5", "senna", "p1"}
 # a single divided-housing turbo, tighter/cleaner whistle (BMW B48/N55, EA888).
 _SEQUENTIAL_TT = {"9", "rx7"}
 _TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
+# Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
+_FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
+               "f40", "gt350r", "gts", "m3gtr", "one1", "p1", "pista", "senna",
+               "valhalla"}
 
 
 def _annotate(key, eng):
@@ -3019,6 +3023,13 @@ def _annotate(key, eng):
             eng.induction_subtype = "sequential"
         elif key in _TWIN_SCROLL:
             eng.induction_subtype = "twin_scroll"
+    # crank plane (display) for V8s: the screamers (Ferrari/McLaren/AMG GT/S65/
+    # Voodoo ...) run a single-plane FLAT crank; every other 90-deg V8 is the
+    # two-plane CROSS crank that gives the burble.
+    if not eng.crank_plane and eng.num_cylinders == 8 and not eng.is_rotary:
+        banks = {round(c.bank_angle_deg, 1) for c in eng.cylinders}
+        if len(banks) >= 2:
+            eng.crank_plane = "flat" if key in _FLAT_PLANE else "cross"
     return eng
 
 

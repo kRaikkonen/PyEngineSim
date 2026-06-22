@@ -136,6 +136,7 @@ TR_ZH = {
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
     "Scope": "波形",
     "ENGINE BAY": "发动机舱",
+    "flat-plane crank": "平面曲轴", "cross-plane crank": "十字曲轴",
     "ENGINE ANALYZER": "发动机分析仪",
     "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
     "WAVEFORM · master audio output": "WAVEFORM · 主音频输出波形",
@@ -1519,6 +1520,9 @@ class App:
         self._recess(bay, 12, fill=(19, 21, 26))
         self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
+        cp = getattr(eng, "crank_plane", "")
+        if cp in ("flat", "cross"):                   # end-on crankshaft phase diagram
+            self._draw_crank_diagram(bay.x + 38, bay.y + 50, 17, cp, sim.crank_angle)
         top = bay.y + 26
         bottom = bay.bottom - 24
         # Per-cylinder size scaled by DISPLACEMENT, with the Bugatti W16's
@@ -2001,6 +2005,40 @@ class App:
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
 
+    def _draw_crank_diagram(self, cx, cy, r, plane, angle):
+        """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
+        crank's throws sit at 0/180 (a straight bar) while a CROSS-plane crank's
+        sit at 0/90/180/270 (an X) — the instantly-recognisable difference behind
+        the flat-plane 'scream' vs the cross-plane 'burble'.  Spins with the crank."""
+        sc = self.screen
+        cx, cy, r = int(cx), int(cy), int(r)
+        pins = [0.0, math.pi] if plane == "flat" else [0.0, math.pi / 2, math.pi,
+                                                       3 * math.pi / 2]
+        # recessed bearing housing
+        pygame.draw.circle(sc, (13, 14, 18), (cx, cy), r + 4)
+        pygame.draw.circle(sc, (44, 48, 58), (cx, cy), r + 4, 2)
+        pr = r * 0.55
+        for pa in pins:
+            a = angle + pa
+            px, py = cx + math.cos(a) * pr, cy + math.sin(a) * pr
+            ox, oy = cx - math.cos(a) * pr * 0.92, cy - math.sin(a) * pr * 0.92
+            # counterweight blob opposite the pin
+            pygame.draw.circle(sc, (58, 63, 76), (int(ox), int(oy)), max(3, int(r * 0.36)))
+            pygame.draw.circle(sc, (88, 94, 110), (int(ox), int(oy)), max(3, int(r * 0.36)), 1)
+            # web + rod journal (lit metal pin)
+            pygame.draw.line(sc, (104, 110, 126), (cx, cy), (int(px), int(py)),
+                             max(2, int(r * 0.2)))
+            pygame.draw.circle(sc, (150, 158, 174), (int(px), int(py)), max(2, int(r * 0.22)))
+            pygame.draw.circle(sc, (30, 33, 42), (int(px), int(py)), max(2, int(r * 0.22)), 1)
+            pygame.draw.circle(sc, (240, 244, 252), (int(px - 1), int(py - 1)), 1)
+        # main journal hub
+        pygame.draw.circle(sc, (172, 180, 196), (cx, cy), max(3, int(r * 0.28)))
+        pygame.draw.circle(sc, (40, 44, 54), (cx, cy), max(3, int(r * 0.28)), 1)
+        pygame.draw.circle(sc, (245, 248, 255), (cx - 1, cy - 1), 1)
+        lab = self.tr("flat-plane crank" if plane == "flat" else "cross-plane crank")
+        t = self.font_small.render(lab, True, (150, 158, 174))
+        sc.blit(t, (cx - t.get_width() // 2, cy + r + 7))
+
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
         triangular rotor orbiting eccentrically (spinning at 1/3 shaft speed),
@@ -2047,12 +2085,41 @@ class App:
                 self.screen.blit(gs, (int(cx) - gs.get_width() // 2,
                                       int(cy - R * 0.5) - gs.get_height() // 2))
             body = self._reuleaux(apex)
-            pygame.draw.polygon(self.screen, (108, 116, 130), body)        # rotor base
-            # metallic sheen: a shrunk, brighter rotor offset toward the light
-            hi = [(rcx + (ax - rcx) * 0.78 - 2, rcy + (ay - rcy) * 0.78 - 3)
-                  for ax, ay in apex]
-            pygame.draw.polygon(self.screen, (172, 180, 196), self._reuleaux(hi))
-            pygame.draw.polygon(self.screen, (78, 84, 98), body, 2)
+            sc = self.screen
+            lx, ly = -0.5, -0.62                          # screen upper-left light
+            rb = max(8, int(R * 1.3))                      # rotor bounding radius
+            # 1) soft drop shadow cast onto the housing floor (down-right)
+            shp = pygame.Surface((rb * 2, rb * 2), pygame.SRCALPHA)
+            pygame.draw.polygon(shp, (0, 0, 0, 120),
+                                [(ax - rcx + rb, ay - rcy + rb) for ax, ay in body])
+            shp = pygame.transform.smoothscale(shp, (rb * 2, rb * 2))
+            sc.blit(shp, (int(rcx - rb + 3), int(rcy - rb + 4)))
+            # 2) smooth rounded-metal gradient (dark rim -> lit crown): many
+            #    interpolated stops, each shrunk toward the centre and nudged
+            #    toward the light so the banding melts into a continuous sheen
+            c0, c1 = (70, 76, 90), (228, 234, 246)
+            STOPS = 11
+            for s in range(STOPS):
+                t = s / (STOPS - 1)
+                scl = 1.0 - 0.82 * t
+                off = 0.46 * t
+                col = tuple(int(c0[j] + (c1[j] - c0[j]) * (t ** 0.85)) for j in range(3))
+                ox, oy = lx * R * off, ly * R * off
+                pts = [(rcx + (ax - rcx) * scl + ox, rcy + (ay - rcy) * scl + oy)
+                       for ax, ay in apex]
+                pygame.draw.polygon(sc, col, self._reuleaux(pts))
+            # 3) brushed-metal grain masked to the rotor face
+            br = self._brushed(rb * 2, rb * 2, 0).copy()
+            msk = pygame.Surface((rb * 2, rb * 2), pygame.SRCALPHA)
+            pygame.draw.polygon(msk, (255, 255, 255, 255),
+                                [(ax - rcx + rb, ay - rcy + rb) for ax, ay in body])
+            br.blit(msk, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            sc.blit(br, (int(rcx - rb), int(rcy - rb)))
+            # 4) ambient-occlusion dark rim + a sharp specular pip near the crown
+            pygame.draw.polygon(sc, (34, 38, 48), body, 2)
+            pygame.draw.circle(sc, (245, 248, 255),
+                               (int(rcx + lx * R * 0.5), int(rcy + ly * R * 0.5)),
+                               max(2, int(R * 0.1)))
             # combustion-dish recess on each rotor flank
             for k in range(3):
                 m = ((apex[k][0] + apex[(k + 1) % 3][0]) / 2,
@@ -2084,7 +2151,7 @@ class App:
             pygame.draw.circle(self.screen, (200, 206, 220), (int(rcx), int(rcy)), 4)
             pygame.draw.circle(self.screen, (40, 43, 50), (int(rcx), int(rcy)), 4, 1)
             lbl = self.font_small.render(f"R{i + 1}", True, DIM)
-            self.screen.blit(lbl, (int(cx) - lbl.get_width() // 2, bottom + 8))
+            self.screen.blit(lbl, (int(cx) - lbl.get_width() // 2, int(cy + R * 1.1)))
 
     def _air_gauge(self, cx, cy, r, frac, label, value, danger=False):
         """An old-school round aircraft instrument: metal bezel, black face, tick

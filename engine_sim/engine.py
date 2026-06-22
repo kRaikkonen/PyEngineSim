@@ -173,6 +173,10 @@ class Engine:
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
     variable_valve: str = ""         # "VTEC"/"VANOS"/"VVT-i"/... "" = none (display only)
     rotation: str = "CW"             # crank rotation viewed from front: CW | CCW (display)
+    crank_plane: str = ""            # crankpin phase (display): "flat" (single-plane,
+                                     #   pins at 0/180 -> the high flat-plane scream)
+                                     #   | "cross" (two-plane, pins at 0/90/180/270 ->
+                                     #   the burbling cross-plane rumble) | "" none
     is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
     is_w: bool = False               # W engine (two narrow-vee banks) -> draw 4 rows
     is_radial: bool = False          # aircraft radial -> draw cylinders in a star
