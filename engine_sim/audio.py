@@ -437,7 +437,7 @@ class Synthesizer:
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
             "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
-            "road_noise": 0.22,   # tyre/road rumble that swells with road speed
+            "road_noise": 0.10,   # tyre/road rumble that swells with road speed (subtle)
             "gear_grain": 1.0,    # gear-driven valvetrain whir mix (x eng.gear_grain)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)

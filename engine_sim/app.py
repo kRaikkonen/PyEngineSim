@@ -1671,26 +1671,26 @@ class App:
         # plumbed to the turbo — TWIN-SCROLL engines split into two scrolls (the
         # firing pairs) in red + orange feeding the divided housing ---
         hrad = max(2, int(width * 0.16))
-        irad = max(2, int(width * 0.14))
+        irad = max(3, int(width * 0.2))                 # I4 intake runs THICK
         cyv = (bay.y + bay.bottom) // 2
         heads = [(x_start + sw * (s + 0.5), crank_y - length * 0.82) for s in range(ns)]
         turbo = (bay.right - 50, cyv)
         sub = getattr(eng, "induction_subtype", "")
-        # INTAKE (green): a plenum log over the heads, curved runners down to each
+        # INTAKE (green): a thick plenum log over the heads, runners down to each
         # intake port, and a throttle inlet looping down the left.
         plen_y = min(h[1] for h in heads) - 18
         lx0 = heads[0][0] - width * 0.42
         lx1 = heads[-1][0] - width * 0.42
         self._draw_header_tube((lx0 - 4, plen_y), (lx1 + 4, plen_y),
-                               ((lx0 + lx1) * 0.5, plen_y - 3), irad + 2,
+                               ((lx0 + lx1) * 0.5, plen_y - 3), irad + 3,
                                cols=self._INT_COLS)
         for jx, hy in heads:
             ix = jx - width * 0.42
             self._draw_header_tube((ix, plen_y), (ix, hy), (ix - 4, (plen_y + hy) * 0.5),
                                    irad, cols=self._INT_COLS, joint=True)
         self._draw_header_tube((lx0 - 4, plen_y), (bay.x + 34, bay.bottom - 58),
-                               (bay.x + 18, plen_y + 30), irad, cols=self._INT_COLS)
-        self._collector_slug((lx0 - 4, plen_y), irad)
+                               (bay.x + 18, plen_y + 30), irad + 1, cols=self._INT_COLS)
+        self._collector_slug((lx0 - 4, plen_y), irad + 1)
         # EXHAUST: a right-angle FORK — risers UP from the cylinder tops to a
         # horizontal spine, then a thick handle to the turbo. Twin-scroll splits
         # into two stacked spines (the firing pairs) in red + orange.
@@ -2118,15 +2118,15 @@ class App:
     _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
 
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
-        """A curved manifold runner from a head port (p0) bowing through ctrl into
-        the collector (p1): dark casing, lit body and a top sheen so it reads as a
-        polished tube.  A gentle bezier bend (never dead straight).  ``joint``
-        caps the port end with a flange fitting."""
+        """A manifold runner from a head port (p0) bending through ctrl into the
+        collector (p1): dark casing, lit body and a top sheen.  Sampled at only a
+        few points so the bend is FACETED (bent-metal polygon), not an organic
+        curve.  ``joint`` caps the port end with a flange fitting."""
         cols = cols or self._EXH_COLS
         sc = self.screen
         pts = []
-        for k in range(13):
-            t = k / 12.0
+        for k in range(5):
+            t = k / 4.0
             u = 1.0 - t
             pts.append((u * u * p0[0] + 2 * u * t * ctrl[0] + t * t * p1[0],
                         u * u * p0[1] + 2 * u * t * ctrl[1] + t * t * p1[1]))
@@ -2449,7 +2449,7 @@ class App:
         sim, eng = self.sim, self.sim.engine
         n = max(1, eng.num_cylinders // 2)
         col_w = rect.width / n
-        R = min(col_w * 0.30, (bottom - top) * 0.34)   # fit inside the engine bay
+        R = min(col_w * 0.18, (bottom - top) * 0.21)   # rotor housing (kept compact)
         sx = 1.15                                      # housing is wider than tall
         e = R * 0.15                                   # eccentricity
         cy = (top + bottom) / 2.0
@@ -2716,6 +2716,18 @@ class App:
         sx, sy = cx + int(r * 0.6), cy - int(r * 0.66)
         pygame.draw.rect(sc, (126, 132, 146), (sx - 5, sy - 6, 15, 13), border_radius=3)
         pygame.draw.rect(sc, (38, 42, 52), (sx - 5, sy - 6, 15, 13), 1, border_radius=3)
+        # blow-off valve on the charge discharge — a short GREEN relief branch
+        bvx, bvy = sx + 10, sy - 8
+        pygame.draw.line(sc, (24, 60, 32), (sx + 6, sy - 2), (bvx, bvy), 4)
+        pygame.draw.line(sc, (70, 168, 100), (sx + 6, sy - 2), (bvx, bvy), 2)
+        pygame.draw.circle(sc, (120, 130, 144), (bvx, bvy), 3)
+        pygame.draw.circle(sc, (30, 34, 42), (bvx, bvy), 3, 1)
+        # wastegate dump off the turbine volute — a short RED branch + actuator can
+        wgx, wgy = cx - int(r * 0.5), cy + r + 7
+        pygame.draw.line(sc, (50, 16, 12), (cx - int(r * 0.3), cy + r - 2), (wgx, wgy), 4)
+        pygame.draw.line(sc, (176, 62, 38), (cx - int(r * 0.3), cy + r - 2), (wgx, wgy), 2)
+        pygame.draw.circle(sc, (96, 102, 116), (wgx, wgy), 4)
+        pygame.draw.circle(sc, (34, 38, 48), (wgx, wgy), 4, 1)
         # spinning compressor wheel
         ir = int(r * 0.52)
         pygame.draw.circle(sc, (20, 22, 28), (cx, cy), ir)
@@ -2738,6 +2750,7 @@ class App:
                                                  cy - max(1, hub // 3)), max(1, hub // 4))
         if electric:                                  # e-turbo: a blue stator ring
             pygame.draw.circle(sc, (88, 178, 255), (cx, cy), r + 2, 2)
+        self._turbo_pts.append((cx, cy, r))           # for downstream piping
 
     def _bay_blower(self, cx, cy, r, spin, load, centri=False):
         """A detailed supercharger for the bay: a Roots blower (brushed case, two
@@ -2910,6 +2923,13 @@ class App:
                    (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 5)
         for cx in xs:                                           # drop to each unit
             self._pipe((cx, rail_y), (cx, y - 7), 2)
+        # exhaust after-treatment: a RED down-pipe from each turbo to the catalytic
+        tps = getattr(self, "_turbo_pts", [])
+        catx = next((xs[i] for i, (n, k) in enumerate(items) if k == "cat"), None)
+        if catx is not None and tps:
+            for tx, ty, tr in tps:
+                self._draw_ortho_pipe([(int(tx), int(ty + tr)), (int(tx), y - 12),
+                                       (catx, y - 12), (catx, y - 8)], 3, self._EXH_COLS)
         for i, (name, kind) in enumerate(items):
             cx = xs[i]
             self._draw_ancillary(cx, y, kind, throttle)
@@ -2929,6 +2949,7 @@ class App:
         a turbo in the VALLEY for a hot-V, OUTSIDE the banks for a cold-V, one per
         bank (twin/quad), a single for an inline, a blower on top for an SC."""
         self._draw_oil_pan(bay)                        # furniture for every engine
+        self._turbo_pts = []                           # collected as turbos are drawn
         ind = eng.induction
         if ind == "na":
             return
