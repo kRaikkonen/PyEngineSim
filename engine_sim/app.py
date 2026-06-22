@@ -2115,10 +2115,13 @@ class App:
         pygame.draw.lines(sc, cols[1], False, pts, max(2, rad * 2))
         hi = [(x - rad * 0.35, y - rad * 0.5) for x, y in pts]
         pygame.draw.lines(sc, cols[2], False, hi, max(1, rad // 2))
-        if joint:                                          # short flange fitting
-            pygame.draw.circle(sc, cols[0], (int(p0[0]), int(p0[1])), rad + 2)
-            pygame.draw.circle(sc, cols[1], (int(p0[0]), int(p0[1])), rad)
-            pygame.draw.circle(sc, cols[2], (int(p0[0] - 1), int(p0[1] - 1)), max(1, rad // 2))
+        if joint:                                          # flange on a head boss
+            jx, jy = int(p0[0]), int(p0[1])
+            pygame.draw.circle(sc, (18, 20, 26), (jx, jy), rad + 4)   # dark mounting boss
+            pygame.draw.circle(sc, (44, 48, 58), (jx, jy), rad + 4, 1)
+            pygame.draw.circle(sc, cols[0], (jx, jy), rad + 1)        # pipe flange
+            pygame.draw.circle(sc, cols[1], (jx, jy), rad)
+            pygame.draw.circle(sc, cols[2], (jx - 1, jy - 1), max(1, rad // 2))
 
     def _draw_ortho_pipe(self, pts, rad, cols=None, joint=False):
         """A RIGHT-ANGLED manifold run (riser up from the port, then a 90-deg elbow
@@ -2133,9 +2136,11 @@ class App:
             pygame.draw.circle(sc, cols[1], (x, y), rad)
         pygame.draw.lines(sc, cols[2], False, [(x - 1, y - 1) for x, y in ipts],
                           max(1, rad // 2))
-        if joint:                                      # flange fitting at the port
+        if joint:                                      # flange on a head boss
             x, y = ipts[0]
-            pygame.draw.circle(sc, cols[0], (x, y), rad + 2)
+            pygame.draw.circle(sc, (18, 20, 26), (x, y), rad + 4)
+            pygame.draw.circle(sc, (44, 48, 58), (x, y), rad + 4, 1)
+            pygame.draw.circle(sc, cols[0], (x, y), rad + 1)
             pygame.draw.circle(sc, cols[1], (x, y), rad)
             pygame.draw.circle(sc, cols[2], (x - 1, y - 1), max(1, rad // 2))
 
@@ -2229,6 +2234,13 @@ class App:
             for fx in range(ic.x + 3, ic.right - 2, 4):       # cooler fins
                 pygame.draw.line(sc, (44, 48, 58), (fx, ic.y + 2), (fx, ic.bottom - 2), 1)
             pygame.draw.rect(sc, (40, 44, 54), ic, 1, border_radius=3)
+            # complete the air path: feed from the outer plenum down to the
+            # throttle body / intercooler in the ancillary row
+            if yL:
+                feed = (bay.x + 74, bay.bottom - 60)
+                self._draw_header_tube((railL, max(yL)), feed,
+                                       (railL - 12, (max(yL) + feed[1]) * 0.5), irad,
+                                       cols=self._INT_COLS)
         else:                                      # central plenum 'tree' in the valley
             inner = intL + intR
             ys = [p[1] for p in inner]
@@ -2240,10 +2252,13 @@ class App:
             for px, py, a, side in inner:          # runner from each inner port -> trunk
                 self._draw_header_tube((px, py), (cxx, py), ((px + cxx) * 0.5, py - 6),
                                        irad, cols=self._INT_COLS, joint=True)
-            self._draw_header_tube((cxx, t_bot), (cxx, t_bot + dy * 0.5),
-                                   (cxx + 6, t_bot + dy * 0.25), irad,
-                                   cols=self._INT_COLS)
             self._collector_slug((cxx, t_top), irad + 1)
+            # complete the air path: a feed from the plenum down to the throttle
+            # body / intercooler in the ancillary row (no more broken chain)
+            feed = (bay.x + 74, bay.bottom - 60)
+            self._draw_header_tube((cxx, t_bot), feed,
+                                   (cxx - dy * 0.3, (t_bot + feed[1]) * 0.5), irad,
+                                   cols=self._INT_COLS)
 
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
@@ -2494,11 +2509,14 @@ class App:
             lab = self.font_small.render(self.tr(txt), True, DIM)
             self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
-    def _bay_turbo(self, cx, cy, r, spin, load, electric=False, twin_scroll=False):
+    def _bay_turbo(self, cx, cy, r, spin, load, electric=False, twin_scroll=False,
+                   inlet_dir=None):
         """A detailed turbocharger for the engine bay: brushed-alloy snail volute,
         a spinning compressor wheel, a discharge snout, a hot-side glow and a
         chrome centre — lit & brushed for the Apple-grade look.  ``twin_scroll``
-        draws a divided housing (a dividing rib + a second inlet throat)."""
+        draws a divided housing (a dividing rib + a second inlet throat).
+        ``inlet_dir`` (radians) draws a short RED turbine inlet throat at that
+        angle so the exhaust is seen flowing into the volute."""
         cx, cy, r = int(cx), int(cy), int(r)
         sc = self.screen
         # soft cast shadow grounding the turbo on whatever is behind it
@@ -2509,6 +2527,15 @@ class App:
         # a crisp dark gap ring isolates the turbo from the conrods/headers behind
         # it (a little black breathing room so the linework doesn't merge)
         pygame.draw.circle(sc, (15, 16, 21), (cx, cy), r + 3)
+        if inlet_dir is not None:                     # red turbine inlet throat
+            ca, sa = math.cos(inlet_dir), math.sin(inlet_dir)
+            ix, iy = cx + ca * (r - 1), cy + sa * (r - 1)
+            ox, oy = cx + ca * (r + 10), cy + sa * (r + 10)
+            pygame.draw.line(sc, (50, 16, 12), (ix, iy), (ox, oy), 9)
+            pygame.draw.line(sc, (178, 64, 40), (ix, iy), (ox, oy), 6)
+            pygame.draw.line(sc, (230, 122, 86), (ix, iy), (ox, oy), 2)
+            pygame.draw.circle(sc, (60, 20, 14), (int(ox), int(oy)), 5)
+            pygame.draw.circle(sc, (200, 92, 60), (int(ox), int(oy)), 5, 1)
         # compressor housing — brushed alloy disc
         sc.blit(self._grad_surf(2 * r, 2 * r, (152, 158, 172), (68, 74, 88), r, gloss=True),
                 (cx - r, cy - r))
@@ -2803,7 +2830,8 @@ class App:
             return
         if sub == "twin_scroll":                      # divided-housing single turbo
             tx = bay.centerx if hot else bay.right - 50
-            self._bay_turbo(tx, cyv, 24, spin, load, electric=etb, twin_scroll=True)
+            self._bay_turbo(tx, cyv, 24, spin, load, electric=etb, twin_scroll=True,
+                            inlet_dir=(-math.pi / 2 if hot else math.pi))
             lab("twin-scroll single turbo", tx, cyv + 32)
             self._bay_ancillaries(bay, eng, thr)
             return
@@ -2821,25 +2849,30 @@ class App:
                 # the valley, not a single turbo (and not forced perspective).
                 sc = self.screen
                 self._bay_turbo(bay.centerx + 12, cyv - 5, r, spin, load,
-                                electric=etb)
+                                electric=etb, inlet_dir=-math.pi / 2)
                 rx0, ry0 = bay.centerx + 2, cyv - 30          # a conrod crossing
                 rx1, ry1 = bay.centerx + 12, cyv - 2          # in front of the back turbo
                 pygame.draw.line(sc, (26, 28, 36), (rx0, ry0), (rx1, ry1), 8)
                 pygame.draw.line(sc, (118, 124, 140), (rx0, ry0), (rx1, ry1), 5)
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
                 self._bay_turbo(bay.centerx - 12, cyv + 6, r, spin, load,
-                                electric=etb)
+                                electric=etb, inlet_dir=-math.pi / 2)
                 lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
             else:                                      # outside the banks
-                for x in (bay.x + 48, bay.right - 48):
-                    self._bay_turbo(x, cyv, r, spin, load, electric=etb)
+                self._bay_turbo(bay.x + 48, cyv, r, spin, load, electric=etb,
+                                inlet_dir=0.0)
+                self._bay_turbo(bay.right - 48, cyv, r, spin, load, electric=etb,
+                                inlet_dir=math.pi)
                 lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 26)
         elif sub == "twin":                            # inline parallel twin-turbo
-            self._bay_turbo(bay.right - 78, cyv - 13, 18, spin, load, electric=etb)
-            self._bay_turbo(bay.right - 44, cyv + 14, 20, spin, load, electric=etb)
+            self._bay_turbo(bay.right - 78, cyv - 13, 18, spin, load, electric=etb,
+                            inlet_dir=math.pi)
+            self._bay_turbo(bay.right - 44, cyv + 14, 20, spin, load, electric=etb,
+                            inlet_dir=math.pi)
             lab("parallel twin-turbo", bay.right - 60, cyv + 36)
         else:                                          # inline: single turbo, side
-            self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb)
+            self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb,
+                            inlet_dir=math.pi)
             lab("single turbo", bay.right - 50, cyv + 30)
         self._bay_ancillaries(bay, eng, thr)
 
