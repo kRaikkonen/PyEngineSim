@@ -1777,15 +1777,20 @@ class App:
                     (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
                     (bx + ux * d0 + qx * e1, by + uy * d0 + qy * e1)])
 
-        def cap(d, halfw, base):                      # DOMED rounded end-cap
+        def cap(d, halfw, base, spec=False):          # DOMED rounded end-cap
             cxp = int(bx + ux * d); cyp = int(by + uy * d); rr = int(halfw)
-            for sr, f, off in ((rr, 0.62, 0.0), (int(rr * 0.72), 1.0, 0.26),
-                               (int(rr * 0.40), 1.45, 0.46)):
+            for sr, f, off in ((rr, 0.62, 0.0), (int(rr * 0.80), 0.86, 0.16),
+                               (int(rr * 0.60), 1.12, 0.30), (int(rr * 0.40), 1.4, 0.44),
+                               (int(rr * 0.22), 1.7, 0.56)):
                 ox = int(qx * halfw * off); oy = int(qy * halfw * off)   # toward light
                 col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
                        min(255, int(base[2] * f)))
                 pygame.draw.circle(self.screen, col, (cxp + ox, cyp + oy), max(1, sr))
             pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), rr, 1)
+            if spec and rr >= 5:                       # sharp polished catch-light
+                pygame.draw.circle(self.screen, (240, 244, 252),
+                                   (cxp + int(qx * halfw * 0.5), cyp + int(qy * halfw * 0.5)),
+                                   max(1, rr // 5))
 
         def along(d0, d1, e, col, w=1):               # a line running ALONG the bore
             pygame.draw.line(self.screen, col,
@@ -1800,19 +1805,21 @@ class App:
                 (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
 
         cap(-2, hw + 3, (60, 66, 78))                 # base cap (behind)
-        shaded(-2, length + 4, hw + 3, (78, 84, 96))  # finned metal sleeve
-        # brushed grain (faint lines running along the bore) + a gloss specular
+        shaded(-2, length + 4, hw + 3, (78, 84, 96), n=16)  # smooth metal sleeve
+        # brushed grain (faint lines running along the bore)
         for be in (-0.55, -0.25, 0.55):
             along(0, length + 2, be * (hw + 3), (94, 100, 114), 1)
-        along(1, length + 2, 0.18 * (hw + 3), (188, 196, 210), 2)   # specular stripe
-        along(1, length + 2, 0.30 * (hw + 3), (140, 148, 164), 1)
+        # a SOFT specular band (bright core fading out) instead of a hard stripe
+        for eoff, c in ((0.18, 206), (0.05, 168), (0.31, 150), (-0.08, 132)):
+            along(1, length + 2, eoff * (hw + 3),
+                  (c, min(255, c + 6), min(255, c + 16)), 2 if c > 190 else 1)
         for fz in range(4):                           # cooling fins near the head
             d = length - 2 - fz * 5
             pygame.draw.line(self.screen, (40, 44, 54),
                              (bx + ux * d + qx * (hw + 3), by + uy * d + qy * (hw + 3)),
                              (bx + ux * d - qx * (hw + 3), by + uy * d - qy * (hw + 3)), 2)
         edge(-2, length + 4, hw + 3, (22, 24, 30), 2)
-        cap(length + 4, hw + 3, (104, 110, 124))      # DOMED head cap on top
+        cap(length + 4, hw + 3, (104, 110, 124), spec=True)   # DOMED head cap on top
         # --- valvetrain on the head: poppet valves, springs, lifters + camshaft -
         if length > 34:
             sc = self.screen
@@ -2417,6 +2424,10 @@ class App:
             return
         w, h = int(r * 2.6), int(r * 1.6)
         rect = pygame.Rect(cx - w // 2, cy - h // 2, w, h)
+        # soft cast shadow grounding the blower (same depth cue as the turbos)
+        shp = pygame.Surface((w + 14, h + 14), pygame.SRCALPHA)
+        pygame.draw.rect(shp, (0, 0, 0, 115), (5, 7, w, h), border_radius=10)
+        sc.blit(pygame.transform.smoothscale(shp, (w + 14, h + 14)), (rect.x - 5, rect.y - 2))
         sc.blit(self._grad_surf(w, h, (166, 172, 186), (58, 64, 78), 8, gloss=True),
                 rect.topleft)
         sc.blit(self._brushed(w, h, 8), rect.topleft)
