@@ -49,7 +49,7 @@ def porsche_911_h6() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Porsche 911 3.8 flat-six (993)",
+        name="Porsche 911 Carrera (993) M64 3.8 flat-6",
         cylinders=cylinders,
         flywheel_inertia=0.16,
         redline_rpm=7000,
@@ -81,7 +81,7 @@ def vw_ea888_i4() -> Engine:
         for i in range(4)
     ]
     return Engine(
-        name="VW/Audi EA888 2.0 TFSI (Golf R)",
+        name="Volkswagen Golf R EA888 2.0 I4",
         cylinders=cylinders,
         flywheel_inertia=0.24,
         redline_rpm=6800,
@@ -118,7 +118,7 @@ def ford_coyote_v8() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Ford Coyote 5.0 V8 (Mustang GT)",
+        name="Ford Mustang GT Coyote 5.0 V8",
         cylinders=cylinders,
         flywheel_inertia=0.42,
         redline_rpm=7400,
@@ -159,7 +159,7 @@ def ferrari_458() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Ferrari 458 Italia 4.5L flat-plane V8",
+        name="Ferrari 458 Italia F136 4.5 V8",
         cylinders=cylinders,
         flywheel_inertia=0.20,           # light flywheel — revs eagerly to 9k
         redline_rpm=9000,
@@ -203,7 +203,7 @@ def lexus_lfa() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Lexus LFA 4.8L V10 (1LR-GUE)",
+        name="Lexus LFA 1LR-GUE 4.8 V10",
         cylinders=cylinders,
         flywheel_inertia=0.17,           # famously fast-revving (light flywheel)
         redline_rpm=9000,
@@ -243,7 +243,7 @@ def lamborghini_murcielago() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Lamborghini Murcielago LP670-4 SV 6.5L V12",
+        name="Lamborghini Murcielago LP670-4 SV 6.5 V12",
         cylinders=cylinders,
         flywheel_inertia=0.30,           # lighter rotating mass (SV)
         redline_rpm=8100,
@@ -280,7 +280,7 @@ def lamborghini_diablo() -> Engine:
                      compression_ratio=10.7, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Lamborghini Diablo 6.0 V12",
+        name="Lamborghini Diablo VT 6.0 V12",
         cylinders=cylinders,
         flywheel_inertia=0.30, redline_rpm=7100, idle_rpm=900,
         heat_release_k=3.8, ve_peak_frac=0.7, ve_width_frac=0.6,
@@ -313,7 +313,7 @@ def ferrari_f2004_v10() -> Engine:
                      bank_angle_deg=bank)
         )
     return Engine(
-        name="Ferrari F2004 3.0 V10 (F1)",
+        name="Ferrari F2004 Tipo053 3.0 V10 F1",
         cylinders=cylinders,
         straight_cut=True,               # F1: sequential dog box
         flywheel_inertia=0.045,          # F1: revs almost instantly
@@ -353,7 +353,7 @@ def dodge_hellcat_v8() -> Engine:
                      compression_ratio=9.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Dodge Hellcat 6.2 supercharged V8",
+        name="Dodge Charger SRT Hellcat 6.2 SC V8",
         cylinders=cylinders,
         flywheel_inertia=0.45, redline_rpm=6200, idle_rpm=720,
         heat_release_k=1.73, ve_width_frac=0.75, closed_map_fraction=0.20,
@@ -381,7 +381,7 @@ def toyota_2jz_supra() -> Engine:
         for i in range(6)
     ]
     return Engine(
-        name="Toyota Supra 2JZ-GTE 3.0 twin-turbo I6",
+        name="Toyota Supra 2JZ-GTE 3.0 I6",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=800,
         heat_release_k=1.7, ve_width_frac=0.75, closed_map_fraction=0.22,
@@ -408,7 +408,7 @@ def bmw_s58() -> Engine:
         for i in range(6)
     ]
     return Engine(
-        name="BMW S58 3.0 twin-turbo I6 (M3/M4)",
+        name="BMW M3 S58 3.0TT I6",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=7200, idle_rpm=750,
         heat_release_k=1.52, ve_width_frac=0.75, closed_map_fraction=0.16,
@@ -438,7 +438,7 @@ def mazda_rx7_rotary() -> Engine:
         for i in range(4)
     ]
     return Engine(
-        name="Mazda RX-7 FD 13B rotary (twin-turbo)",
+        name="Mazda RX-7 FD3S 13B-REW rotary",
         cylinders=cylinders,
         flywheel_inertia=0.13, redline_rpm=8000, idle_rpm=850,
         heat_release_k=4.6, ve_peak_frac=0.72, ve_width_frac=0.7,
@@ -469,7 +469,7 @@ def subaru_22b() -> Engine:
                      compression_ratio=8.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Subaru 22B STi 2.2 turbo flat-4",
+        name="Subaru Impreza 22B STi EJ22 flat-4",
         cylinders=cylinders,
         flywheel_inertia=0.20, redline_rpm=7000, idle_rpm=820,
         heat_release_k=4.4, ve_width_frac=0.72, closed_map_fraction=0.17,
@@ -498,7 +498,7 @@ def lamborghini_huracan_v10() -> Engine:
                      compression_ratio=12.7, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Lamborghini Huracan 5.2 V10",
+        name="Lamborghini Huracan LP610-4 5.2 V10",
         cylinders=cylinders,
         flywheel_inertia=0.21, redline_rpm=8500, idle_rpm=950,
         closed_map_fraction=0.15,
@@ -529,7 +529,7 @@ def lamborghini_aventador_v12() -> Engine:
                      compression_ratio=11.8, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Lamborghini Aventador 6.5 V12",
+        name="Lamborghini Aventador LP700-4 L539 6.5 V12",
         cylinders=cylinders,
         flywheel_inertia=0.30, redline_rpm=8500, idle_rpm=900,
         heat_release_k=3.75, ve_peak_frac=0.68, ve_width_frac=0.62,
@@ -565,7 +565,7 @@ def ferrari_laferrari_v12() -> Engine:
                      compression_ratio=13.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Ferrari LaFerrari 6.3 V12",
+        name="Ferrari LaFerrari F140FE 6.3 V12",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=9000, idle_rpm=950,
         closed_map_fraction=0.14,
@@ -599,7 +599,7 @@ def ferrari_f40_v8() -> Engine:
                      compression_ratio=7.8, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Ferrari F40 2.9 twin-turbo V8",
+        name="Ferrari F40 F120A 2.9TT V8",
         cylinders=cylinders,
         bov_flutter=True,                # 80s twin-turbo, no dump valve -> 'stututu'
         flywheel_inertia=0.16, redline_rpm=7750, idle_rpm=950,
@@ -635,7 +635,7 @@ def pagani_zonda_v12() -> Engine:
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Pagani Zonda 7.3 V12",
+        name="Pagani Zonda Cinque M297 7.3 V12",
         cylinders=cylinders,
         flywheel_inertia=0.34, redline_rpm=6700, idle_rpm=720,
         idle_air_base=0.23,
@@ -694,7 +694,7 @@ def nissan_r34_rb26() -> Engine:
         for i in range(6)
     ]
     return Engine(
-        name="Nissan R34 GT-R RB26DETT 2.6 twin-turbo I6",
+        name="Nissan Skyline GT-R R34 RB26DETT 2.6 I6",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=8000, idle_rpm=850,
         heat_release_k=1.42, ve_width_frac=0.74, closed_map_fraction=0.16,
@@ -723,7 +723,7 @@ def nissan_r35_vr38() -> Engine:
                      compression_ratio=9.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Nissan R35 GT-R VR38DETT 3.8 twin-turbo V6",
+        name="Nissan GT-R R35 VR38DETT 3.8 V6",
         cylinders=cylinders,
         flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=800,
         heat_release_k=1.66, ve_width_frac=0.74, closed_map_fraction=0.16,
@@ -752,7 +752,7 @@ def ferrari_f355_v8() -> Engine:
                      compression_ratio=11.1, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Ferrari F355 3.5 V8 (5-valve)",
+        name="Ferrari F355 Berlinetta F129 3.5 V8",
         cylinders=cylinders,
         flywheel_inertia=0.20, redline_rpm=8500, idle_rpm=950,
         heat_release_k=4.2, ve_peak_frac=0.72, closed_map_fraction=0.13,
@@ -782,7 +782,7 @@ def mazda_787b_rotary() -> Engine:
         for i in range(8)
     ]
     return Engine(
-        name="Mazda 787B R26B 4-rotor (Le Mans)",
+        name="Mazda 787B R26B 4-rotor",
         cylinders=cylinders,
         straight_cut=True, has_cat=False,   # Le Mans prototype: dog box, no cat
         flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=1100,
@@ -813,7 +813,7 @@ def porsche_carrera_gt_v10() -> Engine:
                      compression_ratio=12.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Porsche Carrera GT 5.7 V10",
+        name="Porsche Carrera GT 980/01 5.7 V10",
         cylinders=cylinders,
         flywheel_inertia=0.20, redline_rpm=8400, idle_rpm=950,
         heat_release_k=3.7, ve_peak_frac=0.72, closed_map_fraction=0.12,
@@ -843,7 +843,7 @@ def porsche_992_gt3() -> Engine:
                      compression_ratio=13.3, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Porsche 992 GT3 4.0 flat-six",
+        name="Porsche 911 GT3 (992) 9A1 4.0 flat-6",
         cylinders=cylinders,
         flywheel_inertia=0.17, redline_rpm=9000, idle_rpm=900,
         heat_release_k=4.2, ve_peak_frac=0.72, closed_map_fraction=0.12,
@@ -874,7 +874,7 @@ def honda_nsx_na1() -> Engine:
                      compression_ratio=10.2, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Honda NSX NA1 3.0 V6 VTEC",
+        name="Honda NSX NA1 C30A 3.0 V6",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=800,
         heat_release_k=4.1, ve_peak_frac=0.7, closed_map_fraction=0.14,
@@ -901,7 +901,7 @@ def mitsubishi_evo7_4g63() -> Engine:
         for i in range(4)
     ]
     return Engine(
-        name="Mitsubishi Evo VII 4G63T 2.0 turbo I4",
+        name="Mitsubishi Lancer Evolution VI GSR 4G63T 2.0 I4",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=7000, idle_rpm=820,
         heat_release_k=2.6, ve_width_frac=0.72, closed_map_fraction=0.22,
@@ -963,7 +963,7 @@ def chevrolet_camaro_z28_302() -> Engine:
                      compression_ratio=11.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="1968 Camaro Z/28 302 V8",
+        name="Chevrolet Camaro Z/28 302 V8 (1968)",
         cylinders=cylinders,
         flywheel_inertia=0.38, redline_rpm=7000, idle_rpm=800,
         heat_release_k=3.2, ve_peak_frac=0.62, closed_map_fraction=0.24,
@@ -992,7 +992,7 @@ def audi_sport_quattro_s1() -> Engine:
         for i in range(5)
     ]
     return Engine(
-        name="Audi Sport Quattro S1 2.1 turbo I5",
+        name="Audi Sport Quattro S1 EA827 2.1 I5",
         cylinders=cylinders,
         straight_cut=True, has_cat=False,   # Group B rally: dog box, no cat
         bov_flutter=True,                   # no dump valve -> 'stututu' surge
@@ -1024,7 +1024,7 @@ def audi_rs3_2024() -> Engine:
         for i in range(5)
     ]
     return Engine(
-        name="Audi RS3 2.5 turbo I5 (EA855)",
+        name="Audi RS3 EA855 2.5 I5",
         cylinders=cylinders,
         flywheel_inertia=0.20, redline_rpm=7000, idle_rpm=820,
         heat_release_k=1.7, ve_width_frac=0.74, closed_map_fraction=0.22,
@@ -1055,7 +1055,7 @@ def audi_rs5_ea839() -> Engine:
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Audi RS5 2.9 twin-turbo V6 (EA839)",
+        name="Audi RS5 EA839 2.9TT V6",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=7000, idle_rpm=780,
         heat_release_k=1.34, ve_width_frac=0.74, closed_map_fraction=0.16,
@@ -1086,7 +1086,7 @@ def mercedes_sl65_m275() -> Engine:
                      compression_ratio=9.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Mercedes SL65 AMG 6.0 twin-turbo V12",
+        name="Mercedes-Benz SL65 AMG M275 6.0 V12",
         cylinders=cylinders,
         flywheel_inertia=0.40, redline_rpm=6000, idle_rpm=600,
         heat_release_k=1.31, ve_width_frac=0.78, closed_map_fraction=0.18,
@@ -1116,7 +1116,7 @@ def mercedes_amg_gt_m178() -> Engine:
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Mercedes-AMG GT 4.0 twin-turbo V8 (M178)",
+        name="Mercedes-AMG GT M178 4.0TT V8",
         cylinders=cylinders,
         flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=720,
         heat_release_k=1.23, ve_width_frac=0.74, closed_map_fraction=0.16,
@@ -1146,7 +1146,7 @@ def singer_dls_williams_flat6() -> Engine:
                      compression_ratio=12.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Singer DLS 4.0 flat-six (Williams)",
+        name="Singer DLS Williams 4.0 flat-6",
         cylinders=cylinders,
         flywheel_inertia=0.16, redline_rpm=9000, idle_rpm=900,
         heat_release_k=4.3, ve_peak_frac=0.72, closed_map_fraction=0.12,
@@ -1177,7 +1177,7 @@ def bmw_e92_m3_s65() -> Engine:
                      compression_ratio=12.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="BMW E92 M3 S65 4.0 V8",
+        name="BMW M3 E92 S65 4.0 V8",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=8300, idle_rpm=850,
         heat_release_k=4.0, ve_peak_frac=0.66, closed_map_fraction=0.14,
@@ -1208,7 +1208,7 @@ def porsche_918_v8_hybrid() -> Engine:
                      compression_ratio=11.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Porsche 918 Spyder 4.6 V8 hybrid",
+        name="Porsche 918 Spyder 9A1 4.6 V8 hybrid",
         cylinders=cylinders,
         flywheel_inertia=0.22, redline_rpm=9000, idle_rpm=950,
         heat_release_k=4.8, ve_peak_frac=0.7, closed_map_fraction=0.13,
@@ -1238,7 +1238,7 @@ def ford_gt_2017_v6() -> Engine:
                      compression_ratio=9.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Ford GT 3.5 EcoBoost twin-turbo V6",
+        name="Ford GT EcoBoost 3.5TT V6",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=7000, idle_rpm=820,
         heat_release_k=1.62, ve_width_frac=0.74, closed_map_fraction=0.18,
@@ -1268,7 +1268,7 @@ def bugatti_veyron_w16() -> Engine:
                      compression_ratio=9.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Bugatti Veyron 8.0 quad-turbo W16",
+        name="Bugatti Veyron Super Sport 8.0 W16",
         cylinders=cylinders,
         flywheel_inertia=0.55, redline_rpm=6500, idle_rpm=800,
         heat_release_k=1.47, ve_width_frac=0.78, closed_map_fraction=0.18,
@@ -1298,7 +1298,7 @@ def bentley_continental_w12() -> Engine:
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Bentley Continental 6.0 twin-turbo W12",
+        name="Bentley Continental GT 6.0TT W12",
         cylinders=cylinders,
         flywheel_inertia=0.45, redline_rpm=6000, idle_rpm=620,
         heat_release_k=1.77, ve_width_frac=0.78, closed_map_fraction=0.18,
@@ -1328,7 +1328,7 @@ def bmw_44_v8() -> Engine:
                      compression_ratio=10.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="BMW 4.4 twin-turbo V8 (S63)",
+        name="BMW M5 S63 4.4TT V8",
         cylinders=cylinders,
         flywheel_inertia=0.30, redline_rpm=7000, idle_rpm=650,
         heat_release_k=1.35, ve_width_frac=0.74, closed_map_fraction=0.17,
@@ -1357,7 +1357,7 @@ def audi_42_v8() -> Engine:
                      compression_ratio=12.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="Audi 4.2 FSI V8 (R8)",
+        name="Audi R8 4.2 FSI V8",
         cylinders=cylinders,
         flywheel_inertia=0.26, redline_rpm=8250, idle_rpm=720,
         heat_release_k=3.82, ve_peak_frac=0.66, closed_map_fraction=0.15,
@@ -1387,7 +1387,7 @@ def mclaren_p1_v8_hybrid() -> Engine:
                      compression_ratio=9.5, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="McLaren P1 3.8 twin-turbo V8 hybrid",
+        name="McLaren P1 M838TQ 3.8TT V8 hybrid",
         cylinders=cylinders,
         flywheel_inertia=0.22, redline_rpm=8500, idle_rpm=900,
         heat_release_k=1.4, ve_width_frac=0.72, closed_map_fraction=0.15,
@@ -1416,7 +1416,7 @@ def bmw_b48_i4() -> Engine:
         for i in range(4)
     ]
     return Engine(
-        name="BMW B48 2.0 turbo I4",
+        name="BMW 230i B48 2.0 I4",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=6500, idle_rpm=750,
         heat_release_k=1.95, ve_width_frac=0.72, closed_map_fraction=0.22,
@@ -1444,7 +1444,7 @@ def mercedes_a45_amg_i4() -> Engine:
         for i in range(4)
     ]
     return Engine(
-        name="Mercedes-AMG A45 2.0 turbo I4 (M139)",
+        name="Mercedes-AMG A45 S M139 2.0 I4",
         cylinders=cylinders,
         flywheel_inertia=0.18, redline_rpm=6750, idle_rpm=820,
         heat_release_k=1.6, ve_width_frac=0.72, closed_map_fraction=0.22,
@@ -1506,7 +1506,7 @@ def mclaren_f1_v12() -> Engine:
                      compression_ratio=11.0, cycle_offset_deg=offsets[i],
                      bank_angle_deg=bank))
     return Engine(
-        name="McLaren F1 6.1 V12 (BMW S70/2)",
+        name="McLaren F1 BMW S70/2 6.1 V12",
         cylinders=cylinders,
         flywheel_inertia=0.24, redline_rpm=7500, idle_rpm=850,
         heat_release_k=4.15, ve_peak_frac=0.7, closed_map_fraction=0.13,
@@ -1595,7 +1595,7 @@ def spitfire_merlin_v12() -> Engine:
         for i in range(12)
     ]
     return Engine(
-        name="Spitfire RR Merlin 27L supercharged V12",
+        name="Supermarine Spitfire RR Merlin 27L V12",
         cylinders=cylinders,
         flywheel_inertia=3.2, redline_rpm=3000, idle_rpm=550,
         heat_release_k=3.6, ve_peak_frac=0.7, ve_width_frac=0.72,
@@ -1624,7 +1624,7 @@ def f4f_wildcat_radial() -> Engine:
         for i in range(14)
     ]
     return Engine(
-        name="F4F Wildcat P&W R-1830 30L 14-cyl radial",
+        name="Grumman F4F Wildcat P&W R-1830 14-cyl radial",
         cylinders=cylinders,
         flywheel_inertia=3.5, redline_rpm=2700, idle_rpm=500,
         heat_release_k=3.5, ve_peak_frac=0.65, ve_width_frac=0.72,
@@ -1655,7 +1655,7 @@ def ferrari_f2007_v8() -> Engine:
         for i in range(8)
     ]
     return Engine(
-        name="Ferrari F2007 056 2.4L V8 F1 (19000 rpm)",
+        name="Ferrari F2007 Tipo056 2.4 V8 F1",
         cylinders=cylinders,
         flywheel_inertia=0.05, redline_rpm=19000, idle_rpm=4000,
         heat_release_k=3.6, ve_peak_frac=0.85, ve_width_frac=0.55,
@@ -1686,7 +1686,7 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         for i in range(6)
     ]
     return Engine(
-        name="Ferrari SF-25 1.6T V6 hybrid F1 (2025)",
+        name="Ferrari SF-25 1.6 V6 F1 hybrid",
         cylinders=cylinders,
         flywheel_inertia=0.11, redline_rpm=15000, idle_rpm=4000,
         heat_release_k=2.6, ve_peak_frac=0.8, ve_width_frac=0.6,
@@ -1720,7 +1720,7 @@ def mclaren_mp44_honda_v6() -> Engine:
         for i in range(6)
     ]
     return Engine(
-        name="McLaren MP4/4 Honda RA168E 1.5 V6 twin-turbo (1988)",
+        name="McLaren MP4/4 Honda RA168E 1.5 V6 turbo",
         cylinders=cylinders,
         flywheel_inertia=0.11, redline_rpm=12500, idle_rpm=3500,
         heat_release_k=3.5, ve_peak_frac=0.8, ve_width_frac=0.6,
@@ -1803,7 +1803,7 @@ def mazda_savanna_rx7_fc() -> Engine:
 
 def abarth_500_esseesse() -> Engine:
     return _inline4(
-        "Abarth 500 Esseesse 1.4 T-Jet", 72.0, 84.0, 132.0, 9.8,
+        "Abarth 500 esseesse 1.4 T-Jet I4", 72.0, 84.0, 132.0, 9.8,
         flywheel_inertia=0.12, redline_rpm=6500, idle_rpm=850,
         heat_release_k=3.3, ve_peak_frac=0.45, closed_map_fraction=0.17,
         exhaust_tone=96.0, exhaust_primary_m=0.45, exhaust_total_m=1.7,
@@ -2768,131 +2768,131 @@ def bentley_supersports_w12() -> Engine:
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
 PRESETS = [
-    ("1", "911",    porsche_911_h6),
-    ("2", "EA888",  vw_ea888_i4),
-    ("3", "Coyote", ford_coyote_v8),
-    ("4", "458",    ferrari_458),
-    ("5", "LFA",    lexus_lfa),
-    ("6", "LP670 SV", lamborghini_murcielago),
-    ("7", "F2004",  ferrari_f2004_v10),
-    ("8", "Hellcat", dodge_hellcat_v8),
-    ("9", "2JZ",    toyota_2jz_supra),
-    ("0", "S58",    bmw_s58),
-    ("rx7", "RX-7 rotary", mazda_rx7_rotary),
-    ("22b", "Subaru 22B", subaru_22b),
-    ("hura", "Huracan V10", lamborghini_huracan_v10),
-    ("aven", "Aventador V12", lamborghini_aventador_v12),
-    ("lafe", "LaFerrari V12", ferrari_laferrari_v12),
-    ("f40", "F40 twin-turbo V8", ferrari_f40_v8),
-    ("zonda", "Zonda V12", pagani_zonda_v12),
-    ("ae86", "AE86 4A-GE", toyota_ae86_4age),
-    ("r34", "R34 RB26", nissan_r34_rb26),
-    ("r35", "R35 VR38", nissan_r35_vr38),
-    ("f355", "F355 V8", ferrari_f355_v8),
-    ("787b", "787B 4-rotor", mazda_787b_rotary),
-    ("cgt", "Carrera GT V10", porsche_carrera_gt_v10),
-    ("gt3", "992 GT3 flat-6", porsche_992_gt3),
-    ("nsx", "NSX NA1 V6", honda_nsx_na1),
-    ("evo7", "Evo VII 4G63", mitsubishi_evo7_4g63),
-    ("c7", "Corvette C7", chevrolet_c7_lt1),
-    ("z28", "'68 Camaro Z/28", chevrolet_camaro_z28_302),
-    ("s1", "S1 Quattro I5", audi_sport_quattro_s1),
+    ("ab500", "Abarth 500 esseesse", abarth_500_esseesse),
+    ("giulia", "Giulia QV 690T V6", alfa_giulia_quadrifoglio),
+    ("atomv8", "Ariel Atom V8 10500rpm", ariel_atom_v8),
+    ("db11", "Aston DB11 V12", aston_martin_db11_v12),
+    ("valhalla", "Aston Valhalla M178 V8", aston_valhalla_v8),
+    ("valk", "Aston Valkyrie 11100rpm V12", aston_valkyrie_v12),
+    ("vulcan", "Aston Vulcan 7.0 V12", aston_vulcan_v12),
+    ("audiv8", "Audi 4.2 V8", audi_42_v8),
     ("rs3", "RS3 2.5 I5", audi_rs3_2024),
     ("rs5", "RS5 EA839 V6", audi_rs5_ea839),
-    ("sl65", "SL65 AMG V12", mercedes_sl65_m275),
-    ("amggt", "AMG GT V8", mercedes_amg_gt_m178),
-    ("singer", "Singer DLS 4.0", singer_dls_williams_flat6),
-    ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
-    ("918", "918 V8 hybrid", porsche_918_v8_hybrid),
-    ("fordgt", "Ford GT V6", ford_gt_2017_v6),
-    ("veyron", "Veyron W16", bugatti_veyron_w16),
+    ("s1", "S1 Quattro I5", audi_sport_quattro_s1),
     ("conti", "Continental W12", bentley_continental_w12),
-    ("bmwv8", "BMW 4.4 V8", bmw_44_v8),
-    ("audiv8", "Audi 4.2 V8", audi_42_v8),
-    ("p1", "McLaren P1", mclaren_p1_v8_hybrid),
+    ("bentss", "Continental Supersports W12", bentley_supersports_w12),
     ("b48", "BMW B48 I4", bmw_b48_i4),
-    ("a45", "A45 AMG I4", mercedes_a45_amg_i4),
+    ("e36m3", "BMW M3 E36 S50 I6", bmw_m3_e36),
+    ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
     ("m3gtr", "M3 GTR V8", bmw_m3_gtr_p60),
-    ("mf1", "McLaren F1 V12", mclaren_f1_v12),
-    ("diablo", "Diablo V12", lamborghini_diablo),
-    ("pete", "Peterbilt 389 diesel", peterbilt_389_diesel),
-    ("focus3", "Focus 1.0 I3", ford_focus_ecoboost_i3),
-    ("merlin", "Spitfire Merlin V12", spitfire_merlin_v12),
-    ("wildcat", "F4F Wildcat radial", f4f_wildcat_radial),
+    ("0", "S58", bmw_s58),
+    ("e60m5", "BMW M5 E60 S85 V10", bmw_m5_e60_v10),
+    ("bmwv8", "BMW 4.4 V8", bmw_44_v8),
+    ("veyron", "Veyron W16", bugatti_veyron_w16),
+    ("ct5v", "CT5-V Blackwing LT4 V8", cadillac_ct5v_blackwing),
+    ("z28", "'68 Camaro Z/28", chevrolet_camaro_z28_302),
+    ("c7", "Corvette C7", chevrolet_c7_lt1),
+    ("chevyss", "Chevrolet SS LS3 V8", chevy_ss_ls3),
+    ("challenger", "Challenger R/T 392 HEMI", dodge_challenger_rt),
+    ("charger", "Charger R/T 5.7 HEMI", dodge_charger_rt),
+    ("8", "Hellcat", dodge_hellcat_v8),
+    ("viper", "Viper GTS 8.4 V10", dodge_viper_gts),
+    ("d8gto", "Donkervoort D8 GTO I5", donkervoort_d8_gto),
+    ("250cal", "Ferrari 250 California V12", ferrari_250_california),
+    ("4", "458", ferrari_458),
+    ("488", "Ferrari 488 GTB F154 V8", ferrari_488_gtb),
+    ("pista", "Ferrari 488 Pista V8", ferrari_488_pista),
+    ("enzo", "Ferrari Enzo F140 V12", ferrari_enzo_v12),
+    ("7", "F2004", ferrari_f2004_v10),
     ("f2007", "Ferrari F2007 V8 F1", ferrari_f2007_v8),
+    ("f355", "F355 V8", ferrari_f355_v8),
+    ("f40", "F40 twin-turbo V8", ferrari_f40_v8),
+    ("f50gt", "Ferrari F50 GT F130 V12", ferrari_f50_gt),
+    ("fxxk", "Ferrari FXX-K V12 hybrid", ferrari_fxxk),
+    ("lafe", "LaFerrari V12", ferrari_laferrari_v12),
     ("sf25", "Ferrari SF-25 V6 F1", ferrari_sf25_v6_hybrid),
-    ("mp44", "McLaren MP4/4 V6 turbo", mclaren_mp44_honda_v6),
-    ("rx7fc", "Savanna RX-7 FC 13B-T", mazda_savanna_rx7_fc),
-    ("ab500", "Abarth 500 esseesse", abarth_500_esseesse),
+    ("escrs", "Escort RS Cosworth", ford_escort_cosworth),
+    ("raptor", "F-150 Raptor EcoBoost V6", ford_raptor_ecoboost),
+    ("f450", "F-450 Power Stroke diesel", ford_f450_powerstroke),
+    ("focus3", "Focus 1.0 I3", ford_focus_ecoboost_i3),
+    ("fordgt", "Ford GT V6", ford_gt_2017_v6),
+    ("gt40", "Ford GT40 MK2 427 V8", ford_gt40_mk2),
+    ("3", "Coyote", ford_coyote_v8),
+    ("rtr", "Mustang RTR Coyote V8", ford_mustang_rtr),
+    ("rs200", "Ford RS200 Evo", ford_rs200_evo),
+    ("gt350r", "Shelby GT350R Voodoo V8", ford_gt350r_voodoo),
+    ("gt500", "Shelby GT500 Predator V8", ford_gt500_predator),
+    ("fd370z", "FD 370Z VQ37 V6", fd_nissan_370z),
+    ("fdviper", "FD Viper SRT10 V10", fd_viper_srt10),
+    ("funco", "Funco F9 LS V8 buggy", funco_f9_buggy),
+    ("wildcat", "F4F Wildcat radial", f4f_wildcat_radial),
     ("ek9", "Civic Type-R EK9 B16B", honda_civic_type_r_ek9),
     ("ep3", "Civic Type-R EP3 K20A", honda_civic_type_r_ep3),
     ("fk8", "Civic Type-R FK8 K20C1", honda_civic_type_r_fk8),
-    ("p205", "Peugeot 205 T16", peugeot_205_t16),
-    ("rs200", "Ford RS200 Evo", ford_rs200_evo),
+    ("nsx", "NSX NA1 V6", honda_nsx_na1),
     ("hoonrs", "Hoonigan RS200 Evo", hoonigan_rs200_evo),
-    ("escrs", "Escort RS Cosworth", ford_escort_cosworth),
+    ("hoonitruck", "Hoonitruck EcoBoost V6", hoonitruck_f150),
+    ("boneshaker", "Bone Shaker blown V8", hot_wheels_bone_shaker),
+    ("ftype", "F-Type R 5.0 SC V8", jaguar_ftype_r_v8),
+    ("xj220", "Jaguar XJ220 V6", jaguar_xj220_v6),
+    ("one1", "Koenigsegg One:1 V8", koenigsegg_one1_v8),
+    ("aven", "Aventador V12", lamborghini_aventador_v12),
+    ("countach", "Countach LP5000 QV V12", lamborghini_countach_qv),
+    ("diablo", "Diablo V12", lamborghini_diablo),
+    ("hura", "Huracan V10", lamborghini_huracan_v10),
+    ("6", "LP670 SV", lamborghini_murcielago),
+    ("5", "LFA", lexus_lfa),
+    ("gts", "GranTurismo S F136 V8", maserati_granturismo_s),
+    ("787b", "787B 4-rotor", mazda_787b_rotary),
+    ("rx7", "RX-7 rotary", mazda_rx7_rotary),
+    ("rx7fc", "Savanna RX-7 FC 13B-T", mazda_savanna_rx7_fc),
+    ("mf1", "McLaren F1 V12", mclaren_f1_v12),
+    ("mp44", "McLaren MP4/4 V6 turbo", mclaren_mp44_honda_v6),
+    ("p1", "McLaren P1", mclaren_p1_v8_hybrid),
+    ("senna", "McLaren Senna M840 V8", mclaren_senna),
+    ("a45", "A45 AMG I4", mercedes_a45_amg_i4),
+    ("amggt", "AMG GT V8", mercedes_amg_gt_m178),
+    ("actros", "Actros race truck diesel", mercedes_actros_race_truck),
+    ("c63bs", "C63 AMG BS M156 V8", mercedes_c63_black_m156),
+    ("clkgtr", "Mercedes CLK GTR V12", mercedes_clk_gtr),
+    ("e63", "E63 AMG M157 V8", mercedes_e63_amg_m157),
+    ("sl65", "SL65 AMG V12", mercedes_sl65_m275),
+    ("w154", "Mercedes W154 SC V12", mercedes_w154),
+    ("evo7", "Evo VII 4G63", mitsubishi_evo7_4g63),
+    ("r35", "R35 VR38", nissan_r35_vr38),
+    ("r390", "Nissan R390 GT1 V8", nissan_r390_gt1),
     ("s15", "Silvia Spec-R S15 SR20DET", nissan_silvia_s15),
+    ("r34", "R34 RB26", nissan_r34_rb26),
+    ("titan", "Titan Warrior Cummins V8", nissan_titan_warrior),
+    ("zonda", "Zonda V12", pagani_zonda_v12),
+    ("zondar", "Pagani Zonda R M120 V12", pagani_zonda_r),
+    ("pete", "Peterbilt 389 diesel", peterbilt_389_diesel),
+    ("p205", "Peugeot 205 T16", peugeot_205_t16),
+    ("1", "911", porsche_911_h6),
+    ("crs27", "Carrera RS 2.7 flat-6", porsche_carrera_rs_27),
+    ("996gt1", "911 GT1 Strassen (996)", porsche_996_gt1),
+    ("993gt2", "911 GT2 (993) TT", porsche_993_gt2),
+    ("gt2rs", "991.2 GT2 RS 3.8TT", porsche_991_gt2_rs),
+    ("gt3", "992 GT3 flat-6", porsche_992_gt3),
+    ("991rs", "991.1 GT3 RS 4.0", porsche_991_gt3_rs),
+    ("997rs4", "997.2 GT3 RS 4.0 Mezger", porsche_997_gt3_rs_40),
+    ("930", "911 Turbo 3.3 (930)", porsche_930_turbo),
+    ("917", "Porsche 917 LH flat-12", porsche_917_lh),
+    ("918", "918 V8 hybrid", porsche_918_v8_hybrid),
+    ("cgt", "Carrera GT V10", porsche_carrera_gt_v10),
+    ("pro2", "RJ Anderson Pro 2 V8", rj_anderson_pro2),
+    ("singer", "Singer DLS 4.0", singer_dls_williams_flat6),
+    ("22b", "Subaru 22B", subaru_22b),
     ("gdb", "Impreza WRX STi GDB EJ207", subaru_wrx_sti_gdb),
     ("gv", "WRX STi GV EJ257", subaru_wrx_sti_gv),
     ("vt15r", "WRX STi VT15R rally", subaru_wrx_sti_vt15r),
-    ("db11", "Aston DB11 V12", aston_martin_db11_v12),
-    ("giulia", "Giulia QV 690T V6", alfa_giulia_quadrifoglio),
-    ("ftype", "F-Type R 5.0 SC V8", jaguar_ftype_r_v8),
-    ("gts", "GranTurismo S F136 V8", maserati_granturismo_s),
-    ("xj220", "Jaguar XJ220 V6", jaguar_xj220_v6),
-    ("d8gto", "Donkervoort D8 GTO I5", donkervoort_d8_gto),
-    ("speed12", "TVR Cerbera Speed 12", tvr_cerbera_speed12),
-    ("e36m3", "BMW M3 E36 S50 I6", bmw_m3_e36),
-    ("e60m5", "BMW M5 E60 S85 V10", bmw_m5_e60_v10),
-    ("e63", "E63 AMG M157 V8", mercedes_e63_amg_m157),
-    ("c63bs", "C63 AMG BS M156 V8", mercedes_c63_black_m156),
-    ("ct5v", "CT5-V Blackwing LT4 V8", cadillac_ct5v_blackwing),
-    ("crs27", "Carrera RS 2.7 flat-6", porsche_carrera_rs_27),
-    ("930", "911 Turbo 3.3 (930)", porsche_930_turbo),
-    ("993gt2", "911 GT2 (993) TT", porsche_993_gt2),
-    ("996gt1", "911 GT1 Strassen (996)", porsche_996_gt1),
-    ("997rs4", "997.2 GT3 RS 4.0 Mezger", porsche_997_gt3_rs_40),
-    ("991rs", "991.1 GT3 RS 4.0", porsche_991_gt3_rs),
-    ("gt2rs", "991.2 GT2 RS 3.8TT", porsche_991_gt2_rs),
-    ("917", "Porsche 917 LH flat-12", porsche_917_lh),
-    ("enzo", "Ferrari Enzo F140 V12", ferrari_enzo_v12),
-    ("zondar", "Pagani Zonda R M120 V12", pagani_zonda_r),
-    ("one1", "Koenigsegg One:1 V8", koenigsegg_one1_v8),
-    ("atomv8", "Ariel Atom V8 10500rpm", ariel_atom_v8),
-    ("250cal", "Ferrari 250 California V12", ferrari_250_california),
-    ("488", "Ferrari 488 GTB F154 V8", ferrari_488_gtb),
-    ("pista", "Ferrari 488 Pista V8", ferrari_488_pista),
-    ("f50gt", "Ferrari F50 GT F130 V12", ferrari_f50_gt),
-    ("fxxk", "Ferrari FXX-K V12 hybrid", ferrari_fxxk),
-    ("senna", "McLaren Senna M840 V8", mclaren_senna),
-    ("countach", "Countach LP5000 QV V12", lamborghini_countach_qv),
-    ("valk", "Aston Valkyrie 11100rpm V12", aston_valkyrie_v12),
-    ("valhalla", "Aston Valhalla M178 V8", aston_valhalla_v8),
-    ("vulcan", "Aston Vulcan 7.0 V12", aston_vulcan_v12),
-    ("clkgtr", "Mercedes CLK GTR V12", mercedes_clk_gtr),
-    ("gt40", "Ford GT40 MK2 427 V8", ford_gt40_mk2),
-    ("gt350r", "Shelby GT350R Voodoo V8", ford_gt350r_voodoo),
-    ("gt500", "Shelby GT500 Predator V8", ford_gt500_predator),
-    ("charger", "Charger R/T 5.7 HEMI", dodge_charger_rt),
-    ("challenger", "Challenger R/T 392 HEMI", dodge_challenger_rt),
-    ("viper", "Viper GTS 8.4 V10", dodge_viper_gts),
-    ("fdviper", "FD Viper SRT10 V10", fd_viper_srt10),
-    ("rtr", "Mustang RTR Coyote V8", ford_mustang_rtr),
-    ("fd370z", "FD 370Z VQ37 V6", fd_nissan_370z),
-    ("chevyss", "Chevrolet SS LS3 V8", chevy_ss_ls3),
-    ("r390", "Nissan R390 GT1 V8", nissan_r390_gt1),
-    ("w154", "Mercedes W154 SC V12", mercedes_w154),
-    ("raptor", "F-150 Raptor EcoBoost V6", ford_raptor_ecoboost),
-    ("f450", "F-450 Power Stroke diesel", ford_f450_powerstroke),
-    ("titan", "Titan Warrior Cummins V8", nissan_titan_warrior),
-    ("actros", "Actros race truck diesel", mercedes_actros_race_truck),
-    ("ironknight", "Volvo Iron Knight diesel", volvo_iron_knight),
-    ("boneshaker", "Bone Shaker blown V8", hot_wheels_bone_shaker),
+    ("merlin", "Spitfire Merlin V12", spitfire_merlin_v12),
+    ("ae86", "AE86 4A-GE", toyota_ae86_4age),
+    ("9", "2JZ", toyota_2jz_supra),
     ("t100", "Toyota T100 Baja V8", toyota_t100_baja),
-    ("hoonitruck", "Hoonitruck EcoBoost V6", hoonitruck_f150),
-    ("funco", "Funco F9 LS V8 buggy", funco_f9_buggy),
-    ("pro2", "RJ Anderson Pro 2 V8", rj_anderson_pro2),
-    ("bentss", "Continental Supersports W12", bentley_supersports_w12),
+    ("speed12", "TVR Cerbera Speed 12", tvr_cerbera_speed12),
+    ("2", "EA888", vw_ea888_i4),
+    ("ironknight", "Volvo Iron Knight diesel", volvo_iron_knight),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
