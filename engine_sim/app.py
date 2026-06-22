@@ -1616,44 +1616,6 @@ class App:
                                      (cxx + e1, cy1), (cxx + e1, cy0)])
             pygame.draw.line(self.screen, (24, 26, 32), (cxx - chw, cy0), (cxx - chw, cy1))
             pygame.draw.line(self.screen, (24, 26, 32), (cxx + chw, cy0), (cxx + chw, cy1))
-            # --- exhaust headers (drawn BEHIND the cylinders): each runner exits
-            # the head and merges into a collector — hot-V into the valley, cold-V
-            # outboard down each bank ---
-            hotv = getattr(eng, "hot_v", False)
-            hrad = max(2, int(width * 0.16))
-            vy = (cy0 + cy1) * 0.5
-            cyv = (bay.y + bay.bottom) // 2
-            lports, rports = [], []
-            for s, st in enumerate(stations):
-                jy = mtop + dy * (s + 0.5)
-                for i in st:
-                    side = -1.0 if eng.cylinders[i].bank_angle_deg < 0 else 1.0
-                    a = side * bank
-                    hxc = cxx + math.sin(a) * length
-                    hyc = jy - math.cos(a) * length
-                    ex = (-side) if hotv else side       # hot-V exhaust inboard
-                    px = hxc + math.cos(a) * width * 0.5 * ex
-                    py = hyc + math.sin(a) * width * 0.5 * ex
-                    (lports if side < 0 else rports).append((px, py, a, side))
-            if hotv:
-                # SHORT equal-length runners straight from the inner heads to the
-                # two valley turbos — the whole point of a hot-V — so the turbos
-                # are visibly plumbed in, not floating.  Thin pixel tubes.
-                thin = max(2, int(width * 0.13))
-                near_t = (bay.centerx - 12, cyv + 6)
-                far_t = (bay.centerx + 12, cyv - 5)
-                if lports:
-                    self._draw_headers(eng, lports, near_t, thin, cols=self._EXH_COLS)
-                if rports:
-                    self._draw_headers(eng, rports, far_t, thin, cols=self._EXH_COLS)
-            else:
-                offx = length * math.sin(bank) + width * 1.7
-                if lports:
-                    self._draw_headers(eng, lports, (cxx - offx, vy), hrad,
-                                       cols=self._EXH_COLS)
-                if rports:
-                    self._draw_headers(eng, rports, (cxx + offx, vy), hrad,
-                                       cols=self._EXH_COLS)
             for s, st in enumerate(stations):
                 jy = mtop + dy * (s + 0.5)
                 for i in st:
@@ -1673,6 +1635,8 @@ class App:
                     ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+            # manifolds ON TOP of the banks so the red/green pipes are never hidden
+            self._draw_v_manifolds(eng, stations, cxx, mtop, dy, bank, length, width, bay)
             self._draw_bay_induction(bay, eng, sim)
             return
 
@@ -1708,31 +1672,29 @@ class App:
         irad = max(2, int(width * 0.13))
         cyv = (bay.y + bay.bottom) // 2
         heads = [(x_start + sw * (s + 0.5), crank_y - length * 0.82) for s in range(ns)]
-        # EXHAUST: each port bows down-right into a collector, which sweeps to the
-        # turbo on the right (a touch thicker than the runners).
-        mp = (x_start + sw * ns + 8, crank_y - length * 0.30)
-        for jx, hy in heads:
-            px = jx + width * 0.42
-            ctrl = (px * 0.3 + mp[0] * 0.7, hy + 16)
-            self._draw_header_tube((px, hy), mp, ctrl, hrad, cols=self._EXH_COLS,
-                                   joint=True)
-        self._collector_slug(mp, hrad)
+        base = min(h[1] for h in heads) - 12
+        stag = max(4, hrad + 2)
+        # EXHAUST (red): riser UP from each port, square out to the right, run to a
+        # collector beside the turbo, then drop into it (leftmost run on top).
         turbo = (bay.right - 50, cyv)
-        cmid = ((mp[0] + turbo[0]) * 0.5 + 6, mp[1] + (turbo[1] - mp[1]) * 0.18)
-        self._draw_header_tube(mp, turbo, cmid, hrad + 1, cols=self._EXH_COLS)
-        # INTAKE: a plenum up-left, each port bowing into it, then a feed running
-        # down the left side toward the throttle body / intercooler.
-        plen = (x_start - 4, crank_y - length * 0.62)
-        for jx, hy in heads:
+        coll_x = turbo[0] - 16
+        for i, (jx, hy) in enumerate(heads):
+            px = jx + width * 0.42
+            yr = base - (ns - 1 - i) * stag
+            self._draw_ortho_pipe([(px, hy), (px, yr), (coll_x, yr)], hrad,
+                                  self._EXH_COLS, joint=True)
+        self._draw_ortho_pipe([(coll_x, base - (ns - 1) * stag), (coll_x, turbo[1]),
+                               turbo], hrad + 1, self._EXH_COLS)
+        # INTAKE (green): riser UP from each intake port, square out to the LEFT to
+        # a plenum rail, then drop down to the throttle body (rightmost run on top).
+        plen_x = bay.x + 36
+        for i, (jx, hy) in enumerate(heads):
             ix = jx - width * 0.42
-            ctrl = (ix * 0.4 + plen[0] * 0.6, hy - 14)
-            self._draw_header_tube((ix, hy), plen, ctrl, irad, cols=self._INT_COLS,
-                                   joint=True)
-        self._collector_slug(plen, irad)
-        feed_end = (bay.x + 34, bay.bottom - 58)
-        self._draw_header_tube(plen, feed_end,
-                               (bay.x + 20, (plen[1] + feed_end[1]) * 0.5),
-                               irad, cols=self._INT_COLS)
+            yr = base - i * stag
+            self._draw_ortho_pipe([(ix, hy), (ix, yr), (plen_x, yr)], irad,
+                                  self._INT_COLS, joint=True)
+        self._draw_ortho_pipe([(plen_x, base - (ns - 1) * stag),
+                               (plen_x, bay.bottom - 58)], irad, self._INT_COLS)
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2121,6 +2083,25 @@ class App:
             pygame.draw.circle(sc, cols[1], (int(p0[0]), int(p0[1])), rad)
             pygame.draw.circle(sc, cols[2], (int(p0[0] - 1), int(p0[1] - 1)), max(1, rad // 2))
 
+    def _draw_ortho_pipe(self, pts, rad, cols=None, joint=False):
+        """A RIGHT-ANGLED manifold run (riser up from the port, then a 90-deg elbow
+        out to a horizontal rail) drawn as a polyline with filled elbows so the
+        corners read as solid bends — the blueprint 'up then square out' routing."""
+        cols = cols or self._EXH_COLS
+        sc = self.screen
+        ipts = [(int(x), int(y)) for x, y in pts]
+        pygame.draw.lines(sc, cols[0], False, ipts, rad * 2 + 2)
+        pygame.draw.lines(sc, cols[1], False, ipts, max(2, rad * 2))
+        for x, y in ipts[1:-1]:                        # solid elbow at each corner
+            pygame.draw.circle(sc, cols[1], (x, y), rad)
+        pygame.draw.lines(sc, cols[2], False, [(x - 1, y - 1) for x, y in ipts],
+                          max(1, rad // 2))
+        if joint:                                      # flange fitting at the port
+            x, y = ipts[0]
+            pygame.draw.circle(sc, cols[0], (x, y), rad + 2)
+            pygame.draw.circle(sc, cols[1], (x, y), rad)
+            pygame.draw.circle(sc, cols[2], (x - 1, y - 1), max(1, rad // 2))
+
     def _collector_slug(self, pt, rad):
         """A brushed merge slug where runners join the collector."""
         cxc, cyc = int(pt[0]), int(pt[1])
@@ -2140,6 +2121,46 @@ class App:
             ctrl = (mx + math.cos(a) * rad * 1.6, my)      # bow the runner outward
             self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad, cols=cols, joint=True)
         self._collector_slug(collector, rad)
+
+    def _draw_v_manifolds(self, eng, stations, cxx, mtop, dy, bank, length, width, bay):
+        """V-engine manifolds drawn ON TOP of the banks so they're never hidden:
+        a RED exhaust runner squares OUT from each head to a side rail, cascades
+        down the outer edge and sweeps in to the turbo; a GREEN intake runner
+        squares UP from the inner port to a top-centre plenum."""
+        cyv = (bay.y + bay.bottom) // 2
+        hrad = max(2, int(width * 0.16))
+        irad = max(2, int(width * 0.13))
+        hot = getattr(eng, "hot_v", False)
+        Lout, Rout, ins = [], [], []
+        for s, st in enumerate(stations):
+            jy = mtop + dy * (s + 0.5)
+            for i in st:
+                side = -1.0 if eng.cylinders[i].bank_angle_deg < 0 else 1.0
+                a = side * bank
+                hxc = cxx + math.sin(a) * length
+                hyc = jy - math.cos(a) * length
+                px, py = math.cos(a) * width * 0.5, math.sin(a) * width * 0.5
+                (Lout if side < 0 else Rout).append(           # OUTER = exhaust
+                    (hxc + px * side, hyc + py * side))
+                ins.append((hxc - px * side, hyc - py * side))  # INNER = intake
+        # EXHAUST (red): square out to a side rail, drop, sweep in to the turbo
+        ltg = (cxx - 12, cyv + 6) if hot else (bay.x + 48, cyv)
+        rtg = (cxx + 12, cyv - 5) if hot else (bay.right - 48, cyv)
+        for ports, rail_x, tgt in ((Lout, bay.x + 30, ltg), (Rout, bay.right - 30, rtg)):
+            if not ports:
+                continue
+            ports.sort(key=lambda p: p[1])
+            for px, py in ports:
+                self._draw_ortho_pipe([(px, py), (rail_x, py)], hrad,
+                                      self._EXH_COLS, joint=True)
+            self._draw_ortho_pipe([(rail_x, ports[0][1]), (rail_x, tgt[1]), tgt],
+                                  hrad + 1, self._EXH_COLS)
+        # INTAKE (green): square up to a top-centre plenum
+        plen_y = mtop - dy * 0.25
+        for px, py in ins:
+            self._draw_ortho_pipe([(px, py), (px, plen_y), (cxx, plen_y)], irad,
+                                  self._INT_COLS, joint=True)
+        self._collector_slug((cxx, plen_y), irad)
 
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
