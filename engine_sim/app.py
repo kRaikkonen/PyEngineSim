@@ -1529,6 +1529,7 @@ class App:
         # oil pan etc.; default to the bay centre for layouts that don't set it.
         self._crank_xy = (bay.centerx, (bay.y + bay.bottom) // 2)
         self._crank_h = 30.0
+        self._cur_vt = getattr(eng, "valvetrain", "dohc")   # for per-cylinder cams
         self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         cp = getattr(eng, "crank_plane", "")
@@ -1871,10 +1872,37 @@ class App:
                 return 0.0
             il, el = lift_at(700.0, 240.0), lift_at(500.0, 230.0)
             cam_d = length + 19
-            # camshaft journal across the head
-            pygame.draw.line(sc, (118, 124, 138),
-                             (bx + ux * cam_d + qx * (hw + 1), by + uy * cam_d + qy * (hw + 1)),
-                             (bx + ux * cam_d - qx * (hw + 1), by + uy * cam_d - qy * (hw + 1)), 2)
+            vt = getattr(self, "_cur_vt", "dohc")
+            cama = theta                                  # cams spin (half-speed look)
+
+            def camshaft(qo, lift):                       # an end-on cam: journal + lobe
+                ccx = bx + ux * cam_d + qx * qo
+                ccy = by + uy * cam_d + qy * qo
+                pygame.draw.circle(sc, (96, 102, 118), (int(ccx), int(ccy)), 4)
+                pygame.draw.circle(sc, (150, 156, 172), (int(ccx), int(ccy)), 4, 1)
+                # the lobe points toward the valve it's pressing (down the bore)
+                lobe = 3.0 + lift * 3.0
+                lx2 = ccx - ux * lobe; ly2 = ccy - uy * lobe
+                pygame.draw.line(sc, (170, 176, 192), (int(ccx), int(ccy)),
+                                 (int(lx2), int(ly2)), 3)
+                pygame.draw.circle(sc, (200, 206, 222), (int(ccx), int(ccy)), 1)
+            if vt == "ohv":
+                # OHV: NO overhead cam — a single low gear + PUSHRODS up to rockers
+                for qo in (-hw * 0.5, hw * 0.5):
+                    r0x = bx + ux * (length + 2) + qx * qo
+                    r0y = by + uy * (length + 2) + qy * qo
+                    r1x = bx + ux * (cam_d + 3) + qx * qo * 0.6
+                    r1y = by + uy * (cam_d + 3) + qy * qo * 0.6
+                    pygame.draw.line(sc, (150, 120, 60), (int(r0x), int(r0y)),
+                                     (int(r1x), int(r1y)), 2)   # pushrod (brassy)
+                pygame.draw.line(sc, (118, 124, 138),          # rocker shaft
+                                 (bx + ux * cam_d + qx * (hw + 1), by + uy * cam_d + qy * (hw + 1)),
+                                 (bx + ux * cam_d - qx * (hw + 1), by + uy * cam_d - qy * (hw + 1)), 3)
+            elif vt == "sohc":
+                camshaft(0.0, max(il, el))                # one central overhead cam
+            else:                                         # DOHC: two overhead cams
+                camshaft(-hw * 0.5, il)
+                camshaft(hw * 0.5, el)
             for qo, lift, vcol, scol in ((-hw * 0.5, il, (110, 196, 255), (70, 225, 215)),
                                          (hw * 0.5, el, (255, 146, 110), (255, 196, 60))):
                 # valve head dips INTO the bore as it opens — a tinted metal disc
