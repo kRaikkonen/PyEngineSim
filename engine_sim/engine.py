@@ -146,6 +146,10 @@ class Engine:
     # power above it.  Set hybrid_kw > 0 to make the car a hybrid (e.g. 918).
     hybrid_kw: float = 0.0           # electric motor peak power (kW)
     hybrid_base_rpm: float = 2200.0  # rpm below which the motor gives constant torque
+    mgu_whine: float = 0.0           # F1-style power unit: prominent MGU-H (turbo)
+                                     #   + MGU-K electric whine.  0 = ordinary hybrid
+    upshift_rpm: float = 0.0         # auto upshift point (0 = 0.93*redline); F1 cars
+                                     #   short-shift well below the redline
 
     # head / valvetrain / engine type ----------------------------------------
     # Unequal-length exhaust headers delay one bank's pulses, creating the

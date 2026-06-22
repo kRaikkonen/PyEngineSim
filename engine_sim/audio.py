@@ -1280,23 +1280,34 @@ class Synthesizer:
                 gw += (gv * 0.4) * self._whine(
                     f, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
 
-        # --- hybrid: electric-motor whine + e-turbo e-compressor whine ----------
+        # --- hybrid power unit: MGU-K (motor) + MGU-H (e-turbo) electric whine ---
         hv = P["hybrid_vol"]
+        mgu = getattr(eng, "mgu_whine", 0.0)    # F1 PU: prominent MGU whines
         if hv > 1e-3:
-            # electric drive motor: a clean high whine that rises with rpm and
-            # swells with the motor's assist (throttle), present on hybrids.
+            # MGU-K (kinetic): a clean high motor whine that rises with rpm and
+            # swells with deployment (throttle).  On an F1 PU it is LOUD.
             if eng.hybrid_kw > 0.0 and sim.hybrid_on and sim.throttle > 0.02:
                 fm = (rpm / 60.0) * 14.0                  # geared-up motor whine
                 if 60.0 < fm < sr * 0.45:
-                    amp = hv * 0.18 * min(sim.throttle, 1.0)
-                    out += amp * self._whine(fm, frames, [(1, 1.0), (2, 0.3)],
-                                             phase_attr="_motor_phase")
-            # e-turbo / e-compressor: a steady electric whine whenever it makes
-            # boost (no spool lag, so it's there the moment you ask for it).
-            if eng.electric_turbo and bfrac > 0.02:
-                fe = 2200.0 + bfrac * 2600.0
-                out += (hv * 0.22 * bfrac) * self._whine(
-                    min(fe, sr * 0.45), frames, [(1, 1.0)], phase_attr="_ecomp_phase")
+                    amp = hv * (0.18 + 0.5 * mgu) * min(sim.throttle, 1.0)
+                    out += amp * self._whine(fm, frames, [(1, 1.0), (2, 0.35),
+                                             (3, 0.18)], phase_attr="_motor_phase")
+            # MGU-H (heat): the motor on the TURBO SHAFT spins it ~125,000 rpm, so
+            # the modern-F1 PU has a piercing high electric WHISTLE and near-instant
+            # boost (no lag).  On an F1 PU it keeps singing even slightly off the
+            # throttle (the MGU-H holds the turbo spinning to recover heat energy).
+            if eng.electric_turbo:
+                present = bfrac
+                if mgu > 1e-3:
+                    present = max(bfrac, 0.28 * min(rpm / max(eng.redline_rpm, 1.0),
+                                                    1.0))
+                if present > 0.02:
+                    fe = (2400.0 + 4200.0 * bfrac) * (1.0 + 0.6 * mgu)
+                    amp = hv * (0.22 + 0.6 * mgu) * present
+                    out += amp * self._whine(min(fe, sr * 0.45), frames,
+                                             [(1, 1.0), (2, 0.4)],
+                                             phase_attr="_ecomp_phase")
+                    out += (amp * 0.3) * self._rng.standard_normal(frames)  # air-rush
 
         # pipe-wall thickness: dull the brassy 'trumpet' edge of the whines
         wt = P["wall_thickness"]

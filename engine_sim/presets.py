@@ -1665,10 +1665,10 @@ def ferrari_f2007_v8() -> Engine:
         exhaust_primary_m=0.42, exhaust_total_m=0.65, exhaust_radius_m=0.018,
         exhaust_channels=2, exhaust_openness=0.99, muffler_volume_m3=0.0006,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
-        wall_material="titanium", gear_grain=0.38,
+        wall_material="titanium", gear_grain=0.38, upshift_rpm=18500.0,
         gear_ratios=[3.0, 2.3, 1.85, 1.5, 1.25, 1.05, 0.9], final_drive=4.0,
         vehicle_mass=605.0, wheel_radius=0.33, clutch_capacity=600.0,
-        gearbox_type="single",
+        gearbox_type="dct",              # F1 seamless shift (no flare)
     )
 
 
@@ -1689,19 +1689,20 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         name="Ferrari SF-25 1.6T V6 hybrid F1 (2025)",
         cylinders=cylinders,
         flywheel_inertia=0.11, redline_rpm=15000, idle_rpm=4000,
-        heat_release_k=3.4, ve_peak_frac=0.8, ve_width_frac=0.6,
+        heat_release_k=2.6, ve_peak_frac=0.8, ve_width_frac=0.6,
         friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3800.0,
-        exhaust_tone=120.0,
-        exhaust_primary_m=0.4, exhaust_total_m=0.8, exhaust_radius_m=0.026,
-        exhaust_channels=1, exhaust_openness=0.7, muffler_volume_m3=0.0015,
-        induction="turbo", boost_bar=2.5, turbo_lag=0.25, turbo_spool_frac=0.08,
+        exhaust_tone=118.0,
+        exhaust_primary_m=0.4, exhaust_total_m=0.85, exhaust_radius_m=0.027,
+        exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.0018,
+        induction="turbo", boost_bar=1.6, turbo_lag=0.2, turbo_spool_frac=0.06,
         electric_turbo=True,             # MGU-H -> near-instant spool
         hybrid_kw=120.0, hybrid_base_rpm=3000.0,
+        mgu_whine=1.0, upshift_rpm=12000.0,   # loud MGU-H/K whistle; short-shifts
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         gear_grain=0.3,
         gear_ratios=[3.2, 2.5, 2.0, 1.65, 1.35, 1.12, 0.95, 0.82], final_drive=3.7,
-        vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=600.0,
-        gearbox_type="single",
+        vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=1500.0,
+        gearbox_type="dct",              # F1 seamless shift (no flare)
     )
 
 
@@ -1729,7 +1730,7 @@ def mclaren_mp44_honda_v6() -> Engine:
         exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.001,
         induction="turbo", boost_bar=2.6, turbo_lag=0.4, turbo_spool_frac=0.16,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
-        wall_material="titanium", gear_grain=0.3,
+        wall_material="titanium", gear_grain=0.3, upshift_rpm=11800.0,
         gear_ratios=[2.9, 2.2, 1.8, 1.5, 1.3, 1.1], final_drive=4.0,
         vehicle_mass=540.0, wheel_radius=0.33, clutch_capacity=550.0,
         gearbox_type="manual",
