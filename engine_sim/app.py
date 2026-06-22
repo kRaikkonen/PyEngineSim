@@ -1773,8 +1773,8 @@ class App:
             pygame.draw.line(sc, (118, 124, 138),
                              (bx + ux * cam_d + qx * (hw + 1), by + uy * cam_d + qy * (hw + 1)),
                              (bx + ux * cam_d - qx * (hw + 1), by + uy * cam_d - qy * (hw + 1)), 2)
-            for qo, lift, vcol in ((-hw * 0.5, il, (110, 196, 255)),
-                                   (hw * 0.5, el, (255, 146, 110))):
+            for qo, lift, vcol, scol in ((-hw * 0.5, il, (110, 196, 255), (70, 225, 215)),
+                                         (hw * 0.5, el, (255, 146, 110), (255, 196, 60))):
                 # valve head dips INTO the bore as it opens — a tinted metal disc
                 vd = length - 1 - lift * 6.0
                 vxp = int(bx + ux * vd + qx * qo); vyp = int(by + uy * vd + qy * qo)
@@ -1797,20 +1797,29 @@ class App:
                                    (vxp + int(lx * vr * 0.6), vyp + int(ly * vr * 0.6)),
                                    max(1, vr // 4))
                 pygame.draw.circle(sc, (18, 20, 26), (vxp, vyp), vr, 1)
-                # valve spring (compresses as the valve opens) — 4 coils
+                # valve spring (compresses as the valve opens) — 4 vivid anodised
+                # coils with a bright top edge so they read as colour, not grey
+                hi = tuple(min(255, c + 55) for c in scol)
                 for ci in range(4):
                     d = length + 4 + ci * (3.0 - lift * 1.2)
-                    pygame.draw.line(sc, (158, 164, 178),
-                                     (bx + ux * d + qx * (qo - hw * 0.24),
-                                      by + uy * d + qy * (qo - hw * 0.24)),
-                                     (bx + ux * d + qx * (qo + hw * 0.24),
-                                      by + uy * d + qy * (qo + hw * 0.24)), 1)
-                # bucket lifter + the eccentric cam lobe bearing on it
+                    p0 = (bx + ux * d + qx * (qo - hw * 0.24),
+                          by + uy * d + qy * (qo - hw * 0.24))
+                    p1 = (bx + ux * d + qx * (qo + hw * 0.24),
+                          by + uy * d + qy * (qo + hw * 0.24))
+                    pygame.draw.line(sc, scol, p0, p1, 2)
+                    pygame.draw.line(sc, hi, p0, (p0[0] + (p1[0] - p0[0]) * 0.45,
+                                                  p0[1] + (p1[1] - p0[1]) * 0.45), 1)
+                # simplified rocker-arm bracket (anodised gold) over the eccentric
+                # cam lobe + a bucket lifter riding it
                 lobe = (1.0 + lift) * hw * 0.18
                 ld = cam_d - lobe
-                pygame.draw.circle(sc, (96, 102, 116),
-                                   (int(bx + ux * ld + qx * qo), int(by + uy * ld + qy * qo)),
-                                   max(2, int(hw * 0.2)))
+                lxp = int(bx + ux * ld + qx * qo); lyp = int(by + uy * ld + qy * qo)
+                pygame.draw.line(sc, (224, 182, 86),
+                                 (int(bx + ux * (length + 4) + qx * qo),
+                                  int(by + uy * (length + 4) + qy * qo)),
+                                 (lxp, lyp), 3)
+                pygame.draw.circle(sc, (150, 156, 170), (lxp, lyp), max(2, int(hw * 0.2)))
+                pygame.draw.circle(sc, (245, 248, 255), (lxp - 1, lyp - 1), 1)
         # dark bore interior
         pygame.draw.polygon(self.screen, (24, 26, 32), [
             (bx + ux * 1 + qx * (hw - 2), by + uy * 1 + qy * (hw - 2)),
@@ -2178,10 +2187,11 @@ class App:
             lab = self.font_small.render(self.tr(txt), True, DIM)
             self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
-    def _bay_turbo(self, cx, cy, r, spin, load, electric=False):
+    def _bay_turbo(self, cx, cy, r, spin, load, electric=False, twin_scroll=False):
         """A detailed turbocharger for the engine bay: brushed-alloy snail volute,
         a spinning compressor wheel, a discharge snout, a hot-side glow and a
-        chrome centre — lit & brushed for the Apple-grade look."""
+        chrome centre — lit & brushed for the Apple-grade look.  ``twin_scroll``
+        draws a divided housing (a dividing rib + a second inlet throat)."""
         cx, cy, r = int(cx), int(cy), int(r)
         sc = self.screen
         # compressor housing — brushed alloy disc
@@ -2193,6 +2203,16 @@ class App:
         for rad, wd, col in ((r * 0.92, 4, (58, 62, 76)), (r * 0.72, 3, (46, 50, 62))):
             rr = pygame.Rect(cx - int(rad), cy - int(rad), int(2 * rad), int(2 * rad))
             pygame.draw.arc(sc, col, rr, math.radians(28), math.radians(332), int(wd))
+        if twin_scroll:
+            # divided turbine housing: a second, inner scroll wrap + two split
+            # inlet throats on the hot side and a dividing rib between them
+            rr = pygame.Rect(cx - int(r * 0.82), cy - int(r * 0.82),
+                             int(r * 1.64), int(r * 1.64))
+            pygame.draw.arc(sc, (52, 56, 70), rr, math.radians(40), math.radians(300), 2)
+            ix, iy = cx - int(r * 0.78), cy + int(r * 0.30)
+            pygame.draw.rect(sc, (120, 126, 140), (ix - 8, iy - 9, 12, 18), border_radius=2)
+            pygame.draw.rect(sc, (38, 42, 52), (ix - 8, iy - 9, 12, 18), 1, border_radius=2)
+            pygame.draw.line(sc, (46, 50, 62), (ix - 8, iy), (ix + 4, iy), 2)  # divider
         # compressor discharge snout (tangent, top-right)
         sx, sy = cx + int(r * 0.6), cy - int(r * 0.66)
         pygame.draw.rect(sc, (126, 132, 146), (sx - 5, sy - 6, 15, 13), border_radius=3)
@@ -2376,6 +2396,33 @@ class App:
             return
         hot = getattr(eng, "hot_v", False)
         etb = getattr(eng, "electric_turbo", False)
+        sub = getattr(eng, "induction_subtype", "")
+        if sub == "twincharge":                       # supercharger + turbo compound
+            self._bay_blower(bay.centerx, bay.y + 48, 22, spin, load)
+            if has_banks:
+                for x in (bay.x + 52, bay.right - 52):
+                    self._bay_turbo(x, cyv + 8, 17, spin, load)
+            else:
+                self._bay_turbo(bay.right - 50, cyv + 8, 20, spin, load)
+            lab("twincharge · supercharger + turbo", bay.centerx, bay.y + 6)
+            self._bay_ancillaries(bay, eng, thr)
+            return
+        if sub == "sequential":                       # small (primary) + big (secondary)
+            if has_banks:
+                pts = ((bay.x + 50, cyv, 15), (bay.right - 50, cyv, 24))
+            else:
+                pts = ((bay.right - 52, cyv - 24, 15), (bay.right - 46, cyv + 22, 24))
+            for x, y, rr in pts:
+                self._bay_turbo(x, y, rr, spin, load, electric=etb)
+            lab("sequential twin-turbo · small + big", bay.centerx, bay.y + 26)
+            self._bay_ancillaries(bay, eng, thr)
+            return
+        if sub == "twin_scroll":                      # divided-housing single turbo
+            tx = bay.centerx if hot else bay.right - 50
+            self._bay_turbo(tx, cyv, 24, spin, load, electric=etb, twin_scroll=True)
+            lab("twin-scroll single turbo", tx, cyv + 32)
+            self._bay_ancillaries(bay, eng, thr)
+            return
         if getattr(eng, "is_w", False):               # quad-turbo (Veyron W16)
             for x, y in ((bay.x + 46, cyv - 34), (bay.x + 46, cyv + 34),
                          (bay.right - 46, cyv - 34), (bay.right - 46, cyv + 34)):

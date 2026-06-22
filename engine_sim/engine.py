@@ -136,6 +136,14 @@ class Engine:
     # "na" naturally aspirated | "roots" positive-displacement supercharger
     # (Hellcat whine) | "centrifugal" supercharger | "turbo" turbocharger
     induction: str = "na"
+    induction_subtype: str = ""      # turbo plumbing flavour (display + audio):
+                                     #   ""            single turbo
+                                     #   "twin_scroll" divided-housing single turbo ->
+                                     #                 tighter, cleaner whistle, less lag
+                                     #   "sequential"  small turbo spools first, big one
+                                     #                 hands over up top -> a mid surge
+                                     #   "twincharge"  supercharger + turbo compound ->
+                                     #                 blower whine low, turbo whistle top
     boost_bar: float = 0.0           # peak boost above atmospheric (bar)
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
     turbo_lag: float = 0.6           # spool time constant (s) for turbo

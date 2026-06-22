@@ -495,6 +495,10 @@ class Synthesizer:
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
         self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
+        self._seq_phase = 0.0     # sequential primary (small) turbo whistle phase
+        self._seq2_phase = 0.0    # sequential secondary (big) turbo whistle phase
+        self._seq_prev = 0.0      # last secondary-turbo presence (for the hand-over)
+        self._seq_surge = 0.0     # decaying surge whoosh when the big turbo joins
         self._was_on_gas = 0.0    # recent on-throttle memory (fuels the crackle)
         self.pops_on = False      # overrun pops on/off (default off)
         self.time_scale = 1.0     # 1.0 normal .. <1 slow motion
@@ -1272,14 +1276,55 @@ class Synthesizer:
                 out += (sv * bfrac * 0.5) * self._whine(f, frames, harm)
 
         if tv > 1e-3 and eng.induction == "turbo":
+            # perfect fifth (root + 5th); the hidden 'o' mode adds a root bass
+            # layer + a dominant-7th (V7) hung on top.
+            voicing = _TURBO_V7 if self.o_chord else _PERFECT_FIFTH
+            sub = getattr(eng, "induction_subtype", "")
             if bfrac > 0.02:
-                f = 900.0 + bfrac * 5200.0                    # whistle rises with boost
-                amp = tv * bfrac * 0.30
-                # perfect fifth (root + 5th); the hidden 'o' mode adds a root
-                # bass layer + a dominant-7th (V7) hung on top.
-                voicing = _TURBO_V7 if self.o_chord else _PERFECT_FIFTH
-                out += amp * self._whine(min(f, sr * 0.45), frames, list(voicing))
-                out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
+                if sub == "sequential":
+                    # the SMALL turbo spools first (early, high-pitched); the BIG
+                    # one hands over up top with an audible surge whoosh.
+                    prim = min(bfrac / 0.5, 1.0)
+                    sec = max(0.0, (bfrac - 0.45) / 0.55)
+                    f1 = min(1600.0 + prim * 4200.0, sr * 0.45)
+                    f2 = min(780.0 + sec * 3500.0, sr * 0.45)
+                    out += (tv * prim * 0.22) * self._whine(
+                        f1, frames, list(voicing), phase_attr="_seq_phase")
+                    if sec > 1e-3:
+                        out += (tv * sec * 0.30) * self._whine(
+                            f2, frames, list(voicing), phase_attr="_seq2_phase")
+                    if sec - self._seq_prev > 0.004:      # big turbo coming on-song
+                        self._seq_surge = min(
+                            1.0, self._seq_surge + (sec - self._seq_prev) * 8.0)
+                    self._seq_prev = sec
+                    if self._seq_surge > 1e-3:
+                        n = np.arange(frames)
+                        env = np.exp(-n / (sr * 0.18)) * self._seq_surge
+                        out += (tv * 0.5) * self._rng.standard_normal(frames) * env
+                        self._seq_surge *= math.exp(-frames / (sr * 0.25))
+                    out += (tv * (prim + sec) * 0.16) * self._rng.standard_normal(frames)
+                elif sub == "twin_scroll":
+                    # divided housing keeps the exhaust pulses separated -> a
+                    # tighter, cleaner, higher whistle with far less air hiss.
+                    f = min(1150.0 + bfrac * 5300.0, sr * 0.45)
+                    amp = tv * bfrac * 0.32
+                    out += amp * self._whine(f, frames, list(voicing))
+                    out += (amp * 0.18) * self._rng.standard_normal(frames)
+                else:
+                    f = 900.0 + bfrac * 5200.0            # whistle rises with boost
+                    amp = tv * bfrac * 0.30
+                    out += amp * self._whine(min(f, sr * 0.45), frames, list(voicing))
+                    out += (amp * 0.5) * self._rng.standard_normal(frames)  # air
+                if sub == "twincharge":
+                    # compound: a positive-displacement blower whine sings LOW and
+                    # crossfades into the turbo whistle as the revs climb.
+                    ratio = eng.blower_ratio if eng.blower_ratio > 0 else 9.0
+                    fb = (rpm / 60.0) * ratio
+                    low = max(0.0, 1.0 - min(rpm / max(eng.redline_rpm, 1.0), 1.0) / 0.7)
+                    if 20.0 < fb < sr * 0.45 and low > 0.01:
+                        out += (sv * (0.3 + 0.5 * low) * 0.5) * self._whine(
+                            fb, frames, [(1, 1.0), (2, 0.5), (3, 0.28)],
+                            phase_attr="_whine_phase")
             # Throttle snaps shut while on boost -> the lift-off sound.  Which
             # one you hear depends on where the pressurised air goes:
             #   * an atmospheric dump valve vents it in one clean 'PSHHH';

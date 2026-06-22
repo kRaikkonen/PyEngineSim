@@ -1900,6 +1900,26 @@ def hoonigan_rs200_evo() -> Engine:
     return e
 
 
+def lancia_delta_s4() -> Engine:
+    """Lancia Delta S4 — Group B 1.8 I4, TWINCHARGED: a Roots 'Volumex'
+    supercharger fills the bottom end (no lag) and a big KKK turbo takes over up
+    top, so you hear the blower whine low crossfading into turbo whistle.  ~480 hp
+    rally, ~8000 rpm, low CR for the boost."""
+    return _inline4(
+        "Lancia Delta S4 Abarth 233 ATR 1.8 I4", 88.5, 71.5, 130.0, 7.0,
+        flywheel_inertia=0.12, redline_rpm=8000, idle_rpm=1100,
+        heat_release_k=3.6, ve_peak_frac=0.5, ve_width_frac=0.6,
+        closed_map_fraction=0.18, exhaust_tone=112.0, exhaust_primary_m=0.42,
+        exhaust_total_m=1.5, exhaust_radius_m=0.027, exhaust_channels=1,
+        exhaust_openness=0.88, muffler_volume_m3=0.001,
+        induction="turbo", induction_subtype="twincharge",
+        boost_bar=2.0, blower_ratio=8.5, turbo_lag=0.5, turbo_spool_frac=0.16,
+        anti_lag=True, bov_flutter=True, has_cat=False, straight_cut=True,
+        gear_ratios=[2.6, 1.85, 1.4, 1.1, 0.88], final_drive=4.3,
+        vehicle_mass=1090.0, wheel_radius=0.31, clutch_capacity=540.0,
+        gearbox_type="manual")
+
+
 def ford_escort_cosworth() -> Engine:
     return _inline4(
         "Ford Escort RS Cosworth YBT", 90.8, 77.0, 134.0, 8.0,
@@ -2883,6 +2903,7 @@ PRESETS = [
     ("3", "Coyote", ford_coyote_v8),
     ("rtr", "Mustang RTR Coyote V8", ford_mustang_rtr),
     ("rs200", "Ford RS200 Evo", ford_rs200_evo),
+    ("deltas4", "Lancia Delta S4 twincharge", lancia_delta_s4),
     ("gt350r", "Shelby GT350R Voodoo V8", ford_gt350r_voodoo),
     ("gt500", "Shelby GT500 Predator V8", ford_gt500_predator),
     ("fd370z", "FD 370Z VQ37 V6", fd_nissan_370z),
@@ -2978,6 +2999,11 @@ _CCW_ROTATION = {"ek9", "ep3", "fk8", "nsx"}
 # "hot vee" — exhaust + turbos inside the V valley (AMG M157/M177/M178, BMW
 # S63, Ferrari F154, Audi EA839, McLaren M838T/M840 ...).
 _HOT_V = {"e63", "amggt", "valhalla", "488", "pista", "rs5", "senna", "p1"}
+# Turbo plumbing subtypes (display + audio).  Sequential = a small turbo spools
+# first, a big one hands over up top (2JZ-GTE, RX-7 FD 13B-REW).  Twin-scroll =
+# a single divided-housing turbo, tighter/cleaner whistle (BMW B48/N55, EA888).
+_SEQUENTIAL_TT = {"9", "rx7"}
+_TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
 
 
 def _annotate(key, eng):
@@ -2988,6 +3014,11 @@ def _annotate(key, eng):
         eng.rotation = "CCW"
     if key in _HOT_V:
         eng.hot_v = True
+    if not eng.induction_subtype and eng.induction == "turbo":
+        if key in _SEQUENTIAL_TT:
+            eng.induction_subtype = "sequential"
+        elif key in _TWIN_SCROLL:
+            eng.induction_subtype = "twin_scroll"
     return eng
 
 
