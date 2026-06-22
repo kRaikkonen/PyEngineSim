@@ -2150,15 +2150,15 @@ class App:
         self._collector_slug(collector, rad)
 
     def _draw_v_manifolds(self, eng, stations, cxx, mtop, dy, bank, length, width, bay):
-        """V-engine manifolds drawn ON TOP of the banks so they're never hidden:
-        a RED exhaust runner squares OUT from each head to a side rail, cascades
-        down the outer edge and sweeps in to the turbo; a GREEN intake runner
-        squares UP from the inner port to a top-centre plenum."""
+        """V-engine manifolds on top of the banks, per the cold-V reference: smooth
+        curved RED exhaust headers (a 4-into-1 per bank) sweeping into the turbos,
+        and GREEN intake — a central plenum 'tree' in the valley for a cold-V
+        (intake inboard), or outboard plenums for a hot-V (intake outboard)."""
         cyv = (bay.y + bay.bottom) // 2
-        hrad = max(2, int(width * 0.16))
-        irad = max(2, int(width * 0.13))
+        hrad = max(2, int(width * 0.18))
+        irad = max(2, int(width * 0.15))
         hot = getattr(eng, "hot_v", False)
-        Lout, Rout, ins = [], [], []
+        Lout, Rout, Lin, Rin = [], [], [], []
         for s, st in enumerate(stations):
             jy = mtop + dy * (s + 0.5)
             for i in st:
@@ -2166,28 +2166,74 @@ class App:
                 a = side * bank
                 hxc = cxx + math.sin(a) * length
                 hyc = jy - math.cos(a) * length
-                px, py = math.cos(a) * width * 0.5, math.sin(a) * width * 0.5
-                (Lout if side < 0 else Rout).append(           # OUTER = exhaust
-                    (hxc + px * side, hyc + py * side))
-                ins.append((hxc - px * side, hyc - py * side))  # INNER = intake
-        # EXHAUST (red): square out to a side rail, drop, sweep in to the turbo
-        ltg = (cxx - 12, cyv + 6) if hot else (bay.x + 48, cyv)
-        rtg = (cxx + 12, cyv - 5) if hot else (bay.right - 48, cyv)
-        for ports, rail_x, tgt in ((Lout, bay.x + 30, ltg), (Rout, bay.right - 30, rtg)):
-            if not ports:
-                continue
-            ports.sort(key=lambda p: p[1])
-            for px, py in ports:
-                self._draw_ortho_pipe([(px, py), (rail_x, py)], hrad,
-                                      self._EXH_COLS, joint=True)
-            self._draw_ortho_pipe([(rail_x, ports[0][1]), (rail_x, tgt[1]), tgt],
-                                  hrad + 1, self._EXH_COLS)
-        # INTAKE (green): square up to a top-centre plenum
-        plen_y = mtop - dy * 0.25
-        for px, py in ins:
-            self._draw_ortho_pipe([(px, py), (px, plen_y), (cxx, plen_y)], irad,
-                                  self._INT_COLS, joint=True)
-        self._collector_slug((cxx, plen_y), irad)
+                ox = math.cos(a) * width * 0.5 * side
+                oy = math.sin(a) * width * 0.5 * side
+                (Lout if side < 0 else Rout).append((hxc + ox, hyc + oy, a, side))
+                (Lin if side < 0 else Rin).append((hxc - ox, hyc - oy, a, side))
+        if hot:                                    # exhaust inboard (valley), intake outboard
+            exhL, exhR, intL, intR = Lin, Rin, Lout, Rout
+            etgL, etgR = (cxx - 12, cyv + 6), (cxx + 12, cyv - 5)
+        else:                                      # cold-V: exhaust outboard, intake valley
+            exhL, exhR, intL, intR = Lout, Rout, Lin, Rin
+            etgL, etgR = (bay.x + 48, cyv), (bay.right - 48, cyv)
+        # RED exhaust — smooth 4-into-1 per bank into the turbo
+        if exhL:
+            self._draw_headers(eng, exhL, etgL, hrad, cols=self._EXH_COLS)
+        if exhR:
+            self._draw_headers(eng, exhR, etgR, hrad, cols=self._EXH_COLS)
+        # GREEN intake
+        if hot:
+            # OUTER intake: an inverted-U wrapping the outside, the two side rails
+            # joined across the top THROUGH an intercooler (the hot-V signature).
+            sc = self.screen
+            railL = int(min(p[0] for p in intL) - 14) if intL else bay.x + 40
+            railR = int(max(p[0] for p in intR) + 14) if intR else bay.right - 40
+            railL = max(railL, bay.x + 16); railR = min(railR, bay.right - 16)
+            top_y = mtop - dy * 0.15
+            for px, py, a, side in intL:
+                self._draw_header_tube((px, py), (railL, py), ((px + railL) * 0.5, py - 6),
+                                       irad, cols=self._INT_COLS, joint=True)
+            for px, py, a, side in intR:
+                self._draw_header_tube((px, py), (railR, py), ((px + railR) * 0.5, py - 6),
+                                       irad, cols=self._INT_COLS, joint=True)
+            yL = [p[1] for p in intL]
+            yR = [p[1] for p in intR]
+            if yL:
+                self._draw_header_tube((railL, max(yL)), (railL, top_y),
+                                       (railL - 5, (max(yL) + top_y) * 0.5), irad,
+                                       cols=self._INT_COLS)
+            if yR:
+                self._draw_header_tube((railR, max(yR)), (railR, top_y),
+                                       (railR + 5, (max(yR) + top_y) * 0.5), irad,
+                                       cols=self._INT_COLS)
+            ic_w = int(width * 2.4)
+            ic = pygame.Rect(int(cxx - ic_w // 2), int(top_y) - 7, ic_w, 14)
+            self._draw_header_tube((railL, top_y), (ic.left, top_y),
+                                   ((railL + ic.left) * 0.5, top_y - 4), irad,
+                                   cols=self._INT_COLS)
+            self._draw_header_tube((ic.right, top_y), (railR, top_y),
+                                   ((ic.right + railR) * 0.5, top_y - 4), irad,
+                                   cols=self._INT_COLS)
+            sc.blit(self._grad_surf(ic.w, ic.h, (152, 158, 172), (70, 76, 90), 3),
+                    ic.topleft)
+            for fx in range(ic.x + 3, ic.right - 2, 4):       # cooler fins
+                pygame.draw.line(sc, (44, 48, 58), (fx, ic.y + 2), (fx, ic.bottom - 2), 1)
+            pygame.draw.rect(sc, (40, 44, 54), ic, 1, border_radius=3)
+        else:                                      # central plenum 'tree' in the valley
+            inner = intL + intR
+            ys = [p[1] for p in inner]
+            t_top = (min(ys) - 6) if ys else mtop
+            t_bot = (max(ys) + 8) if ys else mtop + dy
+            self._draw_header_tube((cxx, t_top), (cxx, t_bot),
+                                   (cxx, (t_top + t_bot) * 0.5), irad + 2,
+                                   cols=self._INT_COLS)
+            for px, py, a, side in inner:          # runner from each inner port -> trunk
+                self._draw_header_tube((px, py), (cxx, py), ((px + cxx) * 0.5, py - 6),
+                                       irad, cols=self._INT_COLS, joint=True)
+            self._draw_header_tube((cxx, t_bot), (cxx, t_bot + dy * 0.5),
+                                   (cxx + 6, t_bot + dy * 0.25), irad,
+                                   cols=self._INT_COLS)
+            self._collector_slug((cxx, t_top), irad + 1)
 
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
@@ -2778,6 +2824,10 @@ class App:
                 for x in (bay.x + 48, bay.right - 48):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
                 lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 26)
+        elif sub == "twin":                            # inline parallel twin-turbo
+            self._bay_turbo(bay.right - 78, cyv - 13, 18, spin, load, electric=etb)
+            self._bay_turbo(bay.right - 44, cyv + 14, 20, spin, load, electric=etb)
+            lab("parallel twin-turbo", bay.right - 60, cyv + 36)
         else:                                          # inline: single turbo, side
             self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb)
             lab("single turbo", bay.right - 50, cyv + 30)

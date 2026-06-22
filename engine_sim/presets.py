@@ -3004,6 +3004,8 @@ _HOT_V = {"e63", "amggt", "valhalla", "488", "pista", "rs5", "senna", "p1"}
 # a single divided-housing turbo, tighter/cleaner whistle (BMW B48/N55, EA888).
 _SEQUENTIAL_TT = {"9", "rx7"}
 _TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
+# Parallel twin-turbo inline engines — two turbos, not one (S58, RB26DETT).
+_INLINE_TWIN = {"0", "r34"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
 _FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
                "f40", "gt350r", "gts", "m3gtr", "one1", "p1", "pista", "senna",
@@ -3023,6 +3025,8 @@ def _annotate(key, eng):
             eng.induction_subtype = "sequential"
         elif key in _TWIN_SCROLL:
             eng.induction_subtype = "twin_scroll"
+        elif key in _INLINE_TWIN:
+            eng.induction_subtype = "twin"
     # crank plane (display) for V8s: the screamers (Ferrari/McLaren/AMG GT/S65/
     # Voodoo ...) run a single-plane FLAT crank; every other 90-deg V8 is the
     # two-plane CROSS crank that gives the burble.
