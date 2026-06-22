@@ -1780,6 +1780,7 @@ _FO_V6 = [1, 6, 3, 4, 2, 5]
 _FO_V10 = [1, 6, 5, 10, 2, 7, 3, 8, 4, 9]
 _FO_V12 = [1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9]
 _FO_I6 = [1, 5, 3, 6, 2, 4]
+_FO_FLAT6 = [1, 6, 2, 4, 3, 5]               # Porsche flat-six (alternates banks)
 
 
 def mazda_savanna_rx7_fc() -> Engine:
@@ -2123,6 +2124,174 @@ def cadillac_ct5v_blackwing() -> Engine:
                 gearbox_type="manual")
 
 
+def porsche_carrera_rs_27() -> Engine:
+    """Porsche 911 Carrera RS 2.7 — air-cooled flat-six: raw, mechanical thrash."""
+    return _vee("Porsche 911 Carrera RS 2.7 air-cooled flat-6", 6, 90.0, 70.4, 127.0,
+                8.5, 90.0, _FO_FLAT6, flywheel_inertia=0.16, redline_rpm=7300, idle_rpm=900,
+                heat_release_k=3.6, ve_peak_frac=0.66, closed_map_fraction=0.14,
+                exhaust_tone=98.0, exhaust_primary_m=0.5, exhaust_total_m=1.8,
+                exhaust_radius_m=0.023, exhaust_channels=2, exhaust_openness=0.85,
+                muffler_volume_m3=0.0016, header_unequal_deg=12.0,
+                backpressure_coupling=0.75, gear_grain=0.2,
+                gear_ratios=[3.18, 1.83, 1.26, 0.93, 0.72], final_drive=4.43,
+                vehicle_mass=975.0, wheel_radius=0.31, clutch_capacity=320.0,
+                gearbox_type="manual")
+
+
+def porsche_930_turbo() -> Engine:
+    """Porsche 911 Turbo 3.3 (930) — air-cooled single-turbo flat-six, big lag + whistle."""
+    return _vee("Porsche 911 Turbo 3.3 (930) air-cooled flat-6", 6, 97.0, 74.4, 127.0,
+                7.0, 90.0, _FO_FLAT6, flywheel_inertia=0.2, redline_rpm=7000, idle_rpm=900,
+                heat_release_k=3.4, ve_width_frac=0.6, closed_map_fraction=0.16,
+                exhaust_tone=86.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.78,
+                muffler_volume_m3=0.0024, header_unequal_deg=10.0, induction="turbo",
+                boost_bar=0.8, turbo_lag=0.85, turbo_spool_frac=0.4, bov_flutter=True,
+                gear_ratios=[3.17, 1.79, 1.26, 0.93], final_drive=4.22,
+                vehicle_mass=1300.0, wheel_radius=0.32, clutch_capacity=520.0,
+                gearbox_type="manual")
+
+
+def porsche_993_gt2() -> Engine:
+    """Porsche 911 GT2 (993) — air-cooled twin-turbo flat-six, aggressive widowmaker."""
+    return _vee("Porsche 911 GT2 (993) air-cooled TT flat-6", 6, 100.0, 76.4, 127.0,
+                8.0, 90.0, _FO_FLAT6, flywheel_inertia=0.18, redline_rpm=7000, idle_rpm=900,
+                heat_release_k=3.5, ve_width_frac=0.62, closed_map_fraction=0.15,
+                exhaust_tone=88.0, exhaust_primary_m=0.48, exhaust_total_m=1.8,
+                exhaust_radius_m=0.025, exhaust_channels=2, exhaust_openness=0.86,
+                muffler_volume_m3=0.0014, header_unequal_deg=10.0, induction="turbo",
+                boost_bar=0.9, turbo_lag=0.5, bov_flutter=True, has_cat=False,
+                gear_ratios=[3.15, 1.79, 1.26, 0.97, 0.79, 0.66], final_drive=3.44,
+                vehicle_mass=1290.0, wheel_radius=0.32, clutch_capacity=560.0,
+                gearbox_type="manual")
+
+
+def porsche_996_gt1() -> Engine:
+    """Porsche 911 GT1 Strassenversion (996) — water-cooled race twin-turbo flat-six."""
+    return _vee("Porsche 911 GT1 Strassenversion (996) TT flat-6", 6, 95.0, 74.4, 127.0,
+                8.5, 90.0, _FO_FLAT6, flywheel_inertia=0.16, redline_rpm=7400, idle_rpm=950,
+                heat_release_k=3.5, ve_peak_frac=0.7, ve_width_frac=0.6,
+                closed_map_fraction=0.13, exhaust_tone=96.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.6, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.93, muffler_volume_m3=0.0008, induction="turbo",
+                boost_bar=1.1, turbo_lag=0.4, has_cat=False, straight_cut=True,
+                wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[2.74, 1.81, 1.35, 1.08, 0.89, 0.74], final_drive=3.44,
+                vehicle_mass=1150.0, wheel_radius=0.33, clutch_capacity=620.0,
+                gearbox_type="single")
+
+
+def porsche_997_gt3_rs_40() -> Engine:
+    """Porsche 911 GT3 RS 4.0 (997.2) — the Mezger 4.0 NA flat-six: a metallic scream."""
+    return _vee("Porsche 911 GT3 RS 4.0 (997.2) Mezger flat-6", 6, 102.7, 80.4, 127.0,
+                12.6, 90.0, _FO_FLAT6, flywheel_inertia=0.15, redline_rpm=8500, idle_rpm=950,
+                heat_release_k=3.7, ve_peak_frac=0.76, ve_width_frac=0.6,
+                closed_map_fraction=0.12, exhaust_tone=110.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.85, exhaust_radius_m=0.020, exhaust_channels=2,
+                exhaust_openness=0.93, muffler_volume_m3=0.0012, header_unequal_deg=12.0,
+                backpressure_coupling=0.8, gear_grain=0.3,
+                gear_ratios=[3.15, 2.0, 1.48, 1.13, 0.92, 0.78], final_drive=3.89,
+                vehicle_mass=1370.0, wheel_radius=0.33, clutch_capacity=560.0,
+                gearbox_type="single")
+
+
+def porsche_991_gt3_rs() -> Engine:
+    """Porsche 911 GT3 RS (991.1) — 4.0 NA flat-six (9A1), 8800-rpm howl."""
+    return _vee("Porsche 911 GT3 RS 4.0 (991.1) 9A1 flat-6", 6, 102.0, 81.5, 127.0,
+                12.9, 90.0, _FO_FLAT6, flywheel_inertia=0.15, redline_rpm=8800, idle_rpm=950,
+                heat_release_k=3.6, ve_peak_frac=0.76, ve_width_frac=0.62,
+                closed_map_fraction=0.12, exhaust_tone=106.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.85, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.9, muffler_volume_m3=0.0014, header_unequal_deg=13.0,
+                backpressure_coupling=0.8, gear_grain=0.25,
+                gear_ratios=[3.91, 2.32, 1.61, 1.28, 1.08, 0.88, 0.74], final_drive=3.97,
+                vehicle_mass=1420.0, wheel_radius=0.33, clutch_capacity=560.0,
+                gearbox_type="dct")
+
+
+def porsche_991_gt2_rs() -> Engine:
+    """Porsche 911 GT2 RS (991.2) — 3.8 twin-turbo flat-six, the 700-hp brute."""
+    return _vee("Porsche 911 GT2 RS (991.2) 3.8TT flat-6", 6, 102.0, 77.5, 127.0,
+                9.0, 90.0, _FO_FLAT6, flywheel_inertia=0.18, redline_rpm=7200, idle_rpm=900,
+                heat_release_k=3.2, ve_width_frac=0.66, closed_map_fraction=0.15,
+                exhaust_tone=82.0, exhaust_primary_m=0.5, exhaust_total_m=2.0,
+                exhaust_radius_m=0.027, exhaust_channels=2, exhaust_openness=0.7,
+                muffler_volume_m3=0.0018, header_unequal_deg=10.0, induction="turbo",
+                boost_bar=1.55, turbo_lag=0.3, gear_ratios=[3.91, 2.32, 1.61, 1.28, 1.08, 0.88, 0.74],
+                final_drive=3.97, vehicle_mass=1470.0, wheel_radius=0.33,
+                clutch_capacity=700.0, gearbox_type="dct")
+
+
+def porsche_917_lh() -> Engine:
+    """Porsche 917 LH — air-cooled 4.9 flat-TWELVE (Type 912): the Le Mans wail."""
+    return _vee("Porsche 917 LH Type 912 4.9 air-cooled flat-12", 12, 86.0, 70.4, 123.0,
+                10.5, 90.0, _FO_V12, flywheel_inertia=0.22, redline_rpm=8400, idle_rpm=1100,
+                heat_release_k=3.7, ve_peak_frac=0.74, ve_width_frac=0.6,
+                closed_map_fraction=0.11, exhaust_tone=112.0, exhaust_primary_m=0.42,
+                exhaust_total_m=1.3, exhaust_radius_m=0.020, exhaust_channels=2,
+                exhaust_openness=0.97, muffler_volume_m3=0.0007, has_cat=False,
+                straight_cut=True, gear_grain=0.32,
+                gear_ratios=[2.3, 1.7, 1.35, 1.1, 0.9], final_drive=3.0,
+                vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=700.0,
+                gearbox_type="manual")
+
+
+def ferrari_enzo_v12() -> Engine:
+    """Ferrari Enzo F140B 6.0 NA 65-deg V12 — the bright, metallic F140 scream."""
+    return _vee("Ferrari Enzo F140B 6.0 V12", 12, 92.0, 75.2, 147.0, 11.2, 32.5, _FO_V12,
+                flywheel_inertia=0.26, redline_rpm=8200, idle_rpm=900,
+                heat_release_k=3.6, ve_peak_frac=0.74, ve_width_frac=0.6,
+                closed_map_fraction=0.13, exhaust_tone=96.0, exhaust_primary_m=0.6,
+                exhaust_total_m=2.0, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.92, muffler_volume_m3=0.0018, wall_material="titanium",
+                gear_grain=0.45, backpressure_coupling=0.6,
+                gear_ratios=[3.15, 2.18, 1.67, 1.33, 1.07, 0.85], final_drive=4.1,
+                vehicle_mass=1365.0, wheel_radius=0.34, clutch_capacity=620.0,
+                gearbox_type="single")
+
+
+def pagani_zonda_r() -> Engine:
+    """Pagani Zonda R — Mercedes M120 6.0 V12 race: very open, raw, deafening."""
+    return _vee("Pagani Zonda R Mercedes M120 6.0 V12", 12, 89.0, 80.2, 147.0, 11.0,
+                30.0, _FO_V12, flywheel_inertia=0.24, redline_rpm=8000, idle_rpm=950,
+                heat_release_k=3.7, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.11, exhaust_tone=104.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.5, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.96, muffler_volume_m3=0.0008, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.35,
+                gear_ratios=[2.92, 2.04, 1.58, 1.28, 1.06, 0.88], final_drive=3.7,
+                vehicle_mass=1070.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="single")
+
+
+def koenigsegg_one1_v8() -> Engine:
+    """Koenigsegg One:1 / Agera RS — 5.0 twin-turbo flat-plane V8, high-revving boost."""
+    return _vee("Koenigsegg One:1 5.0TT V8", 8, 92.0, 95.25, 154.0, 9.5, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.24, redline_rpm=8250, idle_rpm=850,
+                heat_release_k=3.4, ve_peak_frac=0.7, ve_width_frac=0.62,
+                closed_map_fraction=0.13, exhaust_tone=98.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.8, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.86, muffler_volume_m3=0.0014, induction="turbo",
+                boost_bar=1.5, turbo_lag=0.3, wall_material="titanium", gear_grain=0.25,
+                gear_ratios=[2.85, 1.99, 1.5, 1.18, 0.96, 0.79, 0.66], final_drive=3.36,
+                vehicle_mass=1360.0, wheel_radius=0.34, clutch_capacity=900.0,
+                gearbox_type="dct")
+
+
+def ariel_atom_v8() -> Engine:
+    """Ariel Atom V8 — Hartley 3.0 NA flat-plane V8 to 10,500 rpm: the tiny screamer."""
+    return _vee("Ariel Atom V8 Hartley 3.0 V8", 8, 90.0, 58.8, 110.0, 11.5, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.08, redline_rpm=10500, idle_rpm=1100,
+                heat_release_k=3.6, ve_peak_frac=0.82, ve_width_frac=0.55,
+                closed_map_fraction=0.11, exhaust_tone=150.0, exhaust_primary_m=0.42,
+                exhaust_total_m=1.5, exhaust_radius_m=0.018, exhaust_channels=2,
+                exhaust_openness=0.96, muffler_volume_m3=0.0007, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[2.7, 1.9, 1.45, 1.15, 0.95, 0.8], final_drive=3.6,
+                vehicle_mass=550.0, wheel_radius=0.30, clutch_capacity=420.0,
+                gearbox_type="single")
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -2206,6 +2375,18 @@ PRESETS = [
     ("e63", "E63 AMG M157 V8", mercedes_e63_amg_m157),
     ("c63bs", "C63 AMG BS M156 V8", mercedes_c63_black_m156),
     ("ct5v", "CT5-V Blackwing LT4 V8", cadillac_ct5v_blackwing),
+    ("crs27", "Carrera RS 2.7 flat-6", porsche_carrera_rs_27),
+    ("930", "911 Turbo 3.3 (930)", porsche_930_turbo),
+    ("993gt2", "911 GT2 (993) TT", porsche_993_gt2),
+    ("996gt1", "911 GT1 Strassen (996)", porsche_996_gt1),
+    ("997rs4", "997.2 GT3 RS 4.0 Mezger", porsche_997_gt3_rs_40),
+    ("991rs", "991.1 GT3 RS 4.0", porsche_991_gt3_rs),
+    ("gt2rs", "991.2 GT2 RS 3.8TT", porsche_991_gt2_rs),
+    ("917", "Porsche 917 LH flat-12", porsche_917_lh),
+    ("enzo", "Ferrari Enzo F140 V12", ferrari_enzo_v12),
+    ("zondar", "Pagani Zonda R M120 V12", pagani_zonda_r),
+    ("one1", "Koenigsegg One:1 V8", koenigsegg_one1_v8),
+    ("atomv8", "Ariel Atom V8 10500rpm", ariel_atom_v8),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
