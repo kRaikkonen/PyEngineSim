@@ -1530,11 +1530,23 @@ class App:
         self._crank_xy = (bay.centerx, (bay.y + bay.bottom) // 2)
         self._crank_h = 30.0
         self._cur_vt = getattr(eng, "valvetrain", "dohc")   # for per-cylinder cams
+        vv = getattr(eng, "variable_valve", "")
+        self._vtec_on = ("VTEC" in vv or "VVTL" in vv) and \
+            sim.rpm > 0.74 * eng.redline_rpm             # VTEC engages high up
         self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         cp = getattr(eng, "crank_plane", "")
         if cp in ("flat", "cross"):                   # end-on crankshaft phase diagram
             self._draw_crank_diagram(bay.x + 38, bay.y + 50, 17, cp, sim.crank_angle)
+        vv = getattr(eng, "variable_valve", "")
+        if vv:                                        # variable-valve status badge
+            on = getattr(self, "_vtec_on", False)
+            col = (90, 220, 120) if on else (150, 158, 174)
+            bd = self.font_small.render(f"{vv}{'  ON' if on else ''}", True, col)
+            bx0 = bay.right - bd.get_width() - 16
+            pygame.draw.circle(self.screen, col, (bx0 - 7, bay.y + 13), 4)
+            pygame.draw.circle(self.screen, (30, 33, 42), (bx0 - 7, bay.y + 13), 4, 1)
+            self.screen.blit(bd, (bx0, bay.y + 7))
         top = bay.y + 26
         bottom = bay.bottom - 24
         # Per-cylinder size scaled by DISPLACEMENT, with the Bugatti W16's
@@ -1892,17 +1904,18 @@ class App:
             il, el = lift_at(700.0, 240.0), lift_at(500.0, 230.0)
             cam_d = length + 19
             vt = getattr(self, "_cur_vt", "dohc")
-            cama = theta                                  # cams spin (half-speed look)
+            vtec = getattr(self, "_vtec_on", False)       # VTEC high-cam engaged
+            lobe_col = (240, 180, 80) if vtec else (170, 176, 192)
 
             def camshaft(qo, lift):                       # an end-on cam: journal + lobe
                 ccx = bx + ux * cam_d + qx * qo
                 ccy = by + uy * cam_d + qy * qo
                 pygame.draw.circle(sc, (96, 102, 118), (int(ccx), int(ccy)), 4)
                 pygame.draw.circle(sc, (150, 156, 172), (int(ccx), int(ccy)), 4, 1)
-                # the lobe points toward the valve it's pressing (down the bore)
-                lobe = 3.0 + lift * 3.0
+                # the lobe presses toward the valve; VTEC swaps to a taller HIGH cam
+                lobe = (3.0 + lift * (6.5 if vtec else 3.0))
                 lx2 = ccx - ux * lobe; ly2 = ccy - uy * lobe
-                pygame.draw.line(sc, (170, 176, 192), (int(ccx), int(ccy)),
+                pygame.draw.line(sc, lobe_col, (int(ccx), int(ccy)),
                                  (int(lx2), int(ly2)), 3)
                 pygame.draw.circle(sc, (200, 206, 222), (int(ccx), int(ccy)), 1)
             if vt == "ohv":
