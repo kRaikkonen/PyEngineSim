@@ -1737,6 +1737,205 @@ def mclaren_mp44_honda_v6() -> Engine:
     )
 
 
+def _inline4(name, bore_mm, stroke_mm, rod_mm, cr, **kw):
+    """Helper: a generic inline-four (firing 1-3-4-2) with the given Engine kwargs."""
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cyls = [Cylinder(bore=mm(bore_mm), stroke=mm(stroke_mm), rod_length=mm(rod_mm),
+                     compression_ratio=cr, cycle_offset_deg=offsets[i])
+            for i in range(4)]
+    return Engine(name=name, cylinders=cyls, **kw)
+
+
+def _flat4(name, bore_mm, stroke_mm, rod_mm, cr, **kw):
+    """Helper: a boxer flat-four (firing 1-3-2-4, unequal headers = rumble)."""
+    offsets = _even_offsets(4, firing_order=[1, 3, 2, 4])
+    cyls = [Cylinder(bore=mm(bore_mm), stroke=mm(stroke_mm), rod_length=mm(rod_mm),
+                     compression_ratio=cr, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=(-90.0 if i < 2 else 90.0))
+            for i in range(4)]
+    return Engine(name=name, cylinders=cyls, **kw)
+
+
+def mazda_savanna_rx7_fc() -> Engine:
+    """Mazda Savanna RX-7 FC3S — 13B-T single-turbo two-rotor Wankel."""
+    offsets = _even_offsets(4)
+    cyls = [Cylinder(bore=mm(70), stroke=mm(80), rod_length=mm(120),
+                     compression_ratio=8.5, cycle_offset_deg=offsets[i]) for i in range(4)]
+    return Engine(
+        name="Mazda Savanna RX-7 FC3S 13B-T", cylinders=cyls,
+        flywheel_inertia=0.14, redline_rpm=7000, idle_rpm=850,
+        heat_release_k=4.4, ve_peak_frac=0.7, closed_map_fraction=0.17,
+        exhaust_tone=112.0, exhaust_primary_m=0.45, exhaust_total_m=1.8,
+        exhaust_radius_m=0.025, exhaust_channels=1, exhaust_openness=0.78,
+        muffler_volume_m3=0.0028, is_rotary=True,
+        induction="turbo", boost_bar=0.7, turbo_lag=0.5,
+        gear_ratios=[3.48, 2.02, 1.39, 1.00, 0.76], final_drive=4.10,
+        vehicle_mass=1260.0, wheel_radius=0.30, clutch_capacity=380.0,
+        gearbox_type="manual")
+
+
+def abarth_500_esseesse() -> Engine:
+    return _inline4(
+        "Abarth 500 Esseesse 1.4 T-Jet", 72.0, 84.0, 132.0, 9.8,
+        flywheel_inertia=0.12, redline_rpm=6500, idle_rpm=850,
+        heat_release_k=3.3, ve_peak_frac=0.45, closed_map_fraction=0.17,
+        exhaust_tone=96.0, exhaust_primary_m=0.45, exhaust_total_m=1.7,
+        exhaust_radius_m=0.022, exhaust_channels=1, exhaust_openness=0.66,
+        muffler_volume_m3=0.0025, induction="turbo", boost_bar=0.9,
+        turbo_lag=0.4, bov_flutter=True, backpressure_coupling=0.8,
+        gear_ratios=[3.91, 2.24, 1.52, 1.16, 0.87], final_drive=3.35,
+        vehicle_mass=1035.0, wheel_radius=0.30, clutch_capacity=240.0,
+        gearbox_type="manual")
+
+
+def honda_civic_type_r_ek9() -> Engine:
+    return _inline4(
+        "Honda Civic Type-R EK9 B16B", 81.0, 77.4, 134.0, 10.8,
+        flywheel_inertia=0.11, redline_rpm=8400, idle_rpm=850,
+        heat_release_k=3.6, ve_peak_frac=0.78, ve_width_frac=0.58,
+        closed_map_fraction=0.14, exhaust_tone=104.0, exhaust_primary_m=0.5,
+        exhaust_total_m=1.8, exhaust_radius_m=0.022, exhaust_channels=1,
+        exhaust_openness=0.82, muffler_volume_m3=0.0022,
+        gear_ratios=[3.23, 2.11, 1.52, 1.15, 0.92], final_drive=4.40,
+        vehicle_mass=1070.0, wheel_radius=0.30, clutch_capacity=260.0,
+        gearbox_type="manual")
+
+
+def honda_civic_type_r_ep3() -> Engine:
+    return _inline4(
+        "Honda Civic Type-R EP3 K20A", 86.0, 86.0, 139.0, 11.5,
+        flywheel_inertia=0.12, redline_rpm=8000, idle_rpm=820,
+        heat_release_k=3.6, ve_peak_frac=0.76, ve_width_frac=0.6,
+        closed_map_fraction=0.14, exhaust_tone=100.0, exhaust_primary_m=0.5,
+        exhaust_total_m=1.85, exhaust_radius_m=0.023, exhaust_channels=1,
+        exhaust_openness=0.8, muffler_volume_m3=0.0024,
+        gear_ratios=[3.27, 2.13, 1.52, 1.21, 0.97], final_drive=4.76,
+        vehicle_mass=1200.0, wheel_radius=0.31, clutch_capacity=280.0,
+        gearbox_type="manual")
+
+
+def honda_civic_type_r_fk8() -> Engine:
+    return _inline4(
+        "Honda Civic Type-R FK8 K20C1", 86.0, 85.9, 139.0, 9.8,
+        flywheel_inertia=0.13, redline_rpm=7000, idle_rpm=800,
+        heat_release_k=3.4, ve_peak_frac=0.5, ve_width_frac=0.66,
+        closed_map_fraction=0.16, exhaust_tone=92.0, exhaust_primary_m=0.48,
+        exhaust_total_m=1.9, exhaust_radius_m=0.026, exhaust_channels=1,
+        exhaust_openness=0.66, muffler_volume_m3=0.0026, induction="turbo",
+        boost_bar=1.1, turbo_lag=0.35, gear_ratios=[3.63, 2.12, 1.53, 1.13, 0.92, 0.74],
+        final_drive=4.11, vehicle_mass=1380.0, wheel_radius=0.32,
+        clutch_capacity=400.0, gearbox_type="manual")
+
+
+def peugeot_205_t16() -> Engine:
+    return _inline4(
+        "Peugeot 205 Turbo 16 XU8T", 83.0, 82.0, 138.0, 7.5,
+        flywheel_inertia=0.12, redline_rpm=7800, idle_rpm=950,
+        heat_release_k=3.6, ve_peak_frac=0.6, ve_width_frac=0.55,
+        closed_map_fraction=0.18, exhaust_tone=108.0, exhaust_primary_m=0.45,
+        exhaust_total_m=1.6, exhaust_radius_m=0.026, exhaust_channels=1,
+        exhaust_openness=0.86, muffler_volume_m3=0.0012, induction="turbo",
+        boost_bar=1.6, turbo_lag=0.55, turbo_spool_frac=0.2, anti_lag=True,
+        bov_flutter=True, has_cat=False, straight_cut=True,
+        gear_ratios=[2.92, 1.92, 1.40, 1.07, 0.85], final_drive=4.6,
+        vehicle_mass=1145.0, wheel_radius=0.31, clutch_capacity=420.0,
+        gearbox_type="manual")
+
+
+def ford_rs200_evo() -> Engine:
+    return _inline4(
+        "Ford RS200 Evolution BDT-E", 90.0, 77.0, 137.0, 7.2,
+        flywheel_inertia=0.12, redline_rpm=8000, idle_rpm=1000,
+        heat_release_k=3.7, ve_peak_frac=0.62, ve_width_frac=0.55,
+        closed_map_fraction=0.18, exhaust_tone=110.0, exhaust_primary_m=0.42,
+        exhaust_total_m=1.5, exhaust_radius_m=0.027, exhaust_channels=1,
+        exhaust_openness=0.9, muffler_volume_m3=0.0009, induction="turbo",
+        boost_bar=2.0, turbo_lag=0.5, turbo_spool_frac=0.18, anti_lag=True,
+        bov_flutter=True, has_cat=False, straight_cut=True,
+        gear_ratios=[2.5, 1.8, 1.35, 1.05, 0.85], final_drive=4.2,
+        vehicle_mass=1180.0, wheel_radius=0.31, clutch_capacity=520.0,
+        gearbox_type="manual")
+
+
+def hoonigan_rs200_evo() -> Engine:
+    e = ford_rs200_evo()
+    e.name = "Hoonigan Ford RS200 Evolution BDT-E (anti-lag)"
+    e.boost_bar = 2.6
+    e.redline_rpm = 8200
+    return e
+
+
+def ford_escort_cosworth() -> Engine:
+    return _inline4(
+        "Ford Escort RS Cosworth YBT", 90.8, 77.0, 134.0, 8.0,
+        flywheel_inertia=0.14, redline_rpm=6800, idle_rpm=850,
+        heat_release_k=3.6, ve_peak_frac=0.55, ve_width_frac=0.6,
+        closed_map_fraction=0.17, exhaust_tone=96.0, exhaust_primary_m=0.5,
+        exhaust_total_m=1.8, exhaust_radius_m=0.026, exhaust_channels=1,
+        exhaust_openness=0.7, muffler_volume_m3=0.0022, induction="turbo",
+        boost_bar=1.1, turbo_lag=0.55, turbo_spool_frac=0.18, bov_flutter=True,
+        gear_ratios=[3.61, 2.08, 1.36, 1.0, 0.83], final_drive=3.62,
+        vehicle_mass=1275.0, wheel_radius=0.31, clutch_capacity=380.0,
+        gearbox_type="manual")
+
+
+def nissan_silvia_s15() -> Engine:
+    return _inline4(
+        "Nissan Silvia Spec-R S15 SR20DET", 86.0, 86.0, 136.3, 8.5,
+        flywheel_inertia=0.13, redline_rpm=7500, idle_rpm=800,
+        heat_release_k=3.5, ve_peak_frac=0.55, ve_width_frac=0.62,
+        closed_map_fraction=0.16, exhaust_tone=94.0, exhaust_primary_m=0.5,
+        exhaust_total_m=1.85, exhaust_radius_m=0.026, exhaust_channels=1,
+        exhaust_openness=0.74, muffler_volume_m3=0.0024, induction="turbo",
+        boost_bar=0.9, turbo_lag=0.5, bov_flutter=True,
+        gear_ratios=[3.63, 2.18, 1.54, 1.18, 1.0, 0.79], final_drive=4.08,
+        vehicle_mass=1240.0, wheel_radius=0.31, clutch_capacity=360.0,
+        gearbox_type="manual")
+
+
+def subaru_wrx_sti_gdb() -> Engine:
+    return _flat4(
+        "Subaru Impreza WRX STi GDB-C EJ207", 92.0, 75.0, 131.0, 8.0,
+        flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=820,
+        heat_release_k=4.2, ve_width_frac=0.7, closed_map_fraction=0.17,
+        exhaust_tone=72.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+        exhaust_radius_m=0.025, exhaust_channels=2, exhaust_openness=0.62,
+        muffler_volume_m3=0.003, header_unequal_deg=28.0, induction="turbo",
+        boost_bar=1.0, turbo_lag=0.45, bov_flutter=True,
+        gear_ratios=[3.45, 2.06, 1.45, 1.09, 0.82, 0.65], final_drive=4.44,
+        vehicle_mass=1330.0, wheel_radius=0.31, clutch_capacity=480.0,
+        gearbox_type="manual")
+
+
+def subaru_wrx_sti_gv() -> Engine:
+    return _flat4(
+        "Subaru WRX STi GV EJ257", 99.5, 79.0, 131.5, 8.2,
+        flywheel_inertia=0.2, redline_rpm=6700, idle_rpm=800,
+        heat_release_k=4.2, ve_width_frac=0.72, closed_map_fraction=0.17,
+        exhaust_tone=70.0, exhaust_primary_m=0.55, exhaust_total_m=2.0,
+        exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.58,
+        muffler_volume_m3=0.0035, header_unequal_deg=30.0, induction="turbo",
+        boost_bar=0.95, turbo_lag=0.5, bov_flutter=True,
+        gear_ratios=[3.64, 2.24, 1.59, 1.14, 0.89, 0.71], final_drive=3.90,
+        vehicle_mass=1505.0, wheel_radius=0.32, clutch_capacity=520.0,
+        gearbox_type="manual")
+
+
+def subaru_wrx_sti_vt15r() -> Engine:
+    return _flat4(
+        "Subaru WRX STi VT15R EJ20 (rally)", 92.0, 75.0, 131.0, 8.0,
+        flywheel_inertia=0.16, redline_rpm=7500, idle_rpm=950,
+        heat_release_k=4.2, ve_width_frac=0.72, closed_map_fraction=0.18,
+        exhaust_tone=72.0, exhaust_primary_m=0.5, exhaust_total_m=1.7,
+        exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.8,
+        muffler_volume_m3=0.0015, header_unequal_deg=30.0, induction="turbo",
+        boost_bar=1.1, turbo_lag=0.5, turbo_spool_frac=0.16, anti_lag=True,
+        bov_flutter=True, has_cat=False, straight_cut=True,
+        gear_ratios=[2.62, 1.85, 1.4, 1.1, 0.9], final_drive=4.44,
+        vehicle_mass=1230.0, wheel_radius=0.32, clutch_capacity=520.0,
+        gearbox_type="manual")
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -1795,6 +1994,19 @@ PRESETS = [
     ("f2007", "Ferrari F2007 V8 F1", ferrari_f2007_v8),
     ("sf25", "Ferrari SF-25 V6 F1", ferrari_sf25_v6_hybrid),
     ("mp44", "McLaren MP4/4 V6 turbo", mclaren_mp44_honda_v6),
+    ("rx7fc", "Savanna RX-7 FC 13B-T", mazda_savanna_rx7_fc),
+    ("ab500", "Abarth 500 esseesse", abarth_500_esseesse),
+    ("ek9", "Civic Type-R EK9 B16B", honda_civic_type_r_ek9),
+    ("ep3", "Civic Type-R EP3 K20A", honda_civic_type_r_ep3),
+    ("fk8", "Civic Type-R FK8 K20C1", honda_civic_type_r_fk8),
+    ("p205", "Peugeot 205 T16", peugeot_205_t16),
+    ("rs200", "Ford RS200 Evo", ford_rs200_evo),
+    ("hoonrs", "Hoonigan RS200 Evo", hoonigan_rs200_evo),
+    ("escrs", "Escort RS Cosworth", ford_escort_cosworth),
+    ("s15", "Silvia Spec-R S15 SR20DET", nissan_silvia_s15),
+    ("gdb", "Impreza WRX STi GDB EJ207", subaru_wrx_sti_gdb),
+    ("gv", "WRX STi GV EJ257", subaru_wrx_sti_gv),
+    ("vt15r", "WRX STi VT15R rally", subaru_wrx_sti_vt15r),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
