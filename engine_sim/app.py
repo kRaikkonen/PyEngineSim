@@ -282,40 +282,38 @@ class App:
         T = self.tr
         arr = "▼" if self.lang == "zh" else "▾"   # YaHei lacks U+25BE
         return [
+            # row 0 — car + sound toggles (part 1)
             (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
-            (T("Load car…"), self.load_car_dialog, None, 0),
-            (T("Load EQ…"), self.load_eq_dialog, None, 0),
-            (T("Save…"), self.save_dialog, None, 0),
+            (T("Auto") if dt.auto else T("Manual"),
+             lambda: setattr(dt, "auto", not dt.auto), lambda: dt.auto, 0),
+            (T("Cabin"), lambda: setattr(sy, "cabin", not sy.cabin),
+             lambda: sy.cabin, 0),
+            (T("Gear whine"), lambda: setattr(sy, "straight_cut", not sy.straight_cut),
+             lambda: sy.straight_cut, 0),
+            ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 0),
             (T("Mixer / EQ"), lambda: setattr(self, "mixer_open", not self.mixer_open),
              lambda: self.mixer_open, 0),
-            (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
-             lambda: self.scope_open, 0),
-            (f"{'中/EN' if self.lang == 'en' else 'EN/中'}", self.toggle_lang, None, 0),
-            (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 1),
-            (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
-            (T("Auto") if dt.auto else T("Manual"),
-             lambda: setattr(dt, "auto", not dt.auto), lambda: dt.auto, 1),
-            (T("Cabin"), lambda: setattr(sy, "cabin", not sy.cabin),
-             lambda: sy.cabin, 1),
-            (T("Gear whine"), lambda: setattr(sy, "straight_cut", not sy.straight_cut),
-             lambda: sy.straight_cut, 1),
-            (T("Touch"), lambda: setattr(self, "touch_mode", not self.touch_mode),
-             lambda: self.touch_mode, 1),
-            ("GPF", lambda: setattr(sy, "gpf", not sy.gpf), lambda: sy.gpf, 2),
-            (T("Cat"), lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 2),
+            # row 1 — sound toggles (part 2)
+            (T("Cat"), lambda: setattr(sy, "cat", not sy.cat), lambda: sy.cat, 1),
             (T("Bent"), lambda: setattr(sy, "road_pipe", not sy.road_pipe),
-             lambda: sy.road_pipe, 2),
+             lambda: sy.road_pipe, 1),
             (T("Flutter"), lambda: setattr(sy, "flutter", not sy.flutter),
-             lambda: sy.flutter, 2),
+             lambda: sy.flutter, 1),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
-             lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 2),
-            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
-            (T("G-pad"), lambda: setattr(self, "g_spatial", not self.g_spatial),
-             lambda: self.g_spatial, 2),
+             lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
-             lambda: sy.pops_on, 2),
+             lambda: sy.pops_on, 1),
+            (f"{'中/EN' if self.lang == 'en' else 'EN/中'}", self.toggle_lang, None, 1),
+            # row 2 — output / device / view
+            (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
+            (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 2),
+            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
             (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
              else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
+            (T("Touch"), lambda: setattr(self, "touch_mode", not self.touch_mode),
+             lambda: self.touch_mode, 2),
+            (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
+             lambda: self.scope_open, 2),
         ]
 
     def toggle_slow(self):
@@ -1936,27 +1934,31 @@ class App:
                          (x + 5, y + 3))
 
     def _airflow_cyl(self, w):
-        """PER-CYLINDER exhaust airflow over ONE fixed 720-deg cycle (refresh-
-        style): a separate blowdown-pulse trace for each cylinder, sitting at its
-        own fixed firing position and swelling live as it fires.  Returns a list
-        of n all-positive arrays (drawn overlaid, one colour each)."""
+        """PER-CYLINDER exhaust airflow, all pulses STACKED at the same position
+        (refresh-style): every cylinder's blowdown pulse is drawn at the same spot
+        so they overlay, one colour each, and you compare their shapes directly.
+        Each swells live as that cylinder fires; tiny per-cylinder decay spread
+        keeps the stacked traces distinct.  Returns a list of n positive arrays."""
         sim = self.sim
         n = sim.engine.num_cylinders
         if n < 1 or w < 2:
             return []
-        offs = sim._offset_deg
         load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
                        0.30), 1.05)
-        ang = np.arange(w) / (w - 1) * 720.0              # FIXED one-cycle axis
+        voice = getattr(self.synth, "_cyl_voice", None) if self.synth else None
+        ang = np.arange(w) / (w - 1) * 300.0              # one pulse window
+        d = ang - 26.0                                    # small lead-in
+        rise = np.clip(d / 4.0, 0.0, 1.0)
         waves = []
         for i in range(n):
-            phi = (ang + offs[i]) % 720.0
-            d = phi - 505.0                               # 0 at exhaust-valve open
+            tau = 30.0 * (0.82 + 0.36 * (i / max(n - 1, 1)))   # spread decays a touch
             env = np.where((d >= 0) & (d < 210.0),
-                           np.clip(d / 4.0, 0.0, 1.0)
-                           * np.exp(-np.clip(d, 0, None) / 30.0), 0.0)
+                           rise * np.exp(-np.clip(d, 0, None) / tau), 0.0)
             flash = self._ign_flash.get(i, 0.0)           # live per-cylinder firing
-            waves.append(env * (0.45 + 0.55 * flash) * load)
+            amp = (0.32 + 0.68 * flash) * load
+            if voice is not None and i < len(voice.amp):
+                amp *= voice.amp[i]
+            waves.append(env * amp)
         return waves
 
     @staticmethod
