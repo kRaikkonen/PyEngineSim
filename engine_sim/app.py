@@ -1725,6 +1725,20 @@ class App:
                                     hrad, self._EXH_COLS, axis="h")
             self._draw_exhaust_fork(pB, spine_y + 5, (turbo[0] - 2, turbo[1] + 9),
                                     hrad, self._EXH2_COLS, axis="h")
+        elif eng.induction == "na" and ns == 4:
+            # 4-2-1 UNEQUAL-LENGTH header ('tubular extractor'): companion cylinders
+            # pair first (1&4, 2&3), the two primaries merge to one secondary, then
+            # one collector — staggered so the runs read as unequal-length.
+            fo = eng.firing_order
+            pA = [ex_ports[fo[0] - 1], ex_ports[fo[2] - 1]]
+            pB = [ex_ports[fo[1] - 1], ex_ports[fo[3] - 1]]
+            cA = (sum(p[0] for p in pA) / 2 + 8, spine_y - 10)
+            cB = (sum(p[0] for p in pB) / 2 - 8, spine_y + 2)
+            self._draw_exhaust_fork(pA, cA[1], cA, hrad, self._EXH_COLS, axis="h")
+            self._draw_exhaust_fork(pB, cB[1], cB, hrad, self._EXH_COLS, axis="h")
+            exit_pt = (bay.right - 60, cyv)
+            self._draw_exhaust_fork([cA, cB], int(bay.centerx + 30),
+                                    exit_pt, hrad + 1, self._EXH_COLS, axis="v")
         else:
             self._draw_exhaust_fork(ex_ports, spine_y, (turbo[0], turbo[1]),
                                     hrad, self._EXH_COLS, axis="h")
@@ -1745,6 +1759,7 @@ class App:
             tag = self.font_small.render("EGR", True, (150, 158, 174))
             scr.blit(tag, (cool.centerx - tag.get_width() // 2, cool.y - 12))
         self._end_pipe_layers()
+        self._draw_fuel_rail(ports_i)                # port fuel injection
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2183,6 +2198,22 @@ class App:
     _EXH_COLS = ((54, 18, 14), (176, 62, 38), (230, 124, 86))   # hot exhaust = red
     _EXH2_COLS = ((56, 32, 10), (200, 116, 32), (240, 176, 84))  # 2nd scroll = orange
     _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
+
+    def _draw_fuel_rail(self, ports):
+        """A high-pressure fuel rail (amber) running along the intake ports with a
+        small injector nozzle dropped into each one."""
+        if not ports:
+            return
+        sc = self.screen
+        xs = [int(p[0]) for p in ports]
+        ry = int(max(p[1] for p in ports)) + 6
+        pygame.draw.line(sc, (96, 66, 18), (min(xs) - 3, ry), (max(xs) + 3, ry), 4)
+        pygame.draw.line(sc, (208, 158, 52), (min(xs) - 3, ry), (max(xs) + 3, ry), 2)
+        for px, py in ports:
+            ix = int(px)
+            pygame.draw.line(sc, (96, 66, 18), (ix, ry), (ix, int(py) + 2), 3)
+            pygame.draw.line(sc, (220, 170, 64), (ix, ry), (ix, int(py) + 2), 1)
+            pygame.draw.circle(sc, (244, 196, 90), (ix, int(py) + 2), 2)
 
     def _pipe_target(self, cols):
         """Route green/red manifold pipes onto translucent layers (set up by
