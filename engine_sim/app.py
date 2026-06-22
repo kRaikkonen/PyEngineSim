@@ -798,58 +798,69 @@ class App:
             self._set_slider(self._drag, mpos[0])
 
     def _draw_touch_overlay(self):
-        """Glossy iOS-6 on-screen pedals / paddles / buttons for finger control."""
+        """Porsche-dash finger controls: carbon-fibre plastic buttons with backlit
+        labels, and brushed-aluminium sport pedals with metal trim + travel fill."""
         if not self.touch_mode:
             return
         R = self._touch_rects()
         sc = self.screen
 
-        def gloss(r, c1, c2, radius=12):
-            sc.blit(self._grad_surf(r.w, r.h, c1, c2, radius, gloss=True), r.topleft)
-            pygame.draw.rect(sc, (18, 20, 26), r, 1, border_radius=radius)
-            pygame.draw.line(sc, (255, 255, 255), (r.x + radius, r.y + 1),
-                             (r.right - radius, r.y + 1))
+        def carbon(r, radius=12):                          # carbon plastic body
+            sc.blit(self._carbon(r.w, r.h, radius), r.topleft)
+            sh = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+            pygame.draw.rect(sh, (255, 255, 255, 28), (2, 2, r.w - 4, int(r.h * 0.42)),
+                             border_radius=radius - 2)
+            sc.blit(sh, r.topleft)
+            pygame.draw.rect(sc, (6, 7, 10), r, 1, border_radius=radius)
+            pygame.draw.rect(sc, (78, 84, 98), r.inflate(-2, -2), 1, border_radius=radius - 1)
 
-        def pedal(r, c1, c2, frac, label):
-            self._recess(r, 12, fill=(20, 22, 27))         # recessed pedal box
-            fh = int((r.height - 10) * min(max(frac, 0.0), 1.0))
-            if fh > 3:                                      # glossy travel fill
-                fr = pygame.Rect(r.x + 5, r.bottom - 5 - fh, r.width - 10, fh)
-                sc.blit(self._grad_surf(fr.w, fr.h, c1, c2, 8, gloss=True), fr.topleft)
-            for k in range(4):                             # ribbed rubber pedal face
-                yy = r.y + 14 + k * 9
-                pygame.draw.line(sc, (96, 102, 118), (r.x + 12, yy), (r.right - 12, yy), 2)
-            t = self.font.render(label, True, (236, 240, 248))
+        def btn(name, label, on=False, accent=(96, 176, 255)):
+            r = R[name]
+            carbon(r, 11)
+            col = accent if on else (150, 156, 172)
+            t = self.font_small.render(self.tr(label), True, col)
+            sc.blit(t, (r.centerx - t.get_width() // 2, r.centery - t.get_height() // 2))
+            if on:                                         # backlit indicator bar
+                pygame.draw.rect(sc, accent, (r.x + 12, r.bottom - 7, r.w - 24, 3),
+                                 border_radius=2)
+
+        def paddle(name, up):
+            r = R[name]
+            carbon(r, 11)
+            cxp, cyp = r.centerx, r.centery
+            tri = ([(cxp, cyp - 10), (cxp - 10, cyp + 7), (cxp + 10, cyp + 7)] if up
+                   else [(cxp, cyp + 10), (cxp - 10, cyp - 7), (cxp + 10, cyp - 7)])
+            pygame.draw.polygon(sc, (214, 220, 232), tri)   # chrome triangle
+            pygame.draw.polygon(sc, (110, 116, 132), tri, 1)
+
+        def metal_pedal(name, frac, label, glow):
+            r = R[name]
+            sc.blit(self._grad_surf(r.w, r.h, (156, 162, 176), (66, 72, 86), 10), r.topleft)
+            sc.blit(self._brushed(r.w, r.h, 10), r.topleft)   # brushed grain
+            for ry in range(r.y + 24, r.bottom - 30, 26):     # drilled sport holes
+                for rx in (r.centerx - 13, r.centerx + 13):
+                    pygame.draw.circle(sc, (44, 48, 58), (rx, ry), 5)
+                    pygame.draw.circle(sc, (188, 194, 206), (rx, ry), 5, 1)
+            fh = int((r.height - 14) * min(max(frac, 0.0), 1.0))   # travel fill
+            if fh > 3:
+                fr = pygame.Rect(r.x + 6, r.bottom - 7 - fh, r.width - 12, fh)
+                sh = pygame.Surface((fr.w, fr.h), pygame.SRCALPHA)
+                pygame.draw.rect(sh, (glow[0], glow[1], glow[2], 165),
+                                 (0, 0, fr.w, fr.h), border_radius=7)
+                sc.blit(sh, fr.topleft)
+            pygame.draw.rect(sc, (216, 222, 234), r, 2, border_radius=10)  # chrome trim
+            pygame.draw.rect(sc, (40, 44, 54), r.inflate(-4, -4), 1, border_radius=8)
+            t = self.font.render(label, True, (26, 28, 34))
             sc.blit(t, (r.centerx - t.get_width() // 2, r.bottom - 30))
 
-        def btn(name, label, on=False, base=None):
-            r = R[name]
-            if on:
-                gloss(r, BTN_ON_HI, BTN_ON_LO, 11)
-            elif base:
-                gloss(r, base[0], base[1], 11)
-            else:
-                gloss(r, BTN_HI, BTN_LO, 11)
-            t = self.font_small.render(self.tr(label), True,
-                                       (255, 255, 255) if on else INK)
-            sc.blit(t, (r.centerx - t.get_width() // 2, r.centery - t.get_height() // 2))
-
-        def paddle(name, up):                              # shift paddle w/ triangle
-            r = R[name]
-            gloss(r, (96, 138, 210), (44, 78, 150), 11)
-            cxp, cyp = r.centerx, r.centery
-            tri = ([(cxp, cyp - 9), (cxp - 9, cyp + 6), (cxp + 9, cyp + 6)] if up
-                   else [(cxp, cyp + 9), (cxp - 9, cyp - 6), (cxp + 9, cyp - 6)])
-            pygame.draw.polygon(sc, (255, 255, 255), tri)
-
-        pedal(R["brake"], (240, 120, 100), (168, 48, 40), self.sim.drivetrain.brake, "BRK")
-        pedal(R["gas"], (120, 230, 140), (48, 150, 70), self.sim.throttle, "GAS")
+        metal_pedal("brake", self.sim.drivetrain.brake, "BRK", (232, 84, 72))
+        metal_pedal("gas", self.sim.throttle, "GAS", (92, 212, 124))
         paddle("up", True)
         paddle("down", False)
-        btn("start", "START", self.sim.starter_engaged)
-        btn("ign", "IGN", self.sim.ignition_on)
-        btn("auto", "AUTO", self.sim.drivetrain.auto)
-        btn("close", "Touch OFF", base=((196, 86, 74), (150, 46, 38)))
+        btn("start", "START", self.sim.starter_engaged, (255, 184, 84))
+        btn("ign", "IGN", self.sim.ignition_on, (96, 204, 255))
+        btn("auto", "AUTO", self.sim.drivetrain.auto, (120, 224, 144))
+        btn("close", "Touch OFF", accent=(240, 112, 100))
 
     def handle_events(self):
         self._rebuild_toolbar(pygame.Rect(24, 24, 620, 632))
@@ -1150,6 +1161,35 @@ class App:
                             3, axis=2)
             alpha = np.clip(np.abs(streak) * 2.2, 0, 24).astype(np.uint8)[:, :, None]
             arr = np.ascontiguousarray(np.dstack([rgb, alpha]))
+            s = pygame.image.frombuffer(arr.tobytes(), (w, h), "RGBA").convert_alpha()
+            if radius > 0:
+                mask = pygame.Surface((w, h), pygame.SRCALPHA)
+                pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, w, h),
+                                 border_radius=radius)
+                s.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            self._grad_cache[key] = s
+        return s
+
+    def _carbon(self, w, h, radius):
+        """A cached carbon-fibre weave texture (dark woven twill) for premium
+        plastic dash buttons."""
+        w, h = int(w), int(h)
+        key = ('carbon', w, h, radius)
+        s = self._grad_cache.get(key)
+        if s is None:
+            cell = 5
+            yy, xx = np.mgrid[0:h, 0:w]
+            cxy = ((xx // cell) % 2 + (yy // cell) % 2) % 2
+            fx = (xx % cell) / cell
+            fy = (yy % cell) / cell
+            diag = np.where(cxy == 0, fx + fy, (1.0 - fx) + fy)        # 0..2 twill
+            lum = 16.0 + 16.0 * np.clip(diag / 2.0, 0.0, 1.0)
+            rgb = np.stack([lum * 0.92, lum, lum * 1.12], axis=-1)
+            # a soft top-down sheen
+            rgb *= (1.0 + 0.5 * (1.0 - yy / max(h - 1, 1)))[:, :, None]
+            arr = np.dstack([np.clip(rgb, 0, 255),
+                             np.full((h, w), 255, np.float32)]).astype(np.uint8)
+            arr = np.ascontiguousarray(arr)
             s = pygame.image.frombuffer(arr.tobytes(), (w, h), "RGBA").convert_alpha()
             if radius > 0:
                 mask = pygame.Surface((w, h), pygame.SRCALPHA)
