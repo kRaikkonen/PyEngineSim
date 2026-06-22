@@ -3045,18 +3045,49 @@ class App:
             self._draw_ancillary(cx, y, kind, throttle)
             t = self.font_small.render(self.tr(name), True, (140, 148, 164))
             self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
-        self._draw_front_intake(bay, eng)            # cold-air front-end of the chain
+        intake_x = next((xs[i] for i, (n, k) in enumerate(items) if k in ("tb", "ic")),
+                        bay.x + 70)
+        self._draw_front_intake(bay, eng, intake_x, y)   # cold-air front of the chain
+        # F1 hybrid power unit: MGU-H on the turbo shaft, MGU-K on the crank nose
+        if getattr(eng, "mgu_whine", 0.0) > 0.0:
+            tps = getattr(self, "_turbo_pts", [])
+            if tps:
+                tx, ty, tr = tps[0]
+                self._draw_mgu(tx, ty, tr + 2, "MGU-H", ring_only=True)
+            ccx, ccy = self._crank_xy
+            self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 12, "MGU-K")
+
+    def _draw_mgu(self, cx, cy, r, label, ring_only=False):
+        """An F1 motor-generator unit: a blue-glowing electric machine with copper
+        stator windings.  ``ring_only`` overlays it as a ring on the turbo (MGU-H);
+        otherwise a full motor disc (MGU-K on the crank)."""
+        sc = self.screen
+        cx, cy, r = int(cx), int(cy), int(r)
+        glow = pygame.Surface((2 * r + 10, 2 * r + 10), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (80, 170, 255, 70), (r + 5, r + 5), r + 5)
+        sc.blit(glow, (cx - r - 5, cy - r - 5), special_flags=pygame.BLEND_RGBA_ADD)
+        if not ring_only:
+            pygame.draw.circle(sc, (40, 46, 58), (cx, cy), r)
+        pygame.draw.circle(sc, (96, 184, 255), (cx, cy), r, 2)
+        for k in range(8):                            # copper stator windings
+            a = k * math.pi / 4
+            pygame.draw.line(sc, (206, 142, 74),
+                             (int(cx + math.cos(a) * r * 0.55), int(cy + math.sin(a) * r * 0.55)),
+                             (int(cx + math.cos(a) * r * 0.92), int(cy + math.sin(a) * r * 0.92)), 2)
+        if not ring_only:
+            pygame.draw.circle(sc, (150, 160, 176), (cx, cy), max(2, int(r * 0.3)))
+        t = self.font_small.render(label, True, (130, 196, 255))
+        sc.blit(t, (cx - t.get_width() // 2, cy + r + 2))
 
     # cool pre-turbo intake air (light blue) — (casing, body, sheen)
     _COOL_COLS = ((18, 46, 64), (64, 134, 176), (150, 205, 235))
 
-    def _draw_front_intake(self, bay, eng):
+    def _draw_front_intake(self, bay, eng, intake_x, row_y):
         """The cold-air FRONT of the charge path: a body scoop -> air filter ->
-        light-blue ducts feeding each turbo's compressor inlet (so the chain reads
-        scoop -> filter -> compressor -> intercooler -> throttle -> manifold)."""
+        light-blue ducts.  On a turbo engine they feed each turbo's compressor
+        inlet; on an NA engine the duct runs to the throttle body (scoop -> filter
+        -> throttle -> manifold)."""
         tps = getattr(self, "_turbo_pts", [])
-        if not tps:
-            return
         sc = self.screen
         cool = self._COOL_COLS
         afx = bay.x + 96
@@ -3074,12 +3105,25 @@ class App:
         pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
         lab = self.font_small.render(self.tr("air filter"), True, (120, 168, 196))
         sc.blit(lab, (af.centerx - lab.get_width() // 2, af.bottom))
-        # cool-air ducts from the filter down to each turbo's compressor inlet
-        for tx, ty, tr in tps:
-            inx = int(tx - tr - 4) if tx > bay.centerx else int(tx + tr + 4)
-            self._draw_ortho_pipe([(af.centerx, af.bottom + 1), (af.centerx, int(ty)),
-                                   (inx, int(ty))], 3, cool)
-            pygame.draw.circle(sc, cool[1], (inx, int(ty)), 3)
+        # cool-air ducts from the filter down to each turbo's compressor inlet,
+        # drawn onto a temp layer at ~35% opacity (semi-transparent blue)
+        real = self.screen
+        ds = pygame.Surface(real.get_size(), pygame.SRCALPHA)
+        self.screen = ds
+        if tps:                                       # turbo: filter -> compressors
+            for tx, ty, tr in tps:
+                inx = int(tx - tr - 4) if tx > bay.centerx else int(tx + tr + 4)
+                self._draw_ortho_pipe([(af.centerx, af.bottom + 1), (af.centerx, int(ty)),
+                                       (inx, int(ty))], 3, cool)
+                pygame.draw.circle(ds, cool[1], (inx, int(ty)), 3)
+        else:                                         # NA: filter -> throttle body
+            self._draw_ortho_pipe([(af.centerx, af.bottom + 1),
+                                   (af.centerx, int(row_y) - 9),
+                                   (int(intake_x), int(row_y) - 9)], 3, cool)
+            pygame.draw.circle(ds, cool[1], (int(intake_x), int(row_y) - 9), 3)
+        self.screen = real
+        ds.set_alpha(89)
+        real.blit(ds, (0, 0))
 
     def _forced_drive(self, eng, sim):
         """(spin, load) for the forced-induction hardware — shaft spin scaled by
