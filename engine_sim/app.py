@@ -2164,6 +2164,105 @@ class App:
         if electric:                                  # e-turbo: a blue stator ring
             pygame.draw.circle(sc, (88, 178, 255), (cx, cy), r + 2, 2)
 
+    def _bay_blower(self, cx, cy, r, spin, load, centri=False):
+        """A detailed supercharger for the bay: a Roots blower (brushed case, two
+        meshing 3-lobe rotors, an intake hat and a driven pulley + belt), or a
+        centrifugal impeller."""
+        cx, cy = int(cx), int(cy)
+        sc = self.screen
+        if centri:
+            self._bay_turbo(cx, cy, r, spin, load)
+            return
+        w, h = int(r * 2.6), int(r * 1.6)
+        rect = pygame.Rect(cx - w // 2, cy - h // 2, w, h)
+        sc.blit(self._grad_surf(w, h, (154, 160, 174), (72, 78, 92), 8, gloss=True),
+                rect.topleft)
+        sc.blit(self._brushed(w, h, 8), rect.topleft)
+        pygame.draw.rect(sc, (30, 33, 42), rect, 2, border_radius=8)
+        hat = pygame.Rect(cx - int(r * 0.55), rect.y - 9, int(r * 1.1), 11)   # intake hat
+        sc.blit(self._grad_surf(hat.w, hat.h, (124, 130, 144), (64, 70, 84), 3,
+                                gloss=True), hat.topleft)
+        pygame.draw.rect(sc, (38, 42, 52), hat, 1, border_radius=3)
+        rb = int(h * 0.34)                                # two meshing rotors
+        for ox, sgn in ((-r * 0.62, 1), (r * 0.62, -1)):
+            bx = cx + int(ox)
+            pygame.draw.circle(sc, (20, 22, 28), (bx, cy), rb)
+            for k in range(3):
+                a = sgn * spin + k * (2 * math.pi / 3)
+                pygame.draw.line(sc, (190, 196, 210), (bx, cy),
+                                 (int(bx + rb * 0.86 * math.cos(a)),
+                                  int(cy + rb * 0.86 * math.sin(a))), 3)
+            sc.blit(self._grad_surf(8, 8, (222, 228, 240), (110, 118, 132), 4,
+                                    gloss=True), (bx - 4, cy - 4))
+        px = rect.x - 7                                   # drive pulley + belt
+        pygame.draw.circle(sc, (54, 58, 70), (px, cy), 6)
+        pygame.draw.circle(sc, (120, 126, 140), (px, cy), 6, 1)
+        for k in range(8):
+            a = spin + k * (2 * math.pi / 8)
+            pygame.draw.line(sc, (84, 90, 104), (px, cy),
+                             (int(px + 5 * math.cos(a)), int(cy + 5 * math.sin(a))), 1)
+        pygame.draw.line(sc, (28, 30, 38), (px, cy - 6), (rect.x, rect.y + 3), 2)
+        pygame.draw.line(sc, (28, 30, 38), (px, cy + 6), (rect.x, rect.bottom - 3), 2)
+        if load > 0.02:
+            gs = pygame.Surface((w, h), pygame.SRCALPHA)
+            pygame.draw.ellipse(gs, (90, 170, 255, int(90 * min(load, 1.0))),
+                                (int(w * 0.2), int(h * 0.2), int(w * 0.6), int(h * 0.6)))
+            sc.blit(gs, rect.topleft)
+
+    def _draw_ancillary(self, cx, cy, kind, throttle=0.0):
+        """A small icon for a forced-induction ancillary part."""
+        sc = self.screen
+        if kind == "tb":                                 # throttle body: live butterfly
+            r = pygame.Rect(cx - 17, cy - 9, 34, 18)
+            sc.blit(self._grad_surf(r.w, r.h, (122, 130, 144), (60, 66, 80), 4), r.topleft)
+            pygame.draw.rect(sc, (20, 22, 28), r.inflate(-6, -4), 0, border_radius=3)  # bore
+            pygame.draw.rect(sc, (40, 44, 54), r, 1, border_radius=4)
+            ang = math.radians(90.0 - 80.0 * min(max(throttle, 0.0), 1.0))   # closed->open
+            dx, dy = math.cos(ang) * 12, math.sin(ang) * 6
+            pygame.draw.line(sc, (206, 212, 224), (cx - dx, cy - dy), (cx + dx, cy + dy), 3)
+            pygame.draw.circle(sc, (96, 102, 116), (cx, cy), 2)              # spindle
+        elif kind == "ic":                               # intercooler: finned core
+            r = pygame.Rect(cx - 18, cy - 8, 36, 16)
+            sc.blit(self._grad_surf(r.w, r.h, (122, 130, 144), (60, 66, 80), 3), r.topleft)
+            for fx in range(r.x + 3, r.right - 2, 3):
+                pygame.draw.line(sc, (40, 44, 54), (fx, r.y + 2), (fx, r.bottom - 2), 1)
+            pygame.draw.rect(sc, (152, 158, 172), r, 1, border_radius=3)
+        elif kind == "cat":                              # catalytic: honeycomb
+            r = pygame.Rect(cx - 16, cy - 8, 32, 16)
+            sc.blit(self._grad_surf(r.w, r.h, (132, 138, 152), (70, 76, 90), 8), r.topleft)
+            for hx in range(r.x + 5, r.right - 3, 5):
+                for hy in range(r.y + 4, r.bottom - 2, 5):
+                    pygame.draw.circle(sc, (52, 56, 68), (hx, hy), 1)
+            pygame.draw.rect(sc, (152, 158, 172), r, 1, border_radius=8)
+        elif kind == "wg":                               # wastegate: valve + actuator
+            pygame.draw.rect(sc, (96, 102, 116), (cx - 3, cy - 16, 6, 9), border_radius=2)
+            pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 9)
+            pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 9, 1)
+            pygame.draw.circle(sc, (70, 76, 90), (cx, cy), 3)
+        elif kind == "bov":                              # blow-off valve + vent
+            pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 8)
+            pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 8, 1)
+            pygame.draw.polygon(sc, (180, 90, 70),
+                                [(cx + 6, cy - 5), (cx + 14, cy - 7), (cx + 14, cy + 7),
+                                 (cx + 6, cy + 5)])      # vent trumpet
+
+    def _bay_ancillaries(self, bay, eng, throttle=0.0):
+        """A labelled row of intake/boost ancillaries along the bay floor:
+        throttle body, intercooler, catalytic converter, wastegate, blow-off."""
+        items = [("throttle body", "tb"), ("intercooler", "ic")]
+        if eng.has_cat:
+            items.append(("catalytic", "cat"))
+        items.append(("wastegate", "wg"))
+        items.append(("blow-off", "bov"))
+        y = bay.bottom - 36
+        x0, span = bay.x + 30, bay.width - 60
+        step = span / max(len(items), 1)
+        for i, (name, kind) in enumerate(items):
+            cx = int(x0 + step * (i + 0.5))
+            self._draw_ancillary(cx, y, kind, throttle)
+            t = self.font_small.render(self.tr(name), True, (140, 148, 164))
+            self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
+
     def _draw_bay_induction(self, bay, eng, sim):
         """Draw the forced-induction hardware in the engine bay, placed by type:
         a turbo in the VALLEY for a hot-V, OUTSIDE the banks for a cold-V, one per
@@ -2183,11 +2282,13 @@ class App:
             t = self.font_small.render(self.tr(text), True, (150, 158, 174))
             self.screen.blit(t, (int(x - t.get_width() // 2), int(y)))
 
+        thr = min(max(sim.throttle, 0.0), 1.0)
         if ind in ("roots", "centrifugal"):           # supercharger sits on top
-            self._draw_blower(bay.centerx, bay.y + 46, 24, spin, load,
-                              centri=(ind == "centrifugal"), label=False)
+            self._bay_blower(bay.centerx, bay.y + 50, 26, spin, load,
+                             centri=(ind == "centrifugal"))
             lab("supercharger" if ind == "roots" else "centrifugal SC",
-                bay.centerx, bay.y + 72)
+                bay.centerx, bay.y + 6)
+            self._bay_ancillaries(bay, eng, thr)
             return
         hot = getattr(eng, "hot_v", False)
         etb = getattr(eng, "electric_turbo", False)
@@ -2195,20 +2296,21 @@ class App:
             for x, y in ((bay.x + 46, cyv - 34), (bay.x + 46, cyv + 34),
                          (bay.right - 46, cyv - 34), (bay.right - 46, cyv + 34)):
                 self._bay_turbo(x, y, 18, spin, load)
-            lab("quad-turbo", bay.centerx, bay.bottom - 22)
+            lab("quad-turbo", bay.centerx, bay.y + 26)
         elif has_banks:
             r = 22
             if hot:                                    # in the valley (centre)
                 for x in (bay.centerx - 36, bay.centerx + 36):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
-                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 28)
+                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 26)
             else:                                      # outside the banks
                 for x in (bay.x + 48, bay.right - 48):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
-                lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 28)
+                lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 26)
         else:                                          # inline: single turbo, side
             self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb)
             lab("single turbo", bay.right - 50, cyv + 30)
+        self._bay_ancillaries(bay, eng, thr)
 
     def _exhaust_db(self):
         """A rough exhaust-loudness readout from the synth's last output RMS."""
