@@ -775,45 +775,58 @@ class App:
             self._set_slider(self._drag, mpos[0])
 
     def _draw_touch_overlay(self):
-        """Translucent on-screen pedals / paddles / buttons for finger control."""
+        """Glossy iOS-6 on-screen pedals / paddles / buttons for finger control."""
         if not self.touch_mode:
             return
         R = self._touch_rects()
-        ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        sc = self.screen
 
-        def pedal(r, col, frac, label):
-            pygame.draw.rect(ov, (col[0], col[1], col[2], 55), r, border_radius=12)
-            fh = int(r.height * min(max(frac, 0.0), 1.0))
-            if fh > 2:
-                pygame.draw.rect(ov, (col[0], col[1], col[2], 150),
-                                 pygame.Rect(r.x, r.bottom - fh, r.width, fh),
-                                 border_radius=12)
-            pygame.draw.rect(ov, (col[0], col[1], col[2], 225), r, 2, border_radius=12)
-            t = self.font.render(label, True, (255, 255, 255))
-            ov.blit(t, (r.centerx - t.get_width() // 2, r.bottom - 28))
+        def gloss(r, c1, c2, radius=12):
+            sc.blit(self._grad_surf(r.w, r.h, c1, c2, radius, gloss=True), r.topleft)
+            pygame.draw.rect(sc, (18, 20, 26), r, 1, border_radius=radius)
+            pygame.draw.line(sc, (255, 255, 255), (r.x + radius, r.y + 1),
+                             (r.right - radius, r.y + 1))
 
-        def btn(name, label, on=False):
+        def pedal(r, c1, c2, frac, label):
+            self._recess(r, 12, fill=(20, 22, 27))         # recessed pedal box
+            fh = int((r.height - 10) * min(max(frac, 0.0), 1.0))
+            if fh > 3:                                      # glossy travel fill
+                fr = pygame.Rect(r.x + 5, r.bottom - 5 - fh, r.width - 10, fh)
+                sc.blit(self._grad_surf(fr.w, fr.h, c1, c2, 8, gloss=True), fr.topleft)
+            for k in range(4):                             # ribbed rubber pedal face
+                yy = r.y + 14 + k * 9
+                pygame.draw.line(sc, (96, 102, 118), (r.x + 12, yy), (r.right - 12, yy), 2)
+            t = self.font.render(label, True, (236, 240, 248))
+            sc.blit(t, (r.centerx - t.get_width() // 2, r.bottom - 30))
+
+        def btn(name, label, on=False, base=None):
             r = R[name]
-            c = (70, 150, 80) if on else (54, 60, 74)
-            pygame.draw.rect(ov, (c[0], c[1], c[2], 180), r, border_radius=10)
-            pygame.draw.rect(ov, (164, 172, 188, 215), r, 2, border_radius=10)
-            t = self.font_small.render(label, True, (236, 240, 246))
-            ov.blit(t, (r.centerx - t.get_width() // 2, r.centery - 7))
+            if on:
+                gloss(r, BTN_ON_HI, BTN_ON_LO, 11)
+            elif base:
+                gloss(r, base[0], base[1], 11)
+            else:
+                gloss(r, BTN_HI, BTN_LO, 11)
+            t = self.font_small.render(self.tr(label), True,
+                                       (255, 255, 255) if on else INK)
+            sc.blit(t, (r.centerx - t.get_width() // 2, r.centery - t.get_height() // 2))
 
-        pedal(R["gas"], (74, 200, 96), self.sim.throttle, "GAS")
-        pedal(R["brake"], (224, 84, 64), self.sim.drivetrain.brake, "BRK")
-        btn("up", "UP")
-        btn("down", "DOWN")
+        def paddle(name, up):                              # shift paddle w/ triangle
+            r = R[name]
+            gloss(r, (96, 138, 210), (44, 78, 150), 11)
+            cxp, cyp = r.centerx, r.centery
+            tri = ([(cxp, cyp - 9), (cxp - 9, cyp + 6), (cxp + 9, cyp + 6)] if up
+                   else [(cxp, cyp + 9), (cxp - 9, cyp - 6), (cxp + 9, cyp - 6)])
+            pygame.draw.polygon(sc, (255, 255, 255), tri)
+
+        pedal(R["brake"], (240, 120, 100), (168, 48, 40), self.sim.drivetrain.brake, "BRK")
+        pedal(R["gas"], (120, 230, 140), (48, 150, 70), self.sim.throttle, "GAS")
+        paddle("up", True)
+        paddle("down", False)
         btn("start", "START", self.sim.starter_engaged)
         btn("ign", "IGN", self.sim.ignition_on)
         btn("auto", "AUTO", self.sim.drivetrain.auto)
-        # close button (red) — turn touch mode off without the toolbar
-        rc = R["close"]
-        pygame.draw.rect(ov, (190, 70, 60, 210), rc, border_radius=10)
-        pygame.draw.rect(ov, (230, 150, 140, 230), rc, 2, border_radius=10)
-        tc = self.font_small.render(self.tr("Touch OFF"), True, (255, 235, 230))
-        ov.blit(tc, (rc.centerx - tc.get_width() // 2, rc.centery - 7))
-        self.screen.blit(ov, (0, 0))
+        btn("close", "Touch OFF", base=((196, 86, 74), (150, 46, 38)))
 
     def handle_events(self):
         self._rebuild_toolbar(pygame.Rect(24, 24, 620, 632))
