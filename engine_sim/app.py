@@ -1614,7 +1614,7 @@ class App:
                     side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
                     # tilt each bank out by the REAL bank angle from vertical
                     a = side * bank
-                    self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
+                    self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow, phi)
                     lx = cxx + math.sin(a) * (length + 16)
                     ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
@@ -1658,7 +1658,7 @@ class App:
                             / (5.0 * 101325.0), 1.0)
                         if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                         else 0.0)
-                self._draw_cyl(jx, crank_y, a, length, width, frac, theta, glow)
+                self._draw_cyl(jx, crank_y, a, length, width, frac, theta, glow, phi)
                 lx = jx + math.sin(a) * (length + 14)
                 ly = crank_y - math.cos(a) * (length + 14)
                 lab = self.font_small.render(f"{i + 1}", True, DIM)
@@ -1696,7 +1696,7 @@ class App:
             self._grad_cache[key] = s
         return s
 
-    def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow):
+    def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow, phi=0.0):
         """Draw one cylinder + reciprocating piston + rod + crank journal along a
         bank axis tilted by angle ``a`` (radians) from vertical, hinged at the
         crank centre (jx, jy).  Metal surfaces are strip-shaded (bright centre,
@@ -1757,6 +1757,43 @@ class App:
                              (bx + ux * d - qx * (hw + 3), by + uy * d - qy * (hw + 3)), 2)
         edge(-2, length + 4, hw + 3, (22, 24, 30), 2)
         cap(length + 4, hw + 3, (104, 110, 124))      # DOMED head cap on top
+        # --- valvetrain on the head: poppet valves, springs, lifters + camshaft -
+        if length > 34:
+            sc = self.screen
+
+            def lift_at(open_deg, dur):                # raised-cosine valve lift
+                for shf in (-720.0, 0.0, 720.0):
+                    t = (phi + shf - open_deg) / dur
+                    if 0.0 <= t <= 1.0:
+                        return 0.5 * (1.0 - math.cos(2 * math.pi * t))
+                return 0.0
+            il, el = lift_at(700.0, 240.0), lift_at(500.0, 230.0)
+            cam_d = length + 19
+            # camshaft journal across the head
+            pygame.draw.line(sc, (118, 124, 138),
+                             (bx + ux * cam_d + qx * (hw + 1), by + uy * cam_d + qy * (hw + 1)),
+                             (bx + ux * cam_d - qx * (hw + 1), by + uy * cam_d - qy * (hw + 1)), 2)
+            for qo, lift, vcol in ((-hw * 0.5, il, (110, 196, 255)),
+                                   (hw * 0.5, el, (255, 146, 110))):
+                # valve head dips INTO the bore as it opens
+                vd = length - 1 - lift * 6.0
+                vx, vy = bx + ux * vd + qx * qo, by + uy * vd + qy * qo
+                pygame.draw.circle(sc, vcol, (int(vx), int(vy)), max(2, int(hw * 0.3)))
+                pygame.draw.circle(sc, (28, 30, 38), (int(vx), int(vy)), max(2, int(hw * 0.3)), 1)
+                # valve spring (compresses as the valve opens) — 4 coils
+                for ci in range(4):
+                    d = length + 4 + ci * (3.0 - lift * 1.2)
+                    pygame.draw.line(sc, (158, 164, 178),
+                                     (bx + ux * d + qx * (qo - hw * 0.24),
+                                      by + uy * d + qy * (qo - hw * 0.24)),
+                                     (bx + ux * d + qx * (qo + hw * 0.24),
+                                      by + uy * d + qy * (qo + hw * 0.24)), 1)
+                # bucket lifter + the eccentric cam lobe bearing on it
+                lobe = (1.0 + lift) * hw * 0.18
+                ld = cam_d - lobe
+                pygame.draw.circle(sc, (96, 102, 116),
+                                   (int(bx + ux * ld + qx * qo), int(by + uy * ld + qy * qo)),
+                                   max(2, int(hw * 0.2)))
         # dark bore interior
         pygame.draw.polygon(self.screen, (24, 26, 32), [
             (bx + ux * 1 + qx * (hw - 2), by + uy * 1 + qy * (hw - 2)),
@@ -1901,7 +1938,7 @@ class App:
                             if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                             else 0.0)
                     a = sgn * tilt
-                    self._draw_cyl(ux, jy, a, length, width, frac, theta, glow)
+                    self._draw_cyl(ux, jy, a, length, width, frac, theta, glow, phi)
                     lx = ux + math.sin(a) * (length + 14)
                     ly = jy - math.cos(a) * (length + 14)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
@@ -1933,7 +1970,7 @@ class App:
                         / (5.0 * 101325.0), 1.0)
                     if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                     else 0.0)
-            self._draw_cyl(cx, cy, a, length, width, frac, theta, glow)
+            self._draw_cyl(cx, cy, a, length, width, frac, theta, glow, phi)
         # hub on top of all the rod big-ends
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
@@ -2175,25 +2212,55 @@ class App:
             return
         w, h = int(r * 2.6), int(r * 1.6)
         rect = pygame.Rect(cx - w // 2, cy - h // 2, w, h)
-        sc.blit(self._grad_surf(w, h, (154, 160, 174), (72, 78, 92), 8, gloss=True),
+        sc.blit(self._grad_surf(w, h, (166, 172, 186), (58, 64, 78), 8, gloss=True),
                 rect.topleft)
         sc.blit(self._brushed(w, h, 8), rect.topleft)
+        # cast cooling ribs down the case face
+        for rx in range(rect.x + 7, rect.right - 5, 5):
+            pygame.draw.line(sc, (44, 48, 58), (rx, rect.y + int(h * 0.42)),
+                             (rx, rect.bottom - 4), 1)
+            pygame.draw.line(sc, (150, 156, 170), (rx + 1, rect.y + int(h * 0.42)),
+                             (rx + 1, rect.bottom - 4), 1)
         pygame.draw.rect(sc, (30, 33, 42), rect, 2, border_radius=8)
+        # specular bloom + bright top-edge highlight = wet polished alloy
+        sp = pygame.Surface((max(w // 4, 4), max(h // 4, 4)), pygame.SRCALPHA)
+        pygame.draw.ellipse(sp, (255, 255, 255, 120),
+                            (int(sp.get_width() * 0.13), int(sp.get_height() * 0.07),
+                             int(sp.get_width() * 0.74), int(sp.get_height() * 0.32)))
+        sc.blit(pygame.transform.smoothscale(sp, (w, h)), rect.topleft,
+                special_flags=pygame.BLEND_RGBA_ADD)
+        pygame.draw.line(sc, (228, 233, 244), (rect.x + 6, rect.y + 2),
+                         (rect.right - 6, rect.y + 2), 1)
         hat = pygame.Rect(cx - int(r * 0.55), rect.y - 9, int(r * 1.1), 11)   # intake hat
-        sc.blit(self._grad_surf(hat.w, hat.h, (124, 130, 144), (64, 70, 84), 3,
+        sc.blit(self._grad_surf(hat.w, hat.h, (150, 156, 170), (58, 64, 78), 3,
                                 gloss=True), hat.topleft)
+        pygame.draw.line(sc, (224, 229, 240), (hat.x + 3, hat.y + 2),
+                         (hat.right - 3, hat.y + 2), 1)
         pygame.draw.rect(sc, (38, 42, 52), hat, 1, border_radius=3)
         rb = int(h * 0.34)                                # two meshing rotors
         for ox, sgn in ((-r * 0.62, 1), (r * 0.62, -1)):
             bx = cx + int(ox)
             pygame.draw.circle(sc, (20, 22, 28), (bx, cy), rb)
+            # polished rotor end-plate: radial gloss gradient + rim
+            ep = self._grad_surf(rb * 2, rb * 2, (150, 156, 170), (40, 44, 54), rb,
+                                 gloss=True)
+            mask = pygame.Surface((rb * 2, rb * 2), pygame.SRCALPHA)
+            pygame.draw.circle(mask, (255, 255, 255, 255), (rb, rb), rb)
+            ep = ep.copy()
+            ep.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            sc.blit(ep, (bx - rb, cy - rb))
+            pygame.draw.circle(sc, (26, 28, 36), (bx, cy), rb, 1)
             for k in range(3):
                 a = sgn * spin + k * (2 * math.pi / 3)
-                pygame.draw.line(sc, (190, 196, 210), (bx, cy),
+                pygame.draw.line(sc, (206, 212, 226), (bx, cy),
                                  (int(bx + rb * 0.86 * math.cos(a)),
                                   int(cy + rb * 0.86 * math.sin(a))), 3)
-            sc.blit(self._grad_surf(8, 8, (222, 228, 240), (110, 118, 132), 4,
+                pygame.draw.line(sc, (60, 64, 76), (bx, cy),
+                                 (int(bx + rb * 0.86 * math.cos(a + 0.12)),
+                                  int(cy + rb * 0.86 * math.sin(a + 0.12))), 1)
+            sc.blit(self._grad_surf(8, 8, (236, 240, 250), (110, 118, 132), 4,
                                     gloss=True), (bx - 4, cy - 4))
+            pygame.draw.circle(sc, (255, 255, 255), (bx - 1, cy - 1), 1)
         px = rect.x - 7                                   # drive pulley + belt
         pygame.draw.circle(sc, (54, 58, 70), (px, cy), 6)
         pygame.draw.circle(sc, (120, 126, 140), (px, cy), 6, 1)
