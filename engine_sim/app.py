@@ -2203,9 +2203,36 @@ class App:
                     if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                     else 0.0)
             self._draw_cyl(cx, cy, a, length, width, frac, theta, glow, phi)
-        # hub on top of all the rod big-ends
-        pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
-        pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
+        sc = self.screen
+        # --- aircraft RING exhaust: a short stub off each head into a collector
+        # ring hugging the cylinder bank (no civilian after-treatment) ---
+        head_r = 9 * 1.4 + length + width * 0.45
+        ring_r = int(min(head_r + 5, (bottom - top) * 0.49, rect.width * 0.47))
+        pygame.draw.circle(sc, (54, 18, 14), (cx, cy), ring_r, 5)
+        pygame.draw.circle(sc, (176, 62, 38), (cx, cy), ring_r, 3)
+        for i in range(n):
+            a = math.radians(eng.cylinders[i].bank_angle_deg)
+            hx, hy = cx + math.sin(a) * head_r, cy - math.cos(a) * head_r
+            rx, ry = cx + math.sin(a) * ring_r, cy - math.cos(a) * ring_r
+            pygame.draw.line(sc, (54, 18, 14), (hx, hy), (rx, ry), 5)
+            pygame.draw.line(sc, (176, 62, 38), (hx, hy), (rx, ry), 3)
+        # ring oil sump (a brass arc cradling the bottom of the crankcase)
+        sump = pygame.Rect(cx - int(Rc * 0.6), cy - int(Rc * 0.6), int(Rc * 1.2), int(Rc * 1.2))
+        pygame.draw.arc(sc, (96, 68, 26), sump, math.radians(200), math.radians(340), 4)
+        # --- central PROP-REDUCTION gearbox: a toothed reduction gear + prop boss -
+        hub_r = int(Rc * 0.2)
+        for k in range(16):                              # reduction-gear teeth
+            t = sim.crank_angle * 0.5 + k * math.pi / 8
+            pygame.draw.line(sc, (150, 156, 172),
+                             (int(cx + math.cos(t) * (hub_r - 1)), int(cy + math.sin(t) * (hub_r - 1))),
+                             (int(cx + math.cos(t) * (hub_r + 2)), int(cy + math.sin(t) * (hub_r + 2))), 2)
+        sc.blit(self._grad_surf(2 * hub_r, 2 * hub_r, (130, 136, 152), (56, 62, 76),
+                                hub_r, gloss=True), (cx - hub_r, cy - hub_r))
+        pygame.draw.circle(sc, (40, 44, 54), (cx, cy), hub_r, 1)
+        pygame.draw.circle(sc, (190, 196, 210), (cx, cy), 4)   # prop shaft boss
+        pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 4, 1)
+        pl = self.font_small.render(self.tr("prop reduction"), True, (150, 158, 174))
+        sc.blit(pl, (cx - pl.get_width() // 2, cy + hub_r + 3))
 
     # manifold pipe colour sets — (dark casing, lit body, top sheen)
     _EXH_COLS = ((54, 18, 14), (176, 62, 38), (230, 124, 86))   # hot exhaust = red
