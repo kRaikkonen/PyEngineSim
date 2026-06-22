@@ -1127,6 +1127,21 @@ class App:
         pygame.draw.line(self.screen, (188, 194, 206),
                          (cx - dx, cy - dy), (cx + dx, cy + dy), 1)
 
+    def _recess(self, rect, radius=4, fill=(13, 14, 17)):
+        """A SUNKEN inset window — dark face with a top/left inner shadow and a
+        bottom/right catch-light, so it reads as machined INTO the metal slab
+        (the look of an embedded LCD / instrument cut-out)."""
+        pygame.draw.rect(self.screen, fill, rect, border_radius=radius)
+        sh = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        pygame.draw.line(sh, (0, 0, 0, 160), (radius, 1), (rect.w - radius, 1), 2)
+        pygame.draw.line(sh, (0, 0, 0, 130), (1, radius), (1, rect.h - radius), 2)
+        pygame.draw.line(sh, (122, 130, 146, 95),
+                         (radius, rect.h - 1), (rect.w - radius, rect.h - 1))
+        pygame.draw.line(sh, (122, 130, 146, 95),
+                         (rect.w - 1, radius), (rect.w - 1, rect.h - radius))
+        self.screen.blit(sh, rect.topleft)
+        pygame.draw.rect(self.screen, (6, 7, 9), rect, width=1, border_radius=radius)
+
     def _panel(self, rect, radius=14, screws=True):
         """A glossy beveled brushed-metal panel slab with iOS-6 corner screws."""
         self.screen.blit(self._grad_surf(rect.w, rect.h, PANEL_TOP, PANEL_BOT,
@@ -1342,7 +1357,7 @@ class App:
                            key=lambda i: eng.cylinders[i].cycle_offset_deg % 720.0)
             signs = [1 if eng.cylinders[i].bank_angle_deg > 0 else -1 for i in order]
             alternates = all(signs[j] != signs[(j + 1) % n] for j in range(n))
-            plane = " flat-plane" if alternates else " cross-plane"
+            plane = " flat-plane" if alternates else " cross-plane"   # qualifier
         if eng.is_rotary:
             cfg = "rotary"
         elif getattr(eng, "is_radial", False):
@@ -1361,8 +1376,12 @@ class App:
         rot = "CCW" if getattr(eng, "rotation", "CW") == "CCW" else "CW"
         vv = getattr(eng, "variable_valve", "")
         vv_txt = f" · {vv}" if vv else ""
-        spec = (f"{cfg} · {rot} · {mat_lbl} exh · {hdr} · "
-                f"{vt}{vv_txt}")
+        # capitalise the leading letter of each descriptor for a consistent look
+        # (acronyms like CW / DOHC keep their caps)
+        def _cap(s):
+            return s[:1].upper() + s[1:]
+        spec = (f"{_cap(cfg)} · {rot} · {_cap(mat_lbl)} exh · {_cap(hdr)} · "
+                f"{_cap(vt)}{vv_txt}")
         stxt = self.font_small.render(spec, True, (138, 146, 162))
         self.screen.blit(stxt, (rect.x + 18, ty + 44))
         voice = self.tr(FIRING_VOICES[self.voice_idx][0])
@@ -1797,6 +1816,10 @@ class App:
         marks, a swept needle (270 deg) and a digital readout."""
         cx, cy = int(cx), int(cy)
         frac = min(max(frac, 0.0), 1.0)
+        # recessed seat: a dark shadow ring (sunk into the brushed slab) with a
+        # bottom-right catch-light, so the instrument reads as INSET, not stuck on
+        pygame.draw.circle(self.screen, (22, 24, 28), (cx, cy), r + 7)
+        pygame.draw.circle(self.screen, (78, 84, 96), (cx + 1, cy + 2), r + 7, 1)
         pygame.draw.circle(self.screen, (58, 62, 72), (cx, cy), r + 4)     # bezel
         pygame.draw.circle(self.screen, (150, 156, 168), (cx, cy), r + 4, 2)
         pygame.draw.circle(self.screen, (18, 19, 23), (cx, cy), r)         # face
@@ -1938,7 +1961,7 @@ class App:
         # Start the lights BELOW the actual rendered label height (so they never
         # overlap "IGNITION" no matter the font), and keep the whole bank within a
         # fixed height (so a 4-bank W doesn't shove the readouts off the bottom).
-        top0 = y + label_h + 4
+        top0 = y + label_h + 10               # clear breathing room below the label
         pitch = min(20, 52 // max(nrows, 1))
         r = 6 if pitch >= 17 else (5 if pitch >= 12 else 4)
         fade = self._ign_flash
@@ -2224,8 +2247,11 @@ class App:
             torque += np.roll(g, -s)
             comb += np.roll(cbase, -s)
             exh += np.roll(ebase, -s)
-        comb *= (0.3 + 0.7 * load)
-        exh = self._smooth(exh * (0.3 + 0.7 * load), max(3, int(W * 0.05)))
+        # amplitude tracks BOTH load and throttle so opening the throttle visibly
+        # grows the combustion/exhaust pulses (not just the rpm)
+        drive = 0.15 + 0.85 * (0.45 * load + 0.55 * thr)
+        comb *= drive
+        exh = self._smooth(exh * drive, max(3, int(W * 0.05)))
         ivl = self._valve_lift(ang, 700.0, 240.0)
         evl = self._valve_lift(ang, 500.0, 230.0)
         aud = getattr(self.synth, "last_wave", None) if self.synth else None
@@ -2242,9 +2268,13 @@ class App:
             spool = (np.clip((rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3),
                              0, 1) if eng.induction == "turbo" else rf)
             tq = tq * (1.0 + 0.8 * eng.boost_bar * spool)
-        hp = tq * rpms
-        tq_n = tq / max(tq.max(), 1e-9)
-        hp_n = hp / max(hp.max(), 1e-9)
+        # WOT reference maxima (fixed scale), then scale the drawn curves by the
+        # live throttle so they shrink/grow as you lift/press
+        tq_ref = max(tq.max(), 1e-9)
+        hp_ref = max((tq * rpms).max(), 1e-9)
+        tqd = tq * (0.10 + 0.90 * thr)
+        tq_n = tqd / tq_ref
+        hp_n = (tqd * rpms) / hp_ref
         rpmfrac = float(np.clip((sim.rpm - rlo) / max(rl - rlo, 1.0), 0, 1))
         # spark-advance timing: ignition spike vs the valve-event reference ------
         adv = 15.0 + 22.0 * min(sim.rpm / max(rl, 1.0), 1.0)
@@ -2376,10 +2406,13 @@ class App:
 
         # --- tachometer ---
         cx, cy, r = rect.centerx, rect.y + 114, 92
-        self._draw_tach(cx, cy, r, sim.rpm, eng.redline_rpm)
+        self._draw_tach(cx, cy, r, sim.rpm, eng.redline_rpm,
+                        sim.drivetrain.speed_kmh)
         # --- spinning road wheel (in the corner beside the tach) ---
         self._draw_wheel(rect.x + 48, rect.y + 78, 34, self._wheel_ang,
                          sim.drivetrain.speed_kmh)
+        # --- throttle / brake pedal bars (opposite corner) ---
+        self._draw_pedal_bars(rect.right - 64, rect.y + 52, 96)
 
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
         yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
@@ -2391,17 +2424,20 @@ class App:
         y = yb + 8
         mode = T("Auto") if dt.auto else T("Manual")
         rows = [
-            ("RPM", f"{sim.rpm:6.0f}", ACCENT),
-            ("TORQUE", f"{tq:5.0f} Nm ({nm_to_lbft(tq):.0f} lb-ft)", INK),
-            ("POWER", f"{hp:6.0f} hp", INK),
-            ("THROTTLE", f"{sim.throttle*100:5.0f} %", INK),
-            ("GEAR", f"{dt.gear_name:>3} {mode}"
-                     f" [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
-            ("SPEED", f"{dt.speed_kmh:5.0f} km/h", INK),
+            ("RPM", f"{sim.rpm:.0f}", ACCENT),
+            ("TORQUE", f"{tq:.0f} Nm  ({nm_to_lbft(tq):.0f} lb-ft)", INK),
+            ("POWER", f"{hp:.0f} hp", INK),
+            ("THROTTLE", f"{sim.throttle*100:.0f} %", INK),
+            ("GEAR", f"{dt.gear_name} {mode}"
+                     f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
+            ("SPEED", f"{dt.speed_kmh:.0f} km/h", INK),
         ]
+        val_x = rect.x + 136
+        val_w = rect.right - 22 - val_x
         for label, value, col in rows:
             self.screen.blit(self.font.render(T(label), True, DIM), (rect.x + 24, y))
-            self.screen.blit(self.font.render(value, True, col), (rect.x + 146, y))
+            self._recess(pygame.Rect(val_x, y - 1, val_w, 19), 4)   # embedded LCD
+            self.screen.blit(self.font.render(value, True, col), (val_x + 8, y))
             y += 21
 
         # --- engine flow / fuel instrument block (the original game's readouts) ---
@@ -2451,38 +2487,86 @@ class App:
             (rect.x + 24, y + 15))
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
-        """A spinning road wheel — tyre, alloy rim + spokes, brake disc & caliper —
-        turning at the real road rate so you can SEE the car is moving."""
+        """A spinning Pirelli P Zero road wheel — fat tyre with the yellow PZERO
+        sidewall marking, a big lit alloy rim + spokes, drilled brake disc &
+        caliper — turning at the real road rate."""
         cx, cy = int(cx), int(cy)
-        pygame.draw.circle(self.screen, (16, 17, 20), (cx, cy), R + 2)        # tyre
-        pygame.draw.circle(self.screen, (40, 43, 50), (cx, cy), R, 3)         # tread
-        pygame.draw.circle(self.screen, (28, 30, 36), (cx, cy), int(R * 0.74))
-        # brake disc behind the rim (with a hint of caliper)
-        pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), int(R * 0.66))
-        pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(R * 0.66), 1)
-        pygame.draw.rect(self.screen, (200, 90, 60),
-                         (cx - 3, cy - int(R * 0.7), 6, int(R * 0.22)), border_radius=2)
-        rim = int(R * 0.6)
-        # blur the spokes at speed: fade them out as the wheel spins fast
         fast = min(speed_kmh / 90.0, 1.0)
-        spoke_col = (int(150 - 70 * fast), int(156 - 70 * fast), int(170 - 70 * fast))
-        for k in range(5):
+        # tyre (with a soft top-left sheen so it reads as round rubber)
+        pygame.draw.circle(self.screen, (12, 13, 16), (cx, cy), R + 4)
+        sh = pygame.Surface((2 * (R + 4), 2 * (R + 4)), pygame.SRCALPHA)
+        pygame.draw.circle(sh, (255, 255, 255, 26), (R + 4 - 3, R + 4 - 4), R + 1, 3)
+        self.screen.blit(sh, (cx - R - 4, cy - R - 4))
+        # Pirelli P Zero yellow sidewall marking — orbits with the wheel
+        logo = self.font_small.render("PZERO", True, (255, 212, 0))
+        sc = min((R * 1.0) / max(logo.get_width(), 1), 0.72)
+        logo = pygame.transform.rotozoom(logo, -math.degrees(ang) - 90, sc)
+        rr = R * 0.86
+        lx, ly = cx + rr * math.cos(ang), cy + rr * math.sin(ang)
+        self.screen.blit(logo, (int(lx - logo.get_width() / 2),
+                                int(ly - logo.get_height() / 2)))
+        # rim well + drilled brake disc + caliper (show between the spokes)
+        pygame.draw.circle(self.screen, (22, 24, 30), (cx, cy), int(R * 0.74))
+        pygame.draw.circle(self.screen, (50, 54, 64), (cx, cy), int(R * 0.64))
+        pygame.draw.circle(self.screen, (74, 80, 94), (cx, cy), int(R * 0.64), 1)
+        for k in range(8):
+            a = k * (2 * math.pi / 8)
+            pygame.draw.circle(self.screen, (18, 20, 26),
+                               (int(cx + R * 0.5 * math.cos(a)),
+                                int(cy + R * 0.5 * math.sin(a))), 2)
+        pygame.draw.rect(self.screen, (220, 92, 56),
+                         (cx - 3, cy - int(R * 0.74), 6, int(R * 0.26)), border_radius=2)
+        rim = int(R * 0.68)                               # BIGGER alloy rim
+        spoke_col = (int(176 - 92 * fast), int(182 - 92 * fast), int(196 - 92 * fast))
+        for k in range(5):                               # tapered, lit alloy spokes
             a = ang + k * (2.0 * math.pi / 5.0)
-            ex, ey = cx + rim * math.cos(a), cy + rim * math.sin(a)
-            pygame.draw.line(self.screen, spoke_col, (cx, cy), (int(ex), int(ey)), 3)
+            ux, uy = math.cos(a), math.sin(a)
+            px, py = -uy, ux
+            tip = (cx + rim * 0.96 * ux, cy + rim * 0.96 * uy)
+            quad = [(cx + px * 5, cy + py * 5), (tip[0] + px * 3, tip[1] + py * 3),
+                    (tip[0] - px * 3, tip[1] - py * 3), (cx - px * 5, cy - py * 5)]
+            pygame.draw.polygon(self.screen, spoke_col, quad)
+            pygame.draw.line(self.screen, (210, 216, 228), (cx, cy), tip, 1)  # highlight
         if fast > 0.25:                                  # motion-blur ring at speed
             br = pygame.Surface((2 * rim + 6, 2 * rim + 6), pygame.SRCALPHA)
-            pygame.draw.circle(br, (150, 156, 170, int(70 * fast)),
+            pygame.draw.circle(br, (190, 196, 210, int(80 * fast)),
                                (rim + 3, rim + 3), rim, 3)
             self.screen.blit(br, (cx - rim - 3, cy - rim - 3))
-        pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), int(R * 0.6), 2)  # rim lip
-        pygame.draw.circle(self.screen, (120, 126, 140), (cx, cy), int(R * 0.16))    # hub
-        pygame.draw.circle(self.screen, (60, 64, 74), (cx, cy), int(R * 0.16), 1)
+        pygame.draw.circle(self.screen, (206, 212, 226), (cx, cy), rim, 3)    # rim lip
+        pygame.draw.circle(self.screen, (84, 90, 104), (cx, cy), rim, 1)
+        hub = int(R * 0.26)                              # BIGGER chrome hub + lug nuts
+        self.screen.blit(self._grad_surf(2 * hub, 2 * hub, (224, 230, 240),
+                                         (108, 116, 130), hub, gloss=True),
+                         (cx - hub, cy - hub))
+        pygame.draw.circle(self.screen, (60, 64, 74), (cx, cy), hub, 1)
+        for k in range(5):
+            a = ang * 0.5 + k * (2 * math.pi / 5)
+            pygame.draw.circle(self.screen, (96, 102, 116),
+                               (int(cx + hub * 0.55 * math.cos(a)),
+                                int(cy + hub * 0.55 * math.sin(a))), 2)
         lab = self.font_small.render(f"{speed_kmh:.0f} km/h", True, DIM)
-        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + R + 4))
+        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
 
-    def _draw_tach(self, cx, cy, r, rpm, redline):
-        """A glossy iOS 6 / aircraft-style tachometer dial."""
+    def _draw_pedal_bars(self, x, y, h):
+        """Two inset vertical bars — throttle (green) and brake (red) — showing
+        the live pedal positions."""
+        sim = self.sim
+        th = min(max(sim.throttle, 0.0), 1.0)
+        br = min(max(getattr(sim.drivetrain, "brake", 0.0),
+                     getattr(self, "_touch_brake", 0.0)), 1.0)
+        self.screen.blit(self.font_small.render(self.tr("THR  BRK"), True, DIM),
+                         (x - 2, y - 16))
+        for i, (val, col) in enumerate(((th, GOOD), (br, (232, 92, 80)))):
+            bx = x + i * 26
+            self._recess(pygame.Rect(bx, y, 17, h), 3)
+            fh = int((h - 4) * val)
+            if fh > 0:
+                pygame.draw.rect(self.screen, col, (bx + 2, y + h - 2 - fh, 13, fh),
+                                 border_radius=2)
+
+    def _draw_tach(self, cx, cy, r, rpm, redline, speed_kmh=0.0):
+        """A glossy iOS 6 / aircraft-style tachometer dial (needle = rpm, the
+        centre digital window shows road SPEED — rpm has its own readout)."""
         cx, cy = int(cx), int(cy)
         start = math.radians(225)
         span = math.radians(270)
@@ -2543,15 +2627,15 @@ class App:
                                          11, gloss=True), (cx - 11, cy - 11))
         pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), 11, 1)
 
-        # digital rpm window
-        win = pygame.Rect(cx - 46, cy + int(r * 0.44), 92, 26)
-        self.screen.blit(self._grad_surf(win.w, win.h, (14, 16, 20), (32, 35, 42), 6),
-                         win.topleft)
-        pygame.draw.rect(self.screen, (6, 7, 10), win, 1, border_radius=6)
-        rt = self.font.render(f"{int(rpm):>5d}", True, col)
-        self.screen.blit(rt, (win.centerx - rt.get_width() // 2, win.y + 4))
-        cap = self.font_small.render(self.tr("rpm   x1000"), True, DIM)
-        self.screen.blit(cap, (cx - cap.get_width() // 2, win.bottom + 4))
+        # digital SPEED window (rpm is shown by the needle + its own readout)
+        win = pygame.Rect(cx - 50, cy + int(r * 0.42), 100, 28)
+        self._recess(win, 6)
+        st_ = self.font_big.render(f"{int(speed_kmh)}", True, ACCENT)
+        st_ = pygame.transform.smoothscale(
+            st_, (int(st_.get_width() * 22 / max(st_.get_height(), 1)), 22))
+        self.screen.blit(st_, (win.centerx - st_.get_width() // 2 - 12, win.y + 3))
+        kmh = self.font_small.render("km/h", True, DIM)
+        self.screen.blit(kmh, (win.centerx + st_.get_width() // 2 - 8, win.centery - 6))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
         col = on_col if on else off_col
