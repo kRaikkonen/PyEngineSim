@@ -1525,6 +1525,10 @@ class App:
         bay = pygame.Rect(rect.x + 14, ty + 198, rect.width - 28,
                           rect.bottom - 14 - (ty + 198))
         self._recess(bay, 12, fill=(19, 21, 26))
+        # crankshaft centre + half-height — set by each layout, used to hang the
+        # oil pan etc.; default to the bay centre for layouts that don't set it.
+        self._crank_xy = (bay.centerx, (bay.y + bay.bottom) // 2)
+        self._crank_h = 30.0
         self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         cp = getattr(eng, "crank_plane", "")
@@ -1601,6 +1605,7 @@ class App:
             mtop = (top + bottom) * 0.5 - block_h * 0.5 - dy * 0.5 + reach_up
             # vertical metallic crankshaft behind every journal (strip-shaded)
             cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
+            self._crank_xy = (cxx, (cy0 + cy1) * 0.5); self._crank_h = (cy1 - cy0) * 0.5
             chw = max(width * 0.30, 9.0)
             for si in range(7):
                 e0 = (si / 7 * 2 - 1) * chw; e1 = ((si + 1) / 7 * 2 - 1) * chw
@@ -1617,6 +1622,7 @@ class App:
             hotv = getattr(eng, "hot_v", False)
             hrad = max(2, int(width * 0.16))
             vy = (cy0 + cy1) * 0.5
+            cyv = (bay.y + bay.bottom) // 2
             lports, rports = [], []
             for s, st in enumerate(stations):
                 jy = mtop + dy * (s + 0.5)
@@ -1630,7 +1636,16 @@ class App:
                     py = hyc + math.sin(a) * width * 0.5 * ex
                     (lports if side < 0 else rports).append((px, py, a, side))
             if hotv:
-                self._draw_headers(eng, lports + rports, (cxx, vy), hrad)
+                # SHORT equal-length runners straight from the inner heads to the
+                # two valley turbos — the whole point of a hot-V — so the turbos
+                # are visibly plumbed in, not floating.  Thin pixel tubes.
+                thin = max(2, int(width * 0.12))
+                near_t = (bay.centerx - 12, cyv + 6)
+                far_t = (bay.centerx + 12, cyv - 5)
+                if lports:
+                    self._draw_headers(eng, lports, near_t, thin)
+                if rports:
+                    self._draw_headers(eng, rports, far_t, thin)
             else:
                 offx = length * math.sin(bank) + width * 1.7
                 if lports:
@@ -1673,6 +1688,7 @@ class App:
         # metallic crankshaft running behind every journal (round strip-shaded)
         cx0 = x_start + sw * 0.5 - 16
         cx1 = x_start + sw * (ns - 0.5) + 16
+        self._crank_xy = ((cx0 + cx1) * 0.5, crank_y); self._crank_h = max(width * 0.30, 9.0)
         chh = max(width * 0.30, 9.0)
         for si in range(7):
             e0 = (si / 7 * 2 - 1) * chh; e1 = ((si + 1) / 7 * 2 - 1) * chh
@@ -1921,7 +1937,7 @@ class App:
         # the web that carries it, then the main + rod journals (forged steel) ---
         jdx, jdy = math.sin(theta), math.cos(theta)        # unit toward rod journal
         opp = math.atan2(-jdy, -jdx)                       # counterweight points away
-        cwr = cr * 1.85
+        cwr = cr * 1.42                                    # slimmer: less bottom clutter
         fan = [(jx, jy)]
         for tt in range(-6, 7):
             aa = opp + math.radians(tt * 11.5)
@@ -2354,6 +2370,9 @@ class App:
         pygame.draw.circle(shp, (0, 0, 0, 110), (r + 6, r + 6), r + 2)
         shp = pygame.transform.smoothscale(shp, (2 * r + 12, 2 * r + 12))
         sc.blit(shp, (cx - r - 2, cy - r + 2))
+        # a crisp dark gap ring isolates the turbo from the conrods/headers behind
+        # it (a little black breathing room so the linework doesn't merge)
+        pygame.draw.circle(sc, (15, 16, 21), (cx, cy), r + 3)
         # compressor housing — brushed alloy disc
         sc.blit(self._grad_surf(2 * r, 2 * r, (152, 158, 172), (68, 74, 88), r, gloss=True),
                 (cx - r, cy - r))
@@ -2526,19 +2545,63 @@ class App:
                                 [(cx + 6, cy - 5), (cx + 14, cy - 7), (cx + 14, cy + 7),
                                  (cx + 6, cy + 5)])      # vent trumpet
 
+    def _pipe(self, p0, p1, rad):
+        """A short straight metallic pipe (dark casing, steel body, upper-left
+        sheen) used to plumb the ancillaries together."""
+        sc = self.screen
+        pygame.draw.line(sc, (24, 26, 34), p0, p1, rad * 2 + 2)
+        pygame.draw.line(sc, (116, 122, 136), p0, p1, max(2, rad * 2))
+        pygame.draw.line(sc, (176, 182, 196), (p0[0] - 1, p0[1] - 1),
+                         (p1[0] - 1, p1[1] - 1), max(1, rad // 2))
+
+    def _draw_oil_pan(self, bay):
+        """The oil pan / sump bolted under the crankcase — a ribbed trapezoidal
+        pan with a drain plug, hung below the crankshaft."""
+        sc = self.screen
+        cx, cy = self._crank_xy
+        top_y = int(cy + self._crank_h + 7)
+        h = 20
+        if top_y + h > bay.bottom - 46:               # keep clear of the icon row
+            top_y = bay.bottom - 46 - h
+        if top_y < cy + 4:
+            return
+        cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
+        pts = [(cxp - wt // 2, top_y), (cxp + wt // 2, top_y),
+               (cxp + wb // 2, top_y + h), (cxp - wb // 2, top_y + h)]
+        pygame.draw.polygon(sc, (74, 80, 94), pts)
+        pygame.draw.polygon(sc, (92, 98, 114), [pts[0], pts[1],   # lit upper band
+                            (cxp + (wt + wb) // 4, top_y + h // 2),
+                            (cxp - (wt + wb) // 4, top_y + h // 2)])
+        for ry in range(top_y + 5, top_y + h - 2, 4):  # cast ribs
+            pygame.draw.line(sc, (52, 56, 68), (cxp - wt // 2 + 4, ry),
+                             (cxp + wt // 2 - 4, ry), 1)
+        pygame.draw.polygon(sc, (30, 33, 42), pts, 2)
+        pygame.draw.circle(sc, (120, 126, 140), (cxp, top_y + h), 3)   # drain plug
+        pygame.draw.circle(sc, (40, 44, 54), (cxp, top_y + h), 3, 1)
+
     def _bay_ancillaries(self, bay, eng, throttle=0.0):
-        """A labelled row of intake/boost ancillaries along the bay floor:
-        throttle body, intercooler, catalytic converter, wastegate, blow-off."""
+        """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
+        together by a charge/exhaust rail with a riser up to the engine: throttle
+        body, intercooler, catalytic converter, wastegate, blow-off."""
         items = [("throttle body", "tb"), ("intercooler", "ic")]
         if eng.has_cat:
             items.append(("catalytic", "cat"))
+        if getattr(eng, "has_gpf", False):
+            items.append(("GPF", "cat"))
         items.append(("wastegate", "wg"))
         items.append(("blow-off", "bov"))
         y = bay.bottom - 36
         x0, span = bay.x + 30, bay.width - 60
         step = span / max(len(items), 1)
+        xs = [int(x0 + step * (i + 0.5)) for i in range(len(items))]
+        rail_y = y - 17
+        self._pipe((xs[0], rail_y), (xs[-1], rail_y), 3)        # the rail
+        self._pipe((xs[-1], rail_y - 1),                        # riser up to engine
+                   (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 3)
+        for cx in xs:                                           # drop to each unit
+            self._pipe((cx, rail_y), (cx, y - 7), 2)
         for i, (name, kind) in enumerate(items):
-            cx = int(x0 + step * (i + 0.5))
+            cx = xs[i]
             self._draw_ancillary(cx, y, kind, throttle)
             t = self.font_small.render(self.tr(name), True, (140, 148, 164))
             self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
@@ -2555,6 +2618,7 @@ class App:
         """Draw the forced-induction hardware in the engine bay, placed by type:
         a turbo in the VALLEY for a hot-V, OUTSIDE the banks for a cold-V, one per
         bank (twin/quad), a single for an inline, a blower on top for an SC."""
+        self._draw_oil_pan(bay)                        # furniture for every engine
         ind = eng.induction
         if ind == "na":
             return
@@ -2615,20 +2679,20 @@ class App:
         elif has_banks:
             r = 22
             if hot:
-                # Two turbos staged in DEPTH in the V valley: the FAR one (upper-
-                # right, smaller) is drawn first, then a conrod crosses in front of
-                # it, then the bigger NEAR one (lower-left) overlaps its left ~half
-                # — so it reads as a twin wedged in the valley, not a single turbo.
+                # Two EQUAL-size turbos in the V valley, staged in depth purely by
+                # OVERLAP: the back one is drawn first, a conrod crosses in front of
+                # it, then the front one overlaps its ~left half — a twin wedged in
+                # the valley, not a single turbo (and not forced perspective).
                 sc = self.screen
-                self._bay_turbo(bay.centerx + 20, cyv - 9, int(r * 0.82),
-                                spin, load * 0.9, electric=etb)
-                rx0, ry0 = bay.centerx + 6, cyv - 34          # a conrod crossing
-                rx1, ry1 = bay.centerx + 18, cyv - 2          # in front of the far turbo
+                self._bay_turbo(bay.centerx + 12, cyv - 5, r, spin, load,
+                                electric=etb)
+                rx0, ry0 = bay.centerx + 2, cyv - 30          # a conrod crossing
+                rx1, ry1 = bay.centerx + 12, cyv - 2          # in front of the back turbo
                 pygame.draw.line(sc, (26, 28, 36), (rx0, ry0), (rx1, ry1), 8)
                 pygame.draw.line(sc, (118, 124, 140), (rx0, ry0), (rx1, ry1), 5)
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
-                self._bay_turbo(bay.centerx - 8, cyv + 10, int(r * 1.15),
-                                spin, load, electric=etb)
+                self._bay_turbo(bay.centerx - 12, cyv + 6, r, spin, load,
+                                electric=etb)
                 lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
             else:                                      # outside the banks
                 for x in (bay.x + 48, bay.right - 48):
