@@ -1199,7 +1199,8 @@ class Synthesizer:
             rms = float(np.sqrt(np.mean(sig * sig))) + 1e-9
             self._level += (rms - self._level) * 0.04
             gain = min(0.22 / (self._level + 1e-6), 6.0)
-            self._gain += (gain - self._gain) * 0.15
+            rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
+            self._gain += (gain - self._gain) * rate
             sig *= self._gain
         else:
             sig *= 3.5
@@ -1227,14 +1228,18 @@ class Synthesizer:
                                                  nz2, zi=self._roadn_lp_zi)
                 sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
 
-        # gentle anti-harshness low-pass: tames the very top end where high-rpm
-        # aliasing/breakup lives (F1, rotary), with little effect on the body
+        # anti-harshness low-pass whose cutoff DROPS at very high rpm, where the
+        # sharp combustion edges' harmonics fold past Nyquist into breakup (the
+        # f2004 at 18k+ / on the overrun). Smoothly slewed so it never clicks.
         if _HAVE_SCIPY:
+            rf = min(sim.rpm / 13000.0, 1.0)
+            target = min(16500.0 - 7200.0 * rf, self.sample_rate * 0.46)
+            self._aa_cut = getattr(self, "_aa_cut", target)
+            self._aa_cut += (target - self._aa_cut) * 0.08
+            b, a = butter(2, self._aa_cut / (self.sample_rate / 2), btype="low")
             if not hasattr(self, "_aa_zi"):
-                self._aa = butter(2, min(17000.0, self.sample_rate * 0.46)
-                                  / (self.sample_rate / 2), btype="low")
                 self._aa_zi = np.zeros(2)
-            sig, self._aa_zi = lfilter(self._aa[0], self._aa[1], sig, zi=self._aa_zi)
+            sig, self._aa_zi = lfilter(b, a, sig, zi=self._aa_zi)
         # soft peak limiter BEFORE the tanh: a slow peak-follower pulls sustained
         # over-level back so high-rpm crests stay in tanh's musical range instead
         # of crushing into harsh 'clipping' breakup (F1 / high-revvers).

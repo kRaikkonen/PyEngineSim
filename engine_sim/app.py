@@ -3938,9 +3938,14 @@ class App:
         cx, cy, r = rect.centerx, rect.y + 114, 92
         self._draw_tach(cx, cy, r, sim.rpm, eng.redline_rpm,
                         sim.drivetrain.speed_kmh)
-        # --- spinning road wheel (in the corner beside the tach) ---
-        self._draw_wheel(rect.x + 48, rect.y + 78, 34, self._wheel_ang,
-                         sim.drivetrain.speed_kmh)
+        # --- spinning road wheel — or a PROPELLER for aircraft engines ---
+        if getattr(eng, "is_radial", False) or \
+                getattr(eng, "gearbox_type", "") == "aircraft":
+            self._draw_propeller(rect.x + 48, rect.y + 78, 34, self._wheel_ang,
+                                 sim.drivetrain.speed_kmh)
+        else:
+            self._draw_wheel(rect.x + 48, rect.y + 78, 34, self._wheel_ang,
+                             sim.drivetrain.speed_kmh)
         # --- throttle / brake pedal bars (opposite corner) ---
         self._draw_pedal_bars(rect.right - 64, rect.y + 52, 96)
 
@@ -4084,6 +4089,44 @@ class App:
         pygame.draw.circle(sc, (28, 30, 36), (cx, cy), hub)
         pygame.draw.circle(sc, (120, 126, 140), (cx, cy), hub, 1)
         pygame.draw.circle(sc, (180, 186, 200), (cx - 2, cy - 2), max(1, int(hub * 0.5)))
+        sval, sunit = self._speed_disp(speed_kmh)
+        lab = self.font_small.render(f"{sval:.0f} {sunit}", True, DIM)
+        sc.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
+
+    def _draw_propeller(self, cx, cy, R, ang, speed_kmh):
+        """A spinning 3-blade aircraft PROPELLER (replaces the road wheel for
+        aircraft engines): tapered blades with yellow tips, a metal spinner, a
+        motion-blur disc, and the airspeed readout."""
+        sc = self.screen
+        cx, cy = int(cx), int(cy)
+        pygame.draw.circle(sc, (12, 14, 18), (cx, cy), R + 4)
+        pygame.draw.circle(sc, (40, 44, 54), (cx, cy), R + 4, 1)
+        spd = min(speed_kmh / 240.0, 1.0)                 # prop blur with airspeed
+        if spd > 0.05:
+            bl = pygame.Surface((2 * R, 2 * R), pygame.SRCALPHA)
+            pygame.draw.circle(bl, (120, 130, 150, int(70 * spd)), (R, R), int(R * 0.92))
+            sc.blit(bl, (cx - R, cy - R))
+        for k in range(3):
+            a = ang + k * (2 * math.pi / 3)
+            ca, sa = math.cos(a), math.sin(a)
+            pa, ps = -sa, ca
+            tip = (cx + ca * R * 0.95, cy + sa * R * 0.95)
+            root = (cx + ca * R * 0.16, cy + sa * R * 0.16)
+            wr, wt = R * 0.18, R * 0.06
+            blade = [(root[0] + pa * wr, root[1] + ps * wr),
+                     (tip[0] + pa * wt, tip[1] + ps * wt),
+                     (tip[0] - pa * wt, tip[1] - ps * wt),
+                     (root[0] - pa * wr, root[1] - ps * wr)]
+            pygame.draw.polygon(sc, (42, 45, 54), blade)
+            pygame.draw.polygon(sc, (22, 24, 30), blade, 1)
+            pygame.draw.line(sc, (96, 102, 116), (root[0] + pa * wr, root[1] + ps * wr),
+                             (tip[0] + pa * wt, tip[1] + ps * wt), 1)
+            pygame.draw.circle(sc, (224, 200, 60), (int(tip[0]), int(tip[1])), 2)
+        sr = int(R * 0.22)                                # spinner cone
+        sc.blit(self._grad_surf(2 * sr, 2 * sr, (172, 178, 192), (70, 76, 90), sr,
+                                gloss=True), (cx - sr, cy - sr))
+        pygame.draw.circle(sc, (40, 44, 54), (cx, cy), sr, 1)
+        pygame.draw.circle(sc, (224, 228, 238), (cx - 2, cy - 2), max(1, sr // 3))
         sval, sunit = self._speed_disp(speed_kmh)
         lab = self.font_small.render(f"{sval:.0f} {sunit}", True, DIM)
         sc.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
