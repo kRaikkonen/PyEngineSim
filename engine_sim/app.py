@@ -1494,6 +1494,13 @@ class App:
             True, ACCENT), (rect.x + 18, ty + 64))
         # firing order — in the open area to the RIGHT of the firing-voice line
         self._blit_firing(eng, rect.x + 286, ty + 64, rect.right - 18 - (rect.x + 286))
+        # control-key hints — tucked into the empty top-right of the engine panel,
+        # right-aligned so they clear the (left-aligned) title / spec lines
+        hint = ["Up/Dn gas · Shift clutch", "ZX shift · A ign · S start",
+                "C mixer · E scope · M mute · Esc"]
+        for li, line in enumerate(hint):
+            ht = self.font_small.render(line, True, ACCENT)
+            self.screen.blit(ht, (rect.right - 14 - ht.get_width(), ty + li * 21))
 
         self._draw_telemetry(rect, ty + 86)
 
@@ -1630,16 +1637,6 @@ class App:
                     self._draw_headers(eng, lports, (cxx - offx, vy), hrad)
                 if rports:
                     self._draw_headers(eng, rports, (cxx + offx, vy), hrad)
-            # the FAR hot-V turbo is drawn HERE, behind the cylinders, so the bank
-            # partially occludes it (wedged down in the valley); the near turbo is
-            # drawn on top later by the induction pass.
-            self._hotv_far_done = False
-            if hotv and eng.induction == "turbo":
-                spin, load = self._forced_drive(eng, sim)
-                cyv = (bay.y + bay.bottom) // 2
-                self._bay_turbo(cxx + 22, cyv - 24, int(22 * 0.85), spin, load * 0.9,
-                                electric=getattr(eng, "electric_turbo", False))
-                self._hotv_far_done = True
             for s, st in enumerate(stations):
                 jy = mtop + dy * (s + 0.5)
                 for i in st:
@@ -2128,7 +2125,7 @@ class App:
         pygame.draw.circle(sc, (245, 248, 255), (cx - 1, cy - 1), 1)
         lab = self.tr("flat-plane crank" if plane == "flat" else "cross-plane crank")
         t = self.font_small.render(lab, True, (150, 158, 174))
-        sc.blit(t, (cx - t.get_width() // 2, cy + r + 7))
+        sc.blit(t, (int(cx - r), cy + r + 7))      # left-aligned: stays inside the bay
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
@@ -2618,23 +2615,21 @@ class App:
         elif has_banks:
             r = 22
             if hot:
-                # Wedged in the V valley at mid-stroke height, staged in DEPTH.
-                # The far turbo was already drawn BEHIND the cylinders (so the bank
-                # occludes it); here we add a conrod crossing in front of it and
-                # the bigger near turbo on top.
+                # Two turbos staged in DEPTH in the V valley: the FAR one (upper-
+                # right, smaller) is drawn first, then a conrod crosses in front of
+                # it, then the bigger NEAR one (lower-left) overlaps its left ~half
+                # — so it reads as a twin wedged in the valley, not a single turbo.
                 sc = self.screen
-                if not getattr(self, "_hotv_far_done", False):   # fallback
-                    self._bay_turbo(bay.centerx + 22, cyv - 24, int(r * 0.85),
-                                    spin, load * 0.9, electric=etb)
-                rx0, ry0 = bay.centerx + 8, cyv - 40          # a conrod crossing
-                rx1, ry1 = bay.centerx + 20, cyv - 6          # in front of the far turbo
+                self._bay_turbo(bay.centerx + 20, cyv - 9, int(r * 0.82),
+                                spin, load * 0.9, electric=etb)
+                rx0, ry0 = bay.centerx + 6, cyv - 34          # a conrod crossing
+                rx1, ry1 = bay.centerx + 18, cyv - 2          # in front of the far turbo
                 pygame.draw.line(sc, (26, 28, 36), (rx0, ry0), (rx1, ry1), 8)
                 pygame.draw.line(sc, (118, 124, 140), (rx0, ry0), (rx1, ry1), 5)
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
-                self._bay_turbo(bay.centerx - 24, cyv + 11, int(r * 1.1),
+                self._bay_turbo(bay.centerx - 8, cyv + 10, int(r * 1.15),
                                 spin, load, electric=etb)
                 lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
-                self._hotv_far_done = False
             else:                                      # outside the banks
                 for x in (bay.x + 48, bay.right - 48):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
@@ -3150,13 +3145,6 @@ class App:
 
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
         yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
-        # --- control-key hint, tucked into the empty space RIGHT of the lights ---
-        hint = ["Up/Dn gas · Shift clutch", "ZX shift · A ign · S start",
-                "C mixer · E scope · M mute · Esc"]
-        for li, line in enumerate(hint):
-            ht = self.font_small.render(line, True, ACCENT)
-            self.screen.blit(ht, (rect.right - 14 - ht.get_width(),
-                                  rect.y + 208 + li * 15))
 
         # --- digital readouts ---
         tq = self._disp_torque
@@ -3210,24 +3198,28 @@ class App:
         self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
         y += 19
 
-        # Status rows ANCHORED to the panel bottom (evenly spaced 3 columns); the
-        # exhaust-flow scope grows to fill whatever space is left above them.
-        status_y2 = rect.bottom - 26
+        # Status rows below the exhaust-flow scope, each column CENTRED under its
+        # third of the chart (so the block lines up with the chart, not jammed to
+        # one side), and lifted off the very bottom edge.
+        status_y2 = rect.bottom - 36
         status_y1 = status_y2 - 22
-        scope_h = max(34, min(74, int(status_y1 - 8 - y)))
-        self._draw_scope(rect.x + 24, y, rect.width - 48, scope_h, "TOTAL EXHAUST FLOW")
-        c0 = rect.x + 22
-        cstep = (rect.width - 40) / 3.0               # 3 evenly-spaced columns
+        scope_h = max(34, min(74, int(status_y1 - 10 - y)))
+        chart_x, chart_w = rect.x + 24, rect.width - 48
+        self._draw_scope(chart_x, y, chart_w, scope_h, "TOTAL EXHAUST FLOW")
         row1 = [("IGNITION", sim.ignition_on, GOOD, WARN),
                 ("STARTER", sim.starter_engaged, ACCENT, DIM),
                 ("REV LIMIT", sim._fuel_cut, WARN, DIM)]
         row2 = [("CLUTCH IN", dt.clutch < 0.5, ACCENT, DIM),
                 ("IN GEAR", dt.gear > 0, GOOD, DIM),
                 ("AUDIO", self.synth.enabled and self.synth.volume > 0, GOOD, DIM)]
-        for j, (lab, on, c1, c2) in enumerate(row1):
-            self._status_dot(int(c0 + j * cstep), status_y1, T(lab), on, c1, c2)
-        for j, (lab, on, c1, c2) in enumerate(row2):
-            self._status_dot(int(c0 + j * cstep), status_y2, T(lab), on, c1, c2)
+
+        def status_row(items, yy):
+            for j, (lab, on, c1, c2) in enumerate(items):
+                center = chart_x + (j + 0.5) * chart_w / 3.0
+                lw = self.font_small.size(T(lab))[0]
+                self._status_dot(int(center - (22 + lw) / 2), yy, T(lab), on, c1, c2)
+        status_row(row1, status_y1)
+        status_row(row2, status_y2)
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
         """A Lamborghini-style 5-spoke forged wheel — black tyre with the red
