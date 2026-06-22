@@ -2185,21 +2185,48 @@ class App:
                 oy = math.sin(a) * width * 0.5 * side
                 (Lout if side < 0 else Rout).append((hxc + ox, hyc + oy, a, side))
                 (Lin if side < 0 else Rin).append((hxc - ox, hyc - oy, a, side))
-        if hot:                                    # exhaust inboard (valley), intake outboard
-            exhL, exhR, intL, intR = Lin, Rin, Lout, Rout
-            etgL, etgR = (cxx - 12, cyv + 6), (cxx + 12, cyv - 5)
-        else:                                      # cold-V: exhaust outboard, intake valley
-            exhL, exhR, intL, intR = Lout, Rout, Lin, Rin
-            etgL, etgR = (bay.x + 48, cyv), (bay.right - 48, cyv)
-        # RED exhaust — smooth 4-into-1 per bank into the turbo
-        if exhL:
-            self._draw_headers(eng, exhL, etgL, hrad, cols=self._EXH_COLS)
-        if exhR:
-            self._draw_headers(eng, exhR, etgR, hrad, cols=self._EXH_COLS)
-        # GREEN intake
-        if hot:
-            # OUTER intake: an inverted-U wrapping the outside, the two side rails
-            # joined across the top THROUGH an intercooler (the hot-V signature).
+        if not hot:
+            # COLD-V: exhaust from the OUTER heads to a collector just OUTSIDE each
+            # bank (never crossing the cylinders), then on to the outboard turbo if
+            # there is one; intake is two valley arms (below).
+            turbo = (eng.induction == "turbo")
+            for ports, sgn in ((Lout, -1), (Rout, 1)):
+                if not ports:
+                    continue
+                ex_x = (min if sgn < 0 else max)(p[0] for p in ports)
+                coll = (int(ex_x + sgn * 22), cyv)
+                self._draw_headers(eng, ports, coll, hrad, cols=self._EXH_COLS)
+                if turbo:
+                    tb = (bay.x + 48 if sgn < 0 else bay.right - 48, cyv)
+                    self._draw_header_tube(coll, tb, ((coll[0] + tb[0]) * 0.5, cyv + 8),
+                                           hrad + 1, cols=self._EXH_COLS)
+            # INTAKE: two arms following each bank's INNER edge (beside the crank,
+            # never through it), meeting at a valley plenum at the top.
+            inner = Lin + Rin
+            split = (int(cxx), int((min(p[1] for p in inner) if inner else mtop) - 12))
+            for ports in (Lin, Rin):
+                if not ports:
+                    continue
+                pts = sorted(((int(p[0]), int(p[1])) for p in ports), key=lambda p: p[1])
+                poly = [split] + pts
+                for i in range(len(poly) - 1):
+                    self._draw_header_tube(poly[i], poly[i + 1],
+                                           ((poly[i][0] + poly[i + 1][0]) * 0.5,
+                                            (poly[i][1] + poly[i + 1][1]) * 0.5),
+                                           irad, cols=self._INT_COLS)
+                for p in pts:
+                    self._draw_header_tube(p, p, p, irad, cols=self._INT_COLS, joint=True)
+            self._collector_slug(split, irad + 1)
+            self._draw_header_tube(split, (split[0], int(split[1] - dy * 0.5)),
+                                   (split[0], int(split[1] - dy * 0.25)), irad + 1,
+                                   cols=self._INT_COLS)
+        else:
+            # HOT-V: exhaust from the INNER heads to the central valley turbos;
+            # intake is the OUTER inverted-U with the top intercooler.
+            intL, intR = Lout, Rout
+            for ports, tgt in ((Lin, (cxx - 12, cyv + 6)), (Rin, (cxx + 12, cyv - 5))):
+                if ports:
+                    self._draw_headers(eng, ports, tgt, hrad, cols=self._EXH_COLS)
             sc = self.screen
             railL = int(min(p[0] for p in intL) - 14) if intL else bay.x + 40
             railR = int(max(p[0] for p in intR) + 14) if intR else bay.right - 40
@@ -2234,31 +2261,7 @@ class App:
             for fx in range(ic.x + 3, ic.right - 2, 4):       # cooler fins
                 pygame.draw.line(sc, (44, 48, 58), (fx, ic.y + 2), (fx, ic.bottom - 2), 1)
             pygame.draw.rect(sc, (40, 44, 54), ic, 1, border_radius=3)
-            # complete the air path: feed from the outer plenum down to the
-            # throttle body / intercooler in the ancillary row
-            if yL:
-                feed = (bay.x + 74, bay.bottom - 60)
-                self._draw_header_tube((railL, max(yL)), feed,
-                                       (railL - 12, (max(yL) + feed[1]) * 0.5), irad,
-                                       cols=self._INT_COLS)
-        else:                                      # central plenum 'tree' in the valley
-            inner = intL + intR
-            ys = [p[1] for p in inner]
-            t_top = (min(ys) - 6) if ys else mtop
-            t_bot = (max(ys) + 8) if ys else mtop + dy
-            self._draw_header_tube((cxx, t_top), (cxx, t_bot),
-                                   (cxx, (t_top + t_bot) * 0.5), irad + 2,
-                                   cols=self._INT_COLS)
-            for px, py, a, side in inner:          # runner from each inner port -> trunk
-                self._draw_header_tube((px, py), (cxx, py), ((px + cxx) * 0.5, py - 6),
-                                       irad, cols=self._INT_COLS, joint=True)
-            self._collector_slug((cxx, t_top), irad + 1)
-            # complete the air path: a feed from the plenum down to the throttle
-            # body / intercooler in the ancillary row (no more broken chain)
-            feed = (bay.x + 74, bay.bottom - 60)
-            self._draw_header_tube((cxx, t_bot), feed,
-                                   (cxx - dy * 0.3, (t_bot + feed[1]) * 0.5), irad,
-                                   cols=self._INT_COLS)
+            # the hot-V intake feeds from its outboard plenum; no central trunk
 
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
