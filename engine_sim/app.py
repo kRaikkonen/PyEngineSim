@@ -1604,6 +1604,42 @@ class App:
                                      (cxx + e1, cy1), (cxx + e1, cy0)])
             pygame.draw.line(self.screen, (24, 26, 32), (cxx - chw, cy0), (cxx - chw, cy1))
             pygame.draw.line(self.screen, (24, 26, 32), (cxx + chw, cy0), (cxx + chw, cy1))
+            # --- exhaust headers (drawn BEHIND the cylinders): each runner exits
+            # the head and merges into a collector — hot-V into the valley, cold-V
+            # outboard down each bank ---
+            hotv = getattr(eng, "hot_v", False)
+            hrad = max(2, int(width * 0.16))
+            vy = (cy0 + cy1) * 0.5
+            lports, rports = [], []
+            for s, st in enumerate(stations):
+                jy = mtop + dy * (s + 0.5)
+                for i in st:
+                    side = -1.0 if eng.cylinders[i].bank_angle_deg < 0 else 1.0
+                    a = side * bank
+                    hxc = cxx + math.sin(a) * length
+                    hyc = jy - math.cos(a) * length
+                    ex = (-side) if hotv else side       # hot-V exhaust inboard
+                    px = hxc + math.cos(a) * width * 0.5 * ex
+                    py = hyc + math.sin(a) * width * 0.5 * ex
+                    (lports if side < 0 else rports).append((px, py, a, side))
+            if hotv:
+                self._draw_headers(eng, lports + rports, (cxx, vy), hrad)
+            else:
+                offx = length * math.sin(bank) + width * 1.7
+                if lports:
+                    self._draw_headers(eng, lports, (cxx - offx, vy), hrad)
+                if rports:
+                    self._draw_headers(eng, rports, (cxx + offx, vy), hrad)
+            # the FAR hot-V turbo is drawn HERE, behind the cylinders, so the bank
+            # partially occludes it (wedged down in the valley); the near turbo is
+            # drawn on top later by the induction pass.
+            self._hotv_far_done = False
+            if hotv and eng.induction == "turbo":
+                spin, load = self._forced_drive(eng, sim)
+                cyv = (bay.y + bay.bottom) // 2
+                self._bay_turbo(cxx + 22, cyv - 24, int(22 * 0.85), spin, load * 0.9,
+                                electric=getattr(eng, "electric_turbo", False))
+                self._hotv_far_done = True
             for s, st in enumerate(stations):
                 jy = mtop + dy * (s + 0.5)
                 for i in st:
@@ -1650,6 +1686,22 @@ class App:
                                  (cx1, crank_y + e1), (cx0, crank_y + e1)])
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
+        # --- exhaust headers (behind the cylinders): runners exit each head to
+        # the exhaust side and merge into a collector down at the back-right ---
+        hrad = max(2, int(width * 0.16))
+        iports = []
+        for s, st in enumerate(stations):
+            jx = x_start + sw * (s + 0.5)
+            for i in st:
+                a = math.radians(eng.cylinders[i].bank_angle_deg)
+                hxc = jx + math.sin(a) * length
+                hyc = crank_y - math.cos(a) * length
+                px = hxc + math.cos(a) * width * 0.5     # exhaust on the right side
+                py = hyc + math.sin(a) * width * 0.5
+                iports.append((px, py, a, 1.0))
+        if iports:
+            self._draw_headers(eng, iports, (x_start + sw * ns + width * 0.6,
+                                             crank_y - length * 0.25), hrad)
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2005,6 +2057,38 @@ class App:
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
 
+    def _draw_header_tube(self, p0, p1, ctrl, rad):
+        """A curved metallic exhaust-header runner from a head port (p0) bowing
+        through ctrl into the collector (p1): dark casing, lit steel body and a
+        top sheen so it reads as a polished tube."""
+        sc = self.screen
+        pts = []
+        for k in range(11):
+            t = k / 10.0
+            u = 1.0 - t
+            pts.append((u * u * p0[0] + 2 * u * t * ctrl[0] + t * t * p1[0],
+                        u * u * p0[1] + 2 * u * t * ctrl[1] + t * t * p1[1]))
+        pygame.draw.lines(sc, (26, 28, 36), False, pts, rad * 2 + 2)
+        pygame.draw.lines(sc, (122, 128, 142), False, pts, max(2, rad * 2))
+        hi = [(x, y - rad * 0.45) for x, y in pts]
+        pygame.draw.lines(sc, (182, 188, 202), False, hi, max(1, rad // 2))
+
+    def _draw_headers(self, eng, ports, collector, rad):
+        """Route every cylinder's exhaust runner (ports: list of (x, y, axis_ang,
+        side)) into a shared collector, then cap it with a merged collector pipe —
+        short equal-length headers for a hot-V, longer outboard runs otherwise."""
+        cxc, cyc = collector
+        for px, py, a, _side in ports:
+            mx, my = (px + cxc) * 0.5, (py + cyc) * 0.5
+            ctrl = (mx + math.cos(a) * rad * 1.6, my)      # bow the runner outward
+            self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad)
+        # collector merge: a brushed slug where the runners meet
+        pygame.draw.circle(self.screen, (30, 33, 42), (int(cxc), int(cyc)), rad * 2 + 2)
+        self.screen.blit(self._grad_surf(rad * 4, rad * 4, (150, 156, 170),
+                                         (66, 72, 86), rad * 2, gloss=True),
+                         (int(cxc) - rad * 2, int(cyc) - rad * 2))
+        pygame.draw.circle(self.screen, (34, 38, 48), (int(cxc), int(cyc)), rad * 2, 2)
+
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
         crank's throws sit at 0/180 (a straight bar) while a CROSS-plane crank's
@@ -2309,13 +2393,11 @@ class App:
             x2 = cx + ir * 0.9 * math.cos(a + 0.5)
             y2 = cy + ir * 0.9 * math.sin(a + 0.5)
             pygame.draw.line(sc, (188, 194, 208), (x1, y1), (int(x2), int(y2)), 2)
-        if load > 0.02:                               # hot-side glow — soft, blurred
-            g = max(4, r // 2)
-            gs = pygame.Surface((g, g), pygame.SRCALPHA)
-            pygame.draw.circle(gs, (255, 120, 44, int(150 * min(load, 1.0))),
-                               (g // 2, g // 2), g // 3)
-            sc.blit(pygame.transform.smoothscale(gs, (2 * r, 2 * r)), (cx - r, cy - r),
-                    special_flags=pygame.BLEND_RGBA_ADD)
+        if load > 0.02:                               # hot-side glow: a real heat
+            # gradient (transparent rim -> solid white-hot core), the same radial
+            # bloom used for combustion, so the turbine looks like it's glowing hot
+            gs = self._flash_surf(int(r * 0.5), min(load, 1.0))
+            sc.blit(gs, (cx - gs.get_width() // 2, cy - gs.get_height() // 2))
         sc.blit(self._grad_surf(2 * hub, 2 * hub, (226, 232, 242), (110, 118, 132),
                                 hub, gloss=True), (cx - hub, cy - hub))
         pygame.draw.circle(sc, (60, 64, 74), (cx, cy), hub, 1)
@@ -2453,6 +2535,14 @@ class App:
             t = self.font_small.render(self.tr(name), True, (140, 148, 164))
             self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
 
+    def _forced_drive(self, eng, sim):
+        """(spin, load) for the forced-induction hardware — shaft spin scaled by
+        the turbo/blower drive ratio, boost fraction as load."""
+        rpm = max(sim.rpm, 1.0)
+        spin = sim.crank_angle * max(sim.forced_induction_rpm() / rpm, 1.0)
+        load = (sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
+        return spin, load
+
     def _draw_bay_induction(self, bay, eng, sim):
         """Draw the forced-induction hardware in the engine bay, placed by type:
         a turbo in the VALLEY for a hot-V, OUTSIDE the banks for a cold-V, one per
@@ -2517,21 +2607,23 @@ class App:
         elif has_banks:
             r = 22
             if hot:
-                # Wedged in the V valley at mid-stroke height, staged in DEPTH:
-                # the far turbo sits higher/back and smaller, the near one lower/
-                # front and bigger, overlapping it — with a connecting rod passing
-                # BETWEEN them (in front of the far turbo, behind the near one).
+                # Wedged in the V valley at mid-stroke height, staged in DEPTH.
+                # The far turbo was already drawn BEHIND the cylinders (so the bank
+                # occludes it); here we add a conrod crossing in front of it and
+                # the bigger near turbo on top.
                 sc = self.screen
-                self._bay_turbo(bay.centerx + 24, cyv - 13, int(r * 0.82),
-                                spin, load * 0.9, electric=etb)
-                rx0, ry0 = bay.centerx + 8, cyv - 34          # a conrod crossing
-                rx1, ry1 = bay.centerx + 20, cyv + 4          # in front of the far turbo
+                if not getattr(self, "_hotv_far_done", False):   # fallback
+                    self._bay_turbo(bay.centerx + 22, cyv - 24, int(r * 0.85),
+                                    spin, load * 0.9, electric=etb)
+                rx0, ry0 = bay.centerx + 8, cyv - 40          # a conrod crossing
+                rx1, ry1 = bay.centerx + 20, cyv - 6          # in front of the far turbo
                 pygame.draw.line(sc, (26, 28, 36), (rx0, ry0), (rx1, ry1), 8)
                 pygame.draw.line(sc, (118, 124, 140), (rx0, ry0), (rx1, ry1), 5)
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
                 self._bay_turbo(bay.centerx - 24, cyv + 11, int(r * 1.1),
                                 spin, load, electric=etb)
                 lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
+                self._hotv_far_done = False
             else:                                      # outside the banks
                 for x in (bay.x + 48, bay.right - 48):
                     self._bay_turbo(x, cyv, r, spin, load, electric=etb)
