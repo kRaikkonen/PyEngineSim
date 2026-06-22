@@ -1614,9 +1614,9 @@ def spitfire_merlin_v12() -> Engine:
         induction="centrifugal", boost_bar=0.6, blower_ratio=8.5,
         valvetrain="sohc", valves_per_cyl=4, has_cat=False,
         backpressure_coupling=0.6, gear_grain=0.35,
-        gear_ratios=[1.0], final_drive=0.42,   # direct prop drive (no gearbox)
+        gear_ratios=[1.0], final_drive=0.42,   # single fixed prop reduction
         vehicle_mass=3000.0, wheel_radius=0.55, clutch_capacity=2500.0,
-        gearbox_type="manual",
+        gearbox_type="aircraft",
     )
 
 
@@ -1645,7 +1645,7 @@ def f4f_wildcat_radial() -> Engine:
         backpressure_coupling=0.55, gear_grain=0.3,
         gear_ratios=[1.0], final_drive=0.40,
         vehicle_mass=3600.0, wheel_radius=0.55, clutch_capacity=2500.0,
-        gearbox_type="manual",
+        gearbox_type="aircraft",
     )
 
 

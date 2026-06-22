@@ -154,7 +154,8 @@ WIDTH, HEIGHT = 1100, 680
 FPS = 60
 
 # Friendly transmission labels for the HUD (sets the auto-shift feel).
-_GBX_LABEL = {"dct": "DCT", "single": "single-clutch", "at": "AT", "manual": "manual"}
+_GBX_LABEL = {"dct": "DCT", "single": "single-clutch", "at": "AT", "manual": "manual",
+              "aircraft": "prop reduction"}
 
 # Audio-mixer sliders: (param key, label, min, max).  These bind to
 # Synthesizer.params and are dragged live in the in-app console (press C).

@@ -41,7 +41,11 @@ class Drivetrain:
             self.gearbox_type = "dct"
             self.upshift_rpm = 0.0
 
-        self.gear = 0                     # 0 = neutral, 1..len(ratios)
+        # an aircraft engine drives a propeller through ONE fixed reduction gear:
+        # always engaged, no clutch, no shifting (the constant-speed prop is the
+        # load).  Start it engaged.
+        self.is_aircraft = (self.gearbox_type == "aircraft")
+        self.gear = 1 if self.is_aircraft else 0   # 0 = neutral, 1..len(ratios)
         self.clutch = 1.0                 # engagement, 0 (in) .. 1 (out/engaged)
         self.slip_scale = 4.0             # rad/s for the clutch to "bite"
 
@@ -56,6 +60,14 @@ class Drivetrain:
 
         self.c_roll = 0.014               # rolling resistance coefficient
         self.c_aero = 0.5 * 1.2 * 0.31 * 2.2   # 0.5*rho*Cd*A
+        self._prop_k = 0.0
+        if self.is_aircraft and engine is not None:
+            # size the propeller drag so the engine settles near ~0.9 redline at
+            # full throttle: at that omega the prop torque ~ engine peak torque
+            # (estimated from displacement at ~11 bar BMEP for a 4-stroke).
+            omega_rl = engine.redline_rpm * 2.0 * math.pi / 60.0
+            t_est = 11.0e5 * engine.total_displacement / (4.0 * math.pi)
+            self._prop_k = t_est / max((0.9 * omega_rl) ** 2, 1.0)
         self.v = 0.0                      # vehicle speed, m/s
 
     # ------------------------------------------------------------- ratios
@@ -72,10 +84,14 @@ class Drivetrain:
         """Manual paddle up-shift — runs the same phased, gearbox-type-aware
         shift the automatic uses, so a DCT is seamless, a single-clutch kicks
         and an AT is slushy even when you drive it yourself."""
+        if self.is_aircraft:
+            return                        # fixed prop reduction — nothing to shift
         if not self._shifting and self.gear < self.num_gears:
             self._begin_shift(self.gear + 1)
 
     def shift_down(self):
+        if self.is_aircraft:
+            return
         if not self._shifting and self.gear > 0:
             self._begin_shift(self.gear - 1)
 
@@ -267,6 +283,10 @@ class Drivetrain:
         rev-matched sequence in :meth:`_run_shift` so the engine speed
         steps cleanly between gears with no lurch.
         """
+        if self.is_aircraft:              # always engaged to the prop, never shifts
+            self.gear = 1
+            self.clutch = 1.0
+            return
         if not self.auto:
             return
 
@@ -336,10 +356,23 @@ class Drivetrain:
         return -self.clutch * self.clutch_capacity * math.tanh(slip / self.slip_scale)
 
     def clutch_torque_on_engine(self, engine_omega: float) -> float:
+        if self.is_aircraft:
+            # constant-speed propeller: a drag torque ~ omega^2 that absorbs the
+            # engine's power, so the THROTTLE sets the steady rpm (no road
+            # dynamics, no stall-on-engage like a clutched car).
+            w = max(engine_omega, 0.0)
+            return -self._prop_k * w * w
         return self._engine_side_clutch_torque(engine_omega)
 
     def step(self, engine_omega: float, h: float):
         """Advance the vehicle by ``h`` seconds given the engine speed."""
+        if self.is_aircraft:
+            # the prop converts rpm to airspeed (a simple cruise proxy ~ 0.5 m/s
+            # per rad/s -> ~540 km/h near redline); no road model.  The propeller
+            # load is applied to the engine above.
+            target = 0.5 * max(engine_omega, 0.0)
+            self.v += (target - self.v) * min(h * 1.2, 1.0)
+            return
         ratio = self.total_ratio()
         # Torque reaching the wheels is the clutch torque multiplied by the ratio.
         engine_t = -self._engine_side_clutch_torque(engine_omega)  # wheel-driving
@@ -361,4 +394,6 @@ class Drivetrain:
 
     @property
     def gear_name(self) -> str:
+        if self.is_aircraft:
+            return "PROP"
         return "N" if self.gear == 0 else str(self.gear)
