@@ -2459,6 +2459,311 @@ def ford_gt40_mk2() -> Engine:
                 gearbox_type="manual")
 
 
+def ford_gt350r_voodoo() -> Engine:
+    """Ford Shelby GT350R — Voodoo 5.2 NA FLAT-PLANE V8 — a Mustang that screams European."""
+    return _vee("Ford Shelby GT350R Voodoo 5.2 V8", 8, 94.0, 93.0, 150.0, 12.0, 45.0,
+                _FO_V8_FLAT, flywheel_inertia=0.24, redline_rpm=8250, idle_rpm=750,
+                heat_release_k=3.5, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.13, exhaust_tone=104.0, exhaust_primary_m=0.55,
+                exhaust_total_m=2.0, exhaust_radius_m=0.025, exhaust_channels=2,
+                exhaust_openness=0.86, muffler_volume_m3=0.0016, gear_grain=0.25,
+                gear_ratios=[3.24, 2.19, 1.65, 1.29, 1.0, 0.83], final_drive=3.73,
+                vehicle_mass=1650.0, wheel_radius=0.34, clutch_capacity=640.0,
+                gearbox_type="manual")
+
+
+def ford_gt500_predator() -> Engine:
+    """Ford Shelby GT500 — Predator 5.2 supercharged cross-plane V8 — blown brute."""
+    return _vee("Ford Shelby GT500 Predator 5.2 SC V8", 8, 94.0, 93.0, 150.0, 9.5, 45.0,
+                _FO_V8_X, flywheel_inertia=0.3, redline_rpm=7500, idle_rpm=720,
+                heat_release_k=3.2, ve_width_frac=0.7, closed_map_fraction=0.15,
+                exhaust_tone=70.0, exhaust_primary_m=0.58, exhaust_total_m=2.1,
+                exhaust_radius_m=0.029, exhaust_channels=2, exhaust_openness=0.78,
+                muffler_volume_m3=0.0024, induction="roots", boost_bar=0.9,
+                blower_ratio=9.0, gear_ratios=[3.24, 2.19, 1.65, 1.29, 1.0, 0.83, 0.66],
+                final_drive=3.73, vehicle_mass=1800.0, wheel_radius=0.34,
+                clutch_capacity=900.0, gearbox_type="dct")
+
+
+def dodge_charger_rt() -> Engine:
+    """Dodge Charger R/T — 5.7 HEMI cross-plane OHV V8 — lazy American muscle burble."""
+    return _vee("Dodge Charger R/T 5.7 HEMI V8", 8, 99.5, 90.9, 155.0, 10.5, 45.0, _FO_V8_X,
+                flywheel_inertia=0.34, redline_rpm=6000, idle_rpm=620,
+                heat_release_k=3.4, ve_width_frac=0.68, closed_map_fraction=0.14,
+                exhaust_tone=58.0, exhaust_primary_m=0.6, exhaust_total_m=2.2,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.7,
+                muffler_volume_m3=0.003, valvetrain="ohv", valves_per_cyl=2,
+                gear_ratios=[3.59, 2.19, 1.41, 1.0, 0.83, 0.69, 0.58, 0.48], final_drive=2.62,
+                vehicle_mass=1950.0, wheel_radius=0.34, clutch_capacity=600.0,
+                gearbox_type="at")
+
+
+def dodge_challenger_rt() -> Engine:
+    """Dodge Challenger R/T 392 — 6.4 HEMI cross-plane OHV V8 — bigger, harder muscle."""
+    return _vee("Dodge Challenger R/T 392 6.4 HEMI V8", 8, 103.9, 94.6, 155.0, 10.9, 45.0,
+                _FO_V8_X, flywheel_inertia=0.34, redline_rpm=6400, idle_rpm=620,
+                heat_release_k=3.5, ve_width_frac=0.68, closed_map_fraction=0.13,
+                exhaust_tone=56.0, exhaust_primary_m=0.62, exhaust_total_m=2.1,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.82,
+                muffler_volume_m3=0.0024, valvetrain="ohv", valves_per_cyl=2,
+                gear_ratios=[2.97, 2.07, 1.43, 1.0, 0.71, 0.57], final_drive=3.09,
+                vehicle_mass=1880.0, wheel_radius=0.34, clutch_capacity=650.0,
+                gearbox_type="manual")
+
+
+def dodge_viper_gts() -> Engine:
+    """Dodge SRT Viper GTS — 8.4 NA OHV V10 — a colossal, torquey, ten-cylinder rumble."""
+    return _vee("Dodge SRT Viper GTS 8.4 V10", 10, 103.0, 100.6, 168.0, 10.4, 45.0, _FO_V10,
+                flywheel_inertia=0.4, redline_rpm=6200, idle_rpm=600,
+                heat_release_k=3.4, ve_width_frac=0.7, closed_map_fraction=0.13,
+                exhaust_tone=54.0, exhaust_primary_m=0.62, exhaust_total_m=2.0,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.84,
+                muffler_volume_m3=0.0022, valvetrain="ohv", valves_per_cyl=2,
+                gear_ratios=[2.66, 1.78, 1.3, 1.0, 0.74, 0.5], final_drive=3.55,
+                vehicle_mass=1520.0, wheel_radius=0.34, clutch_capacity=900.0,
+                gearbox_type="manual")
+
+
+def fd_viper_srt10() -> Engine:
+    """Formula Drift Viper SRT10 — 8.4 V10, opened-up and screaming for drift."""
+    return _vee("Formula Drift Viper SRT10 8.4 V10", 10, 103.0, 100.6, 168.0, 11.0, 45.0,
+                _FO_V10, flywheel_inertia=0.3, redline_rpm=6800, idle_rpm=800,
+                heat_release_k=3.6, ve_width_frac=0.66, closed_map_fraction=0.12,
+                exhaust_tone=60.0, exhaust_primary_m=0.5, exhaust_total_m=1.6,
+                exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.96,
+                muffler_volume_m3=0.0008, valvetrain="ohv", valves_per_cyl=2,
+                has_cat=False, straight_cut=True, gear_grain=0.25,
+                gear_ratios=[2.66, 1.78, 1.3, 1.0, 0.74], final_drive=4.1,
+                vehicle_mass=1300.0, wheel_radius=0.34, clutch_capacity=900.0,
+                gearbox_type="manual")
+
+
+def ford_mustang_rtr() -> Engine:
+    """Ford Mustang RTR — Coyote 5.0 cross-plane V8, cammed and opened up."""
+    return _vee("Ford Mustang RTR Coyote 5.0 V8", 8, 93.0, 92.7, 151.0, 11.0, 45.0, _FO_V8_X,
+                flywheel_inertia=0.26, redline_rpm=7500, idle_rpm=720,
+                heat_release_k=3.5, ve_peak_frac=0.66, ve_width_frac=0.66,
+                closed_map_fraction=0.13, exhaust_tone=64.0, exhaust_primary_m=0.56,
+                exhaust_total_m=1.8, exhaust_radius_m=0.028, exhaust_channels=2,
+                exhaust_openness=0.9, muffler_volume_m3=0.0014, has_cat=False,
+                gear_ratios=[3.66, 2.43, 1.69, 1.32, 1.0, 0.65], final_drive=3.73,
+                vehicle_mass=1650.0, wheel_radius=0.34, clutch_capacity=620.0,
+                gearbox_type="manual")
+
+
+def fd_nissan_370z() -> Engine:
+    """Formula Drift Nissan 370Z — VQ37VHR 3.7 V6, high-strung drift screamer."""
+    return _vee("Formula Drift Nissan 370Z VQ37 3.7 V6", 6, 95.5, 86.0, 147.0, 11.0, 30.0,
+                _FO_V6, flywheel_inertia=0.15, redline_rpm=7800, idle_rpm=800,
+                heat_release_k=3.5, ve_peak_frac=0.66, ve_width_frac=0.62,
+                closed_map_fraction=0.13, exhaust_tone=100.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.7, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.92, muffler_volume_m3=0.001, has_cat=False,
+                straight_cut=True, gear_grain=0.2,
+                gear_ratios=[3.79, 2.32, 1.62, 1.27, 1.0, 0.79], final_drive=3.69,
+                vehicle_mass=1400.0, wheel_radius=0.33, clutch_capacity=480.0,
+                gearbox_type="manual")
+
+
+def chevy_ss_ls3() -> Engine:
+    """Chevrolet SS — LS3 6.2 cross-plane OHV V8 — smooth, deep American sedan muscle."""
+    return _vee("Chevrolet SS LS3 6.2 V8", 8, 103.25, 92.0, 154.0, 10.7, 45.0, _FO_V8_X,
+                flywheel_inertia=0.32, redline_rpm=6600, idle_rpm=620,
+                heat_release_k=3.3, ve_width_frac=0.68, closed_map_fraction=0.14,
+                exhaust_tone=60.0, exhaust_primary_m=0.6, exhaust_total_m=2.1,
+                exhaust_radius_m=0.029, exhaust_channels=2, exhaust_openness=0.78,
+                muffler_volume_m3=0.0026, valvetrain="ohv", valves_per_cyl=2,
+                gear_ratios=[2.97, 2.07, 1.43, 1.0, 0.71, 0.57], final_drive=3.27,
+                vehicle_mass=1840.0, wheel_radius=0.34, clutch_capacity=700.0,
+                gearbox_type="manual")
+
+
+def nissan_r390_gt1() -> Engine:
+    """Nissan R390 GT1 — VRH35 3.5 twin-turbo V8 Le Mans racer — aggressive race howl."""
+    return _vee("Nissan R390 GT1 VRH35 3.5TT V8", 8, 85.0, 77.0, 145.0, 9.0, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.16, redline_rpm=8000, idle_rpm=1000,
+                heat_release_k=3.5, ve_peak_frac=0.74, ve_width_frac=0.58,
+                closed_map_fraction=0.12, exhaust_tone=110.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.5, exhaust_radius_m=0.021, exhaust_channels=2,
+                exhaust_openness=0.94, muffler_volume_m3=0.0008, induction="turbo",
+                boost_bar=1.3, turbo_lag=0.3, has_cat=False, straight_cut=True,
+                wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[2.6, 1.85, 1.45, 1.2, 1.0, 0.85], final_drive=3.3,
+                vehicle_mass=1100.0, wheel_radius=0.33, clutch_capacity=680.0,
+                gearbox_type="single")
+
+
+def mercedes_w154() -> Engine:
+    """Mercedes-Benz W154 — M163 3.0 supercharged 60-deg V12 (1938 GP) — vintage whine."""
+    return _vee("Mercedes-Benz W154 M163 3.0 SC V12", 12, 67.0, 70.0, 130.0, 6.5, 30.0,
+                _FO_V12, flywheel_inertia=0.26, redline_rpm=8000, idle_rpm=900,
+                heat_release_k=3.6, ve_width_frac=0.6, closed_map_fraction=0.12,
+                exhaust_tone=120.0, exhaust_primary_m=0.4, exhaust_total_m=1.3,
+                exhaust_radius_m=0.020, exhaust_channels=2, exhaust_openness=0.96,
+                muffler_volume_m3=0.0006, has_cat=False, straight_cut=True,
+                induction="centrifugal", boost_bar=0.7, blower_ratio=9.0, gear_grain=0.3,
+                gear_ratios=[2.6, 1.8, 1.4, 1.0, 0.8], final_drive=2.5,
+                vehicle_mass=980.0, wheel_radius=0.34, clutch_capacity=600.0,
+                gearbox_type="manual")
+
+
+def ford_raptor_ecoboost() -> Engine:
+    """Ford F-150 Raptor — 3.5 EcoBoost twin-turbo V6 — a boosty, deep-ish truck V6."""
+    return _vee("Ford F-150 Raptor 3.5 EcoBoost TT V6", 6, 92.5, 86.7, 152.0, 10.0, 30.0,
+                _FO_V6, flywheel_inertia=0.3, redline_rpm=6000, idle_rpm=650,
+                heat_release_k=3.2, ve_width_frac=0.7, closed_map_fraction=0.17,
+                exhaust_tone=76.0, exhaust_primary_m=0.6, exhaust_total_m=2.4,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.6,
+                muffler_volume_m3=0.005, induction="turbo", boost_bar=1.0, turbo_lag=0.35,
+                gear_ratios=[4.69, 3.31, 2.1, 1.52, 1.14, 0.86, 0.69, 0.64, 0.55, 0.43],
+                final_drive=3.55, vehicle_mass=2540.0, wheel_radius=0.42,
+                clutch_capacity=900.0, gearbox_type="at")
+
+
+def ford_f450_powerstroke() -> Engine:
+    """Ford F-450 Super Duty — Power Stroke 6.7 twin-turbo V8 DIESEL — clattery torque."""
+    return _vee("Ford F-450 Power Stroke 6.7 TT V8 diesel", 8, 99.0, 108.0, 175.0, 16.2,
+                45.0, _FO_V8_X, flywheel_inertia=1.4, redline_rpm=3500, idle_rpm=650,
+                heat_release_k=4.7, ve_peak_frac=0.5, ve_width_frac=0.7,
+                closed_map_fraction=0.2, friction_static=24.0, starter_torque=700.0,
+                starter_speed_rpm=240.0, exhaust_tone=48.0, exhaust_primary_m=0.7,
+                exhaust_total_m=2.8, exhaust_radius_m=0.040, exhaust_channels=2,
+                exhaust_openness=0.6, muffler_volume_m3=0.012, valvetrain="ohv",
+                valves_per_cyl=4, has_cat=False, induction="turbo", boost_bar=1.8,
+                turbo_lag=0.7, backpressure_coupling=0.65,
+                gear_ratios=[3.97, 2.32, 1.52, 1.15, 0.86, 0.69, 0.63, 0.45, 0.39, 0.32],
+                final_drive=3.55, vehicle_mass=4500.0, wheel_radius=0.45,
+                clutch_capacity=2200.0, gearbox_type="at")
+
+
+def nissan_titan_warrior() -> Engine:
+    """Nissan Titan Warrior — 5.0 Cummins twin-turbo V8 DIESEL — a deep oil-burner V8."""
+    return _vee("Nissan Titan Warrior 5.0 Cummins TT V8 diesel", 8, 100.0, 99.0, 165.0, 16.5,
+                45.0, _FO_V8_X, flywheel_inertia=1.1, redline_rpm=4000, idle_rpm=650,
+                heat_release_k=4.6, ve_peak_frac=0.52, ve_width_frac=0.7,
+                closed_map_fraction=0.2, friction_static=20.0, starter_torque=600.0,
+                starter_speed_rpm=240.0, exhaust_tone=50.0, exhaust_primary_m=0.65,
+                exhaust_total_m=2.6, exhaust_radius_m=0.036, exhaust_channels=2,
+                exhaust_openness=0.62, muffler_volume_m3=0.01, valvetrain="ohv",
+                valves_per_cyl=4, has_cat=False, induction="turbo", boost_bar=1.5,
+                turbo_lag=0.7, backpressure_coupling=0.65,
+                gear_ratios=[3.83, 2.36, 1.52, 1.15, 0.86, 0.69, 0.58], final_drive=3.69,
+                vehicle_mass=3200.0, wheel_radius=0.43, clutch_capacity=1800.0,
+                gearbox_type="at")
+
+
+def mercedes_actros_race_truck() -> Engine:
+    """Mercedes Tankpool Actros Racing Truck — OM471 12.8 turbo DIESEL I6 — race-truck roar."""
+    return _inline("Mercedes-Benz Actros Tankpool OM471 12.8 diesel I6", 6, 132.0, 156.0,
+                   255.0, 17.0, _FO_I6, flywheel_inertia=2.6, redline_rpm=2700, idle_rpm=560,
+                   heat_release_k=4.8, ve_peak_frac=0.5, ve_width_frac=0.7,
+                   closed_map_fraction=0.2, friction_static=30.0, starter_torque=1000.0,
+                   starter_speed_rpm=200.0, exhaust_tone=46.0, exhaust_primary_m=0.85,
+                   exhaust_total_m=2.6, exhaust_radius_m=0.044, exhaust_channels=1,
+                   exhaust_openness=0.78, muffler_volume_m3=0.012, valvetrain="ohv",
+                   valves_per_cyl=4, has_cat=False, induction="turbo", boost_bar=2.4,
+                   turbo_lag=0.6, backpressure_coupling=0.7,
+                   gear_ratios=[14.9, 11.6, 9.0, 7.0, 5.5, 4.3, 3.4, 2.6, 2.05, 1.6, 1.25, 1.0],
+                   final_drive=2.6, vehicle_mass=5500.0, wheel_radius=0.52,
+                   clutch_capacity=4000.0, gearbox_type="manual")
+
+
+def volvo_iron_knight() -> Engine:
+    """Volvo Iron Knight — D13 12.8 twin-turbo DIESEL I6 (record truck) — 2400 hp brute."""
+    return _inline("Volvo Iron Knight D13 12.8 TT diesel I6", 6, 131.0, 158.0, 255.0, 17.0,
+                   _FO_I6, flywheel_inertia=2.4, redline_rpm=2500, idle_rpm=560,
+                   heat_release_k=5.0, ve_peak_frac=0.5, ve_width_frac=0.72,
+                   closed_map_fraction=0.2, friction_static=30.0, starter_torque=1100.0,
+                   starter_speed_rpm=200.0, exhaust_tone=44.0, exhaust_primary_m=0.85,
+                   exhaust_total_m=2.4, exhaust_radius_m=0.046, exhaust_channels=1,
+                   exhaust_openness=0.85, muffler_volume_m3=0.008, valvetrain="ohv",
+                   valves_per_cyl=4, has_cat=False, induction="turbo", boost_bar=3.0,
+                   turbo_lag=0.6, backpressure_coupling=0.7,
+                   gear_ratios=[6.0, 4.3, 3.1, 2.3, 1.7, 1.25, 1.0, 0.78], final_drive=2.6,
+                   vehicle_mass=4500.0, wheel_radius=0.52, clutch_capacity=5000.0,
+                   gearbox_type="manual")
+
+
+def hot_wheels_bone_shaker() -> Engine:
+    """Hot Wheels Bone Shaker — a blown big-block V8 monster — pure cartoon thunder."""
+    return _vee("Hot Wheels Bone Shaker blown 7.0 V8", 8, 110.0, 92.0, 160.0, 9.0, 45.0,
+                _FO_V8_X, flywheel_inertia=0.4, redline_rpm=6500, idle_rpm=750,
+                heat_release_k=3.7, ve_width_frac=0.66, closed_map_fraction=0.12,
+                exhaust_tone=54.0, exhaust_primary_m=0.55, exhaust_total_m=1.4,
+                exhaust_radius_m=0.032, exhaust_channels=2, exhaust_openness=0.97,
+                muffler_volume_m3=0.0006, valvetrain="ohv", valves_per_cyl=2,
+                has_cat=False, induction="roots", boost_bar=1.0, blower_ratio=10.0,
+                gear_ratios=[2.48, 1.48, 1.0], final_drive=4.1, vehicle_mass=1500.0,
+                wheel_radius=0.45, clutch_capacity=1000.0, gearbox_type="manual")
+
+
+def toyota_t100_baja() -> Engine:
+    """Toyota T100 Baja — a high-revving NA race V8 trophy truck — wide-open desert howl."""
+    return _vee("Toyota T100 Baja race 5.0 V8", 8, 100.0, 80.0, 150.0, 11.5, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.22, redline_rpm=8200, idle_rpm=1000,
+                heat_release_k=3.6, ve_peak_frac=0.74, ve_width_frac=0.58,
+                closed_map_fraction=0.11, exhaust_tone=120.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.4, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.97, muffler_volume_m3=0.0006, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[2.8, 1.9, 1.4, 1.1, 0.9], final_drive=4.3,
+                vehicle_mass=1800.0, wheel_radius=0.46, clutch_capacity=720.0,
+                gearbox_type="manual")
+
+
+def hoonitruck_f150() -> Engine:
+    """Hoonigan Hoonitruck (Ford F-150) — 3.5 EcoBoost twin-turbo V6, anti-lag monster."""
+    return _vee("Hoonigan Hoonitruck 3.5 EcoBoost TT V6", 6, 92.5, 86.7, 152.0, 9.0, 30.0,
+                _FO_V6, flywheel_inertia=0.2, redline_rpm=7000, idle_rpm=900,
+                heat_release_k=3.5, ve_width_frac=0.66, closed_map_fraction=0.16,
+                exhaust_tone=88.0, exhaust_primary_m=0.5, exhaust_total_m=1.7,
+                exhaust_radius_m=0.027, exhaust_channels=2, exhaust_openness=0.9,
+                muffler_volume_m3=0.0009, has_cat=False, induction="turbo", boost_bar=2.4,
+                turbo_lag=0.4, turbo_spool_frac=0.14, anti_lag=True, bov_flutter=True,
+                straight_cut=True, gear_ratios=[2.6, 1.85, 1.4, 1.1, 0.9],
+                final_drive=3.73, vehicle_mass=1600.0, wheel_radius=0.36,
+                clutch_capacity=900.0, gearbox_type="manual")
+
+
+def funco_f9_buggy() -> Engine:
+    """Funco F9 — an LS-based NA V8 off-road buggy — open, raucous, desert V8."""
+    return _vee("Funco F9 LS 6.2 V8 buggy", 8, 103.25, 92.0, 154.0, 11.0, 45.0, _FO_V8_X,
+                flywheel_inertia=0.28, redline_rpm=7000, idle_rpm=720,
+                heat_release_k=3.5, ve_width_frac=0.66, closed_map_fraction=0.12,
+                exhaust_tone=62.0, exhaust_primary_m=0.5, exhaust_total_m=1.5,
+                exhaust_radius_m=0.028, exhaust_channels=2, exhaust_openness=0.95,
+                muffler_volume_m3=0.0008, valvetrain="ohv", valves_per_cyl=2,
+                has_cat=False, gear_ratios=[2.48, 1.48, 1.0], final_drive=4.86,
+                vehicle_mass=1450.0, wheel_radius=0.46, clutch_capacity=720.0,
+                gearbox_type="manual")
+
+
+def rj_anderson_pro2() -> Engine:
+    """RJ Anderson Pro 2 Truck — a 900-hp NA race V8 short-course truck — open and angry."""
+    return _vee("RJ Anderson Pro 2 race 6.2 V8", 8, 103.0, 88.0, 152.0, 12.0, 45.0, _FO_V8_X,
+                flywheel_inertia=0.24, redline_rpm=7600, idle_rpm=900,
+                heat_release_k=3.6, ve_peak_frac=0.7, ve_width_frac=0.6,
+                closed_map_fraction=0.11, exhaust_tone=68.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.4, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.97, muffler_volume_m3=0.0006, valvetrain="ohv",
+                valves_per_cyl=2, has_cat=False, straight_cut=True, gear_grain=0.2,
+                gear_ratios=[2.6, 1.85, 1.4, 1.1, 0.9], final_drive=4.5,
+                vehicle_mass=1450.0, wheel_radius=0.46, clutch_capacity=720.0,
+                gearbox_type="manual")
+
+
+def bentley_supersports_w12() -> Engine:
+    """Bentley Continental Supersports — 6.0 twin-turbo W12 — vast, smooth, muffled torque."""
+    e = bentley_continental_w12()
+    e.name = "Bentley Continental Supersports 6.0TT W12"
+    e.boost_bar = 0.9
+    e.redline_rpm = 6200
+    e.heat_release_k = 1.95
+    e.exhaust_openness = 0.6
+    e.vehicle_mass = 2280.0
+    return e
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -2566,6 +2871,28 @@ PRESETS = [
     ("vulcan", "Aston Vulcan 7.0 V12", aston_vulcan_v12),
     ("clkgtr", "Mercedes CLK GTR V12", mercedes_clk_gtr),
     ("gt40", "Ford GT40 MK2 427 V8", ford_gt40_mk2),
+    ("gt350r", "Shelby GT350R Voodoo V8", ford_gt350r_voodoo),
+    ("gt500", "Shelby GT500 Predator V8", ford_gt500_predator),
+    ("charger", "Charger R/T 5.7 HEMI", dodge_charger_rt),
+    ("challenger", "Challenger R/T 392 HEMI", dodge_challenger_rt),
+    ("viper", "Viper GTS 8.4 V10", dodge_viper_gts),
+    ("fdviper", "FD Viper SRT10 V10", fd_viper_srt10),
+    ("rtr", "Mustang RTR Coyote V8", ford_mustang_rtr),
+    ("fd370z", "FD 370Z VQ37 V6", fd_nissan_370z),
+    ("chevyss", "Chevrolet SS LS3 V8", chevy_ss_ls3),
+    ("r390", "Nissan R390 GT1 V8", nissan_r390_gt1),
+    ("w154", "Mercedes W154 SC V12", mercedes_w154),
+    ("raptor", "F-150 Raptor EcoBoost V6", ford_raptor_ecoboost),
+    ("f450", "F-450 Power Stroke diesel", ford_f450_powerstroke),
+    ("titan", "Titan Warrior Cummins V8", nissan_titan_warrior),
+    ("actros", "Actros race truck diesel", mercedes_actros_race_truck),
+    ("ironknight", "Volvo Iron Knight diesel", volvo_iron_knight),
+    ("boneshaker", "Bone Shaker blown V8", hot_wheels_bone_shaker),
+    ("t100", "Toyota T100 Baja V8", toyota_t100_baja),
+    ("hoonitruck", "Hoonitruck EcoBoost V6", hoonitruck_f150),
+    ("funco", "Funco F9 LS V8 buggy", funco_f9_buggy),
+    ("pro2", "RJ Anderson Pro 2 V8", rj_anderson_pro2),
+    ("bentss", "Continental Supersports W12", bentley_supersports_w12),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
