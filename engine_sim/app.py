@@ -3114,14 +3114,38 @@ class App:
         self._draw_front_intake(bay, eng, intake_x, y)   # cold-air front of the chain
         if not getattr(eng, "is_radial", False):         # liquid-cooled: radiator
             self._draw_cooling(bay)
-        # F1 hybrid power unit: MGU-H on the turbo shaft, MGU-K on the crank nose
-        if getattr(eng, "mgu_whine", 0.0) > 0.0:
+        ccx, ccy = self._crank_xy
+        if getattr(eng, "mgu_whine", 0.0) > 0.0:     # F1 PU: MGU-H + MGU-K
             tps = getattr(self, "_turbo_pts", [])
             if tps:
                 tx, ty, tr = tps[0]
                 self._draw_mgu(tx, ty, tr + 2, "MGU-H", ring_only=True)
-            ccx, ccy = self._crank_xy
             self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 12, "MGU-K")
+            self._draw_battery(bay.right - 42, bay.y + 28, int(ccx),
+                               int(ccy + self._crank_h + 16))
+        elif getattr(eng, "hybrid_kw", 0.0) > 0.0:   # road hybrid: e-motor + HV battery
+            self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 13, "E-MOTOR")
+            self._draw_battery(bay.right - 42, bay.y + 28, int(ccx),
+                               int(ccy + self._crank_h + 16))
+
+    def _draw_battery(self, x, y, mx, my):
+        """A high-voltage hybrid battery pack (cells) with an orange HV cable to
+        the motor and a violet electronics-cooling loop."""
+        sc = self.screen
+        b = pygame.Rect(int(x), int(y), 34, 20)
+        sc.blit(self._grad_surf(b.w, b.h, (70, 92, 78), (32, 50, 40), 3), b.topleft)
+        for fx in range(b.x + 4, b.right - 2, 5):     # cells
+            pygame.draw.line(sc, (40, 60, 48), (fx, b.y + 2), (fx, b.bottom - 2), 1)
+        pygame.draw.rect(sc, (120, 180, 140), b, 1, border_radius=3)
+        pygame.draw.line(sc, (210, 150, 40), (b.x + 4, b.y - 3), (b.x + 12, b.y - 3), 2)  # +HV
+        t = self.font_small.render("HV battery", True, (130, 190, 150))
+        sc.blit(t, (b.centerx - t.get_width() // 2, b.bottom + 1))
+        # orange HV cable from the battery to the motor
+        self._draw_ortho_pipe([(b.left, b.centery), (mx + 30, b.centery),
+                               (mx + 30, my)], 2,
+                              ((70, 44, 8), (210, 140, 40), (240, 190, 90)))
+        # violet electronics-cooling loop tap
+        pygame.draw.line(sc, (150, 110, 210), (b.right, b.y + 4), (b.right + 8, b.y + 4), 2)
 
     def _draw_cooling(self, bay):
         """A liquid-cooling radiator on the bay's front (left) edge with two cyan
