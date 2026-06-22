@@ -2032,14 +2032,19 @@ def jaguar_ftype_r_v8() -> Engine:
 
 
 def maserati_granturismo_s() -> Engine:
-    """Maserati GranTurismo S F136 4.7 flat-plane V8 — the howling crescendo."""
+    """Maserati GranTurismo S F136 (M139) 4.7 — a CROSS-plane 90-deg V8.  Shares the
+    F136 block with Ferrari but runs the road-car CROSS-plane crank (firing
+    1-8-6-2-7-3-4-5, uneven 90/180-deg per-bank intervals), so it has the deep,
+    burbling American-style V8 rumble and a smooth idle rather than the Ferrari
+    flat-plane scream."""
     return _vee("Maserati GranTurismo S F136 4.7 V8", 8, 94.0, 84.5, 141.0, 11.3,
-                45.0, _FO_V8_FLAT, flywheel_inertia=0.24, redline_rpm=7500, idle_rpm=850,
+                45.0, [1, 8, 6, 2, 7, 3, 4, 5], flywheel_inertia=0.26,
+                redline_rpm=7500, idle_rpm=850,
                 heat_release_k=3.6, ve_peak_frac=0.7, ve_width_frac=0.62,
-                closed_map_fraction=0.12, exhaust_tone=108.0, exhaust_primary_m=0.55,
-                exhaust_total_m=2.0, exhaust_radius_m=0.024, exhaust_channels=2,
-                exhaust_openness=0.88, muffler_volume_m3=0.0016, wall_material="titanium",
-                gear_grain=0.25, gear_ratios=[4.06, 2.4, 1.61, 1.16, 0.86, 0.69],
+                closed_map_fraction=0.12, exhaust_tone=64.0, exhaust_primary_m=0.6,
+                exhaust_total_m=2.1, exhaust_radius_m=0.026, exhaust_channels=2,
+                exhaust_openness=0.84, muffler_volume_m3=0.0022, wall_material="steel",
+                gear_grain=0.18, gear_ratios=[4.06, 2.4, 1.61, 1.16, 0.86, 0.69],
                 final_drive=3.73, vehicle_mass=1880.0, wheel_radius=0.34,
                 clutch_capacity=620.0, gearbox_type="single")
 
@@ -3008,7 +3013,7 @@ _TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
 _INLINE_TWIN = {"0", "r34"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
 _FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
-               "f40", "gt350r", "gts", "m3gtr", "one1", "p1", "pista", "senna",
+               "f40", "gt350r", "m3gtr", "one1", "p1", "pista", "senna",
                "valhalla"}
 
 
