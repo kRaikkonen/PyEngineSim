@@ -1145,6 +1145,21 @@ class App:
         self.screen.blit(self.font_small.render(
             f"{self.tr('firing voice:')} {voice}  (V){cab}",
             True, ACCENT), (rect.x + 18, ty + 24))
+        # spec strip (right-aligned): exhaust material · header type · valvetrain
+        mat = getattr(eng, "wall_material", "steel")
+        mat_lbl = {"titanium": "Ti", "stainless": "steel", "aluminium": "Alu",
+                   "aluminum": "Alu", "iron": "iron"}.get(mat, "steel")
+        if eng.is_rotary:
+            vt = "rotary"
+        else:
+            vt = f"{eng.valvetrain.upper()} {eng.valves_per_cyl}v"
+        equal_hdr = ((eng.straight_cut or eng.gearbox_type == "single"
+                      or eng.redline_rpm >= 8400)
+                     and getattr(eng, "header_unequal_deg", 0.0) < 0.5)
+        hdr = "equal-len" if equal_hdr else "uneven-len"
+        spec = f"{mat_lbl} exhaust  ·  {hdr} hdr  ·  {vt}"
+        stxt = self.font_small.render(spec, True, (138, 146, 162))
+        self.screen.blit(stxt, (rect.right - 18 - stxt.get_width(), ty + 24))
 
         self._draw_telemetry(rect, ty + 48)
 
