@@ -133,6 +133,9 @@ TR_ZH = {
     "MANIFOLD": "进气歧管", "AIR": "进气量", "VOL EFF": "容积效率",
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
+    "Scope": "波形", "EXHAUST PATH — STAGE WAVEFORMS": "排气路径 — 各级波形",
+    "each window = that stage's output  ·  E / Scope to close":
+        "每个窗口 = 该级输出  ·  按 E 或 波形 关闭",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -257,6 +260,7 @@ class App:
         self._disp_torque = 0.0   # smoothed output torque for the gauges
         self._chip_rects = {}     # preset selector hit-boxes, keyed by preset key
         self.mixer_open = False   # audio console overlay (press C)
+        self.scope_open = False   # exhaust-path per-stage waveform overlay (press E)
         self._drag = None         # slider currently being dragged
         self._buttons = []        # toolbar buttons (rebuilt each frame)
         self._open_menu = None    # active dropdown {items, rect, item_rects}
@@ -279,6 +283,8 @@ class App:
             (T("Save…"), self.save_dialog, None, 0),
             (T("Mixer / EQ"), lambda: setattr(self, "mixer_open", not self.mixer_open),
              lambda: self.mixer_open, 0),
+            (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
+             lambda: self.scope_open, 0),
             (f"{'中/EN' if self.lang == 'en' else 'EN/中'}", self.toggle_lang, None, 0),
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 1),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 1),
@@ -667,7 +673,9 @@ class App:
 
     def _handle_press(self, mpos):
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
-        if self._open_menu is not None:
+        if self.scope_open:                  # modal overlay: any click dismisses it
+            self.scope_open = False
+        elif self._open_menu is not None:
             m = self._open_menu
             self._open_menu = None
             for i, (lbl, cb) in enumerate(m["items"]):
@@ -794,6 +802,8 @@ class App:
                     self.running = False
                 elif e.key == pygame.K_c:
                     self.mixer_open = not self.mixer_open
+                elif e.key == pygame.K_e:
+                    self.scope_open = not self.scope_open
                 elif e.key == pygame.K_v:
                     self.voice_idx = (self.voice_idx + 1) % len(FIRING_VOICES)
                     self._apply_voice()
@@ -935,6 +945,11 @@ class App:
         else:
             self._draw_engine_panel(left)
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
+        # the exhaust-path stage scopes only sample audio while the overlay is up
+        if self.synth is not None:
+            self.synth.scope_enabled = self.scope_open
+        if self.scope_open:
+            self._draw_exhaust_scopes(pygame.Rect(24, 24, 1052, 632))
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
@@ -1220,7 +1235,10 @@ class App:
         elif getattr(eng, "is_radial", False):
             cfg = f"radial-{n}"
         elif getattr(eng, "is_w", False):
-            cfg = f"W{n} {2 * maxang:.0f}°"
+            mags = sorted({round(abs(c.bank_angle_deg), 1) for c in eng.cylinders
+                           if abs(c.bank_angle_deg) > 0.1})
+            outer = (mags[0] + mags[-1]) if len(mags) >= 2 else 2 * maxang
+            cfg = f"W{n} {outer:.0f}°"
         elif maxang < 0.5:
             cfg = f"inline-{n}"
         elif maxang > 80.0:
@@ -1723,24 +1741,34 @@ class App:
         sim, eng = self.sim, self.sim.engine
         n = eng.num_cylinders
         self.screen.blit(self.font_small.render(self.tr("IGNITION"), True, DIM), (x, y))
-        per_row = 8 if n > 8 else n
-        rows = (n + per_row - 1) // per_row
-        dx = min((w - 12) / per_row, 30.0)
+        # Lay the lights out like the real engine, one row per cylinder BANK:
+        # inline -> 1 row, V (V6/V12) -> 2 rows, W (W12 3+3+3+3, W16 4+4+4+4) ->
+        # 4 rows.  A radial / rotary collapses to a single row.
+        if getattr(eng, "is_radial", False) or eng.is_rotary:
+            rows_list = [list(range(n))]
+        else:
+            banks = {}
+            for i in range(n):
+                banks.setdefault(round(eng.cylinders[i].bank_angle_deg, 1), []).append(i)
+            rows_list = ([list(range(n))] if len(banks) <= 1
+                         else [banks[k] for k in sorted(banks)])
+        per_row = max((len(rw) for rw in rows_list), default=1)
+        dx = min((w - 12) / max(per_row, 1), 30.0)
         r = 6
         fade = self._ign_flash
-        for i in range(n):
-            rr, cc = i // per_row, i % per_row
-            cxp = int(x + 8 + dx * (cc + 0.5))
-            cyp = int(y + 20 + rr * 20)
-            phi = sim.cycle_phase_deg(i)
-            firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
-            fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
-            f = fade[i]
-            col = (int(38 + 214 * f), int(44 + 150 * f), int(52 + 36 * f))
-            pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
-            pygame.draw.circle(self.screen, col, (cxp, cyp), r)
-            pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
-        return y + 20 + rows * 20
+        for rr, rw in enumerate(rows_list):
+            for cc, i in enumerate(rw):
+                cxp = int(x + 8 + dx * (cc + 0.5))
+                cyp = int(y + 20 + rr * 20)
+                phi = sim.cycle_phase_deg(i)
+                firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
+                fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
+                f = fade[i]
+                col = (int(38 + 214 * f), int(44 + 150 * f), int(52 + 36 * f))
+                pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
+                pygame.draw.circle(self.screen, col, (cxp, cyp), r)
+                pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
+        return y + 20 + len(rows_list) * 20
 
     def _draw_scope(self, x, y, w, h, label):
         """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
@@ -1782,6 +1810,48 @@ class App:
         self.screen.blit(surf, (x, y))
         cap = self.font_small.render(f"x{n}", True, (130, 96, 54))
         self.screen.blit(cap, (x + w - cap.get_width() - 6, y + 3))
+
+    def _mini_scope(self, x, y, w, h, label, wave):
+        """One refresh-style waveform window: the WHOLE captured buffer is redrawn
+        across the width every frame (no horizontal scrolling history)."""
+        pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
+        pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
+        mid = y + h * 0.5
+        pygame.draw.line(self.screen, (32, 36, 44), (x, mid), (x + w, mid), 1)
+        if wave is not None and len(wave) > 1:
+            n = len(wave)
+            mx = float(np.max(np.abs(wave))) or 1e-6
+            xs = x + np.arange(n) / (n - 1) * (w - 2) + 1
+            yv = mid - (wave / mx) * (h * 0.40)
+            pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
+            pygame.draw.lines(self.screen, (90, 230, 130), False, pts, 1)
+        self.screen.blit(self.font_small.render(self.tr(label), True, (150, 158, 172)),
+                         (x + 5, y + 3))
+
+    def _draw_exhaust_scopes(self, rect):
+        """Overlay: a grid of per-stage waveform windows tracing one signal block
+        as it travels the exhaust chain head -> tail (refresh-style, not scroll)."""
+        self._panel(rect)
+        self.screen.blit(self.font.render(self.tr("EXHAUST PATH — STAGE WAVEFORMS"),
+                                          True, INK), (rect.x + 18, rect.y + 14))
+        hint = self.tr("each window = that stage's output  ·  E / Scope to close")
+        self.screen.blit(self.font_small.render(hint, True, DIM),
+                         (rect.x + 18, rect.y + 40))
+        taps = getattr(self.synth, "_stage_taps", {}) if self.synth else {}
+        order = getattr(self.synth, "_stage_order", []) if self.synth else []
+        if not order:
+            return
+        cols, rows = 4, 3
+        gx, gy = rect.x + 18, rect.y + 64
+        gw, gh = rect.width - 36, rect.height - 82
+        cw = (gw - (cols - 1) * 12) / cols
+        ch = (gh - (rows - 1) * 12) / rows
+        for idx, name in enumerate(order):
+            r, c = divmod(idx, cols)
+            cx = gx + c * (cw + 12)
+            cy = gy + r * (ch + 12)
+            self._mini_scope(int(cx), int(cy), int(cw), int(ch), name,
+                             taps.get(name))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
@@ -1941,9 +2011,13 @@ class App:
         self._status_dot(rect.x + 276, y, T("AUDIO"),
                          self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
         y += 21
-        keys = "↑↓ gas · ZX shift · A ign · S start · C mixer · M mute"
-        self.screen.blit(self.font_small.render(keys, True, (96, 102, 116)),
-                         (rect.x + 24, y))
+        # two short lines so the hint never runs off the panel's right edge
+        self.screen.blit(self.font_small.render(
+            "↑↓ gas · ZX shift · A ign · S start", True, (96, 102, 116)),
+            (rect.x + 24, y))
+        self.screen.blit(self.font_small.render(
+            "C mixer · E scope · M mute · Esc quit", True, (96, 102, 116)),
+            (rect.x + 24, y + 15))
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
         """A spinning road wheel — tyre, alloy rim + spokes, brake disc & caliper —

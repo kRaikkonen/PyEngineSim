@@ -1262,7 +1262,12 @@ def bugatti_veyron_w16() -> Engine:
     offsets = _even_offsets(16, firing_order=[1, 9, 5, 13, 3, 11, 7, 15, 2, 10, 6, 14, 4, 12, 8, 16])
     cylinders = []
     for i in range(16):
-        bank = -45.0 if i < 8 else 45.0
+        # W16 = two VR8 units 90 deg apart (groups centred at +/-45 deg from
+        # vertical); each VR splits into two cylinder columns 15 deg apart, so
+        # the four banks sit at -52.5, -37.5, +37.5, +52.5 deg (3+ ... actually 4
+        # cols of 4).  Columns alternate within each VR group.
+        center = -45.0 if i < 8 else 45.0
+        bank = center + (7.5 if (i % 2) else -7.5)
         cylinders.append(
             Cylinder(bore=mm(86), stroke=mm(86), rod_length=mm(140),
                      compression_ratio=9.0, cycle_offset_deg=offsets[i],
@@ -1292,7 +1297,10 @@ def bentley_continental_w12() -> Engine:
     offsets = _even_offsets(12, firing_order=[1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9])
     cylinders = []
     for i in range(12):
-        bank = -36.0 if i < 6 else 36.0
+        # W12 = two VR6 units 90 deg apart (groups centred at +/-45 deg); each VR
+        # splits into two columns 15 deg apart -> four banks of 3 (3+3+3+3).
+        center = -45.0 if i < 6 else 45.0
+        bank = center + (7.5 if (i % 2) else -7.5)
         cylinders.append(
             Cylinder(bore=mm(84), stroke=mm(90.2), rod_length=mm(152),
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
@@ -2071,6 +2079,21 @@ def bmw_m3_e36() -> Engine:
                    gearbox_type="manual")
 
 
+def bmw_330i_n53() -> Engine:
+    """BMW 330i (E90) N53B30 3.0 I6 — direct-injection NA straight-six: a
+    refined, creamy, muffled hum (no M-car rasp), double-VANOS, ~272 hp."""
+    return _inline("BMW 330i (E90) N53B30 3.0 I6", 6, 85.0, 88.0, 140.0, 10.7, _FO_I6,
+                   flywheel_inertia=0.24, redline_rpm=7000, idle_rpm=700,
+                   heat_release_k=3.05, ve_peak_frac=0.55, ve_width_frac=0.6,
+                   closed_map_fraction=0.15, exhaust_tone=80.0, exhaust_primary_m=0.5,
+                   exhaust_total_m=2.15, exhaust_radius_m=0.025, exhaust_channels=1,
+                   exhaust_openness=0.5, muffler_volume_m3=0.0042, has_cat=True,
+                   variable_valve="double-VANOS",
+                   gear_ratios=[4.17, 2.34, 1.52, 1.14, 0.87, 0.69], final_drive=3.46,
+                   vehicle_mass=1525.0, wheel_radius=0.32, clutch_capacity=400.0,
+                   gearbox_type="manual")
+
+
 def bmw_m5_e60_v10() -> Engine:
     """BMW M5 E60 S85 5.0 V10 — the F1-derived, 8250-rpm screaming road V10."""
     return _vee("BMW M5 E60 S85 5.0 V10", 10, 92.0, 75.2, 139.0, 12.0, 45.0, _FO_V10,
@@ -2821,6 +2844,7 @@ PRESETS = [
     ("conti", "Continental W12", bentley_continental_w12),
     ("bentss", "Continental Supersports W12", bentley_supersports_w12),
     ("b48", "BMW B48 I4", bmw_b48_i4),
+    ("330i", "330i N53 I6", bmw_330i_n53),
     ("e36m3", "BMW M3 E36 S50 I6", bmw_m3_e36),
     ("e92m3", "E92 M3 V8", bmw_e92_m3_s65),
     ("m3gtr", "M3 GTR V8", bmw_m3_gtr_p60),
