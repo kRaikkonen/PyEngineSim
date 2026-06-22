@@ -137,13 +137,13 @@ TR_ZH = {
     "Scope": "波形",
     "ENGINE ANALYZER": "发动机分析仪",
     "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
-    "WAVEFORM · final audio output": "波形 · 最终合成音频输出",
-    "Cylinder combustion pressure pulses": "气缸燃烧压力脉冲",
-    "Exhaust system output pressure": "排气系统输出压力",
-    "Valve lift (intake / exhaust)": "气门升程 (进气 / 排气)",
-    "Crankshaft output torque": "曲轴输出扭矩",
-    "Single-cylinder pressure (4-stroke)": "单缸缸压 (四冲程)",
-    "Ignition & cam timing": "点火与配气正时",
+    "WAVEFORM · master audio output": "WAVEFORM · 主音频输出波形",
+    "FIRING PULSES · cylinder combustion": "FIRING PULSES · 气缸燃烧脉冲",
+    "EXHAUST FLOW · system pressure": "EXHAUST FLOW · 排气系统压力",
+    "VALVE LIFT · intake / exhaust": "VALVE LIFT · 进 / 排气门升程",
+    "TORQUE / HP · output curves": "TORQUE / HP · 扭矩 / 马力曲线",
+    "CYLINDER PRESSURE · 4-stroke": "CYLINDER PRESSURE · 单缸四冲程缸压",
+    "SPARK ADVANCE · ignition timing": "SPARK ADVANCE · 点火提前角时序",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -621,7 +621,9 @@ class App:
         """(Re)build fonts for the current language — a CJK-capable face for
         Chinese, a bundled BankGothic-style face for English."""
         if self.lang == "zh":
-            fam = "microsoftyahei,microsoftyaheui,simhei,simsun"
+            # prefer Apple PingFang, then Microsoft YaHei, then others
+            fam = ("pingfangsc,pingfangtc,pingfanghk,pingfang,苹方,"
+                   "microsoftyahei,microsoftyaheui,simhei,simsun")
             self.font = pygame.font.SysFont(fam, 17)
             self.font_big = pygame.font.SysFont(fam, 40, bold=True)
             self.font_small = pygame.font.SysFont(fam, 14)
@@ -1916,7 +1918,9 @@ class App:
         the original game's IGNITION column.  Returns the y below the bank."""
         sim, eng = self.sim, self.sim.engine
         n = eng.num_cylinders
-        self.screen.blit(self.font_small.render(self.tr("IGNITION"), True, DIM), (x, y))
+        lab = self.font_small.render(self.tr("IGNITION"), True, DIM)
+        self.screen.blit(lab, (x, y))
+        label_h = lab.get_height()
         # Lay the lights out like the real engine, one row per cylinder BANK:
         # inline -> 1 row, V (V6/V12) -> 2 rows, W (W12 3+3+3+3, W16 4+4+4+4) ->
         # 4 rows.  A radial / rotary collapses to a single row.
@@ -1931,10 +1935,10 @@ class App:
         nrows = len(rows_list)
         per_row = max((len(rw) for rw in rows_list), default=1)
         dx = min((w - 12) / max(per_row, 1), 30.0)
-        # Start the lights BELOW the "IGNITION" label, and keep the whole bank
-        # within a fixed height (so a 4-bank W doesn't shove the readouts off the
-        # bottom): squeeze the row pitch when there are many banks.
-        top0 = y + 20
+        # Start the lights BELOW the actual rendered label height (so they never
+        # overlap "IGNITION" no matter the font), and keep the whole bank within a
+        # fixed height (so a 4-bank W doesn't shove the readouts off the bottom).
+        top0 = y + label_h + 4
         pitch = min(20, 52 // max(nrows, 1))
         r = 6 if pitch >= 17 else (5 if pitch >= 12 else 4)
         fade = self._ign_flash
@@ -2226,26 +2230,59 @@ class App:
         evl = self._valve_lift(ang, 500.0, 230.0)
         aud = getattr(self.synth, "last_wave", None) if self.synth else None
 
-        # --- top: final synthesized audio waveform ------------------------------
-        self._ascope(x0, topy, fullw, toph, "WAVEFORM · final audio output",
+        # torque & horsepower curves vs RPM (a live dyno chart) ------------------
+        rl = eng.redline_rpm
+        rlo = eng.idle_rpm * 0.7
+        rpms = np.linspace(rlo, rl, W)
+        peak = eng.ve_peak_frac * rl
+        width = max(eng.ve_width_frac * rl, 1.0)
+        tq = eng.ve_floor + (eng.ve_max - eng.ve_floor) * np.exp(-((rpms - peak) / width) ** 2)
+        if eng.induction != "na" and eng.boost_bar > 0:
+            rf = rpms / rl
+            spool = (np.clip((rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3),
+                             0, 1) if eng.induction == "turbo" else rf)
+            tq = tq * (1.0 + 0.8 * eng.boost_bar * spool)
+        hp = tq * rpms
+        tq_n = tq / max(tq.max(), 1e-9)
+        hp_n = hp / max(hp.max(), 1e-9)
+        rpmfrac = float(np.clip((sim.rpm - rlo) / max(rl - rlo, 1.0), 0, 1))
+        # spark-advance timing: ignition spike vs the valve-event reference ------
+        adv = 15.0 + 22.0 * min(sim.rpm / max(rl, 1.0), 1.0)
+        dS = ((ang - (360.0 - adv) + 360.0) % 720.0) - 360.0
+        ign = np.exp(-(dS / 9.0) ** 2)
+        vref = np.maximum(ivl, evl) * 0.7
+
+        # --- top: master audio output waveform ----------------------------------
+        self._ascope(x0, topy, fullw, toph, "WAVEFORM · master audio output",
                      [(aud, (120, 230, 150))], bipolar=True)
-        # --- two rows of three -------------------------------------------------
         cw = (fullw - 2 * gap) / 3.0
         rowy = topy + toph + gap
         rh = (rect.bottom - pad - rowy - gap) / 2.0
         cx = [x0, x0 + cw + gap, x0 + 2 * (cw + gap)]
-        self._ascope(cx[0], rowy, cw, rh, "Cylinder combustion pressure pulses",
+        # --- row 2: firing pulses · exhaust flow · valve lift -------------------
+        self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
                      [(comb, (255, 150, 70))])
-        self._ascope(cx[1], rowy, cw, rh, "Exhaust system output pressure",
-                     [(exh, (120, 180, 255))])
-        self._ascope(cx[2], rowy, cw, rh, "Valve lift (intake / exhaust)",
+        self._ascope(cx[1], rowy, cw, rh, "EXHAUST FLOW · system pressure",
+                     [(exh, (255, 165, 70))])
+        self._ascope(cx[2], rowy, cw, rh, "VALVE LIFT · intake / exhaust",
                      [(ivl, (110, 220, 130)), (evl, (240, 120, 120))])
+        # --- row 3: torque/hp · cylinder pressure · spark advance ---------------
         rowy2 = rowy + rh + gap
-        self._ascope(cx[0], rowy2, cw, rh, "Crankshaft output torque",
-                     [(torque, (255, 200, 80))], bipolar=True)
-        self._ascope(cx[1], rowy2, cw, rh, "Single-cylinder pressure (4-stroke)",
+        self._ascope(cx[0], rowy2, cw, rh, "TORQUE / HP · output curves",
+                     [(tq_n, (255, 190, 70)), (hp_n, (90, 200, 255))])
+        curx = int(cx[0] + 1 + rpmfrac * (cw - 3))
+        pygame.draw.line(self.screen, (255, 255, 255),
+                         (curx, int(rowy2 + 18)), (curx, int(rowy2 + rh - 4)), 1)
+        self.screen.blit(self.font_small.render("T", True, (255, 190, 70)),
+                         (int(cx[0] + cw - 40), int(rowy2 + 3)))
+        self.screen.blit(self.font_small.render("HP", True, (90, 200, 255)),
+                         (int(cx[0] + cw - 26), int(rowy2 + 3)))
+        self._ascope(cx[1], rowy2, cw, rh, "CYLINDER PRESSURE · 4-stroke",
                      [(Pcyl - PATM, (255, 120, 160))])
-        self._draw_timing(cx[2], rowy2, cw, rh)
+        self._ascope(cx[2], rowy2, cw, rh, "SPARK ADVANCE · ignition timing",
+                     [(vref, (110, 200, 130)), (ign, (255, 90, 90))])
+        self.screen.blit(self.font_small.render(f"adv {adv:.0f}°", True, ACCENT),
+                         (int(cx[2] + cw - 60), int(rowy2 + rh - 16)))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
