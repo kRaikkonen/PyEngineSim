@@ -1772,9 +1772,9 @@ class App:
             size = 2 * pad
             yy, xx = np.mgrid[0:size, 0:size]
             d = np.clip(np.sqrt((xx - pad) ** 2 + (yy - pad) ** 2) / (R * 1.75), 0.0, 1.0)
-            # vivid, high-saturation fire ramp (white-hot core -> deep red edge)
-            stops = [(0.0, (255, 255, 250)), (0.22, (255, 240, 120)),
-                     (0.45, (255, 170, 30)), (0.70, (255, 80, 12)), (1.0, (220, 24, 8))]
+            # vivid, MAX-saturation fire ramp (white-hot core -> deep red edge)
+            stops = [(0.0, (255, 255, 240)), (0.18, (255, 238, 70)),
+                     (0.42, (255, 150, 12)), (0.68, (255, 56, 6)), (1.0, (230, 12, 4))]
             rgb = np.zeros((size, size, 3), dtype=np.float32)
             for i in range(len(stops) - 1):
                 t0, c0 = stops[i]; t1, c1 = stops[i + 1]
@@ -1782,8 +1782,9 @@ class App:
                 fr = (d[m] - t0) / max(t1 - t0, 1e-6)
                 for ch in range(3):
                     rgb[..., ch][m] = c0[ch] + (c1[ch] - c0[ch]) * fr
-            # brighter & punchier: shallower falloff + higher peak alpha
-            alpha = np.clip((1.0 - d) ** 1.4, 0.0, 1.0) * (gq / 8.0) * 255.0
+            # punchier + always visible: gentler falloff and a lifted intensity
+            # curve so even a weak combustion flash still shows clearly
+            alpha = np.clip((1.0 - d) ** 1.2, 0.0, 1.0) * (gq / 8.0) ** 0.6 * 255.0
             arr = np.ascontiguousarray(
                 np.dstack([rgb, alpha]).astype(np.uint8))
             s = pygame.image.frombuffer(arr.tobytes(), (size, size), "RGBA").convert_alpha()
@@ -1967,14 +1968,14 @@ class App:
         for tt in range(-6, 7):
             aa = opp + math.radians(tt * 11.5)
             fan.append((jx + cwr * math.cos(aa), jy + cwr * math.sin(aa)))
-        pygame.draw.polygon(self.screen, (52, 56, 68), fan)            # counterweight
+        pygame.draw.polygon(self.screen, (96, 68, 26), fan)            # brass counterweight
         inner = [(jx - 1.5, jy - 2)]
         for tt in range(-6, 7):
             aa = opp + math.radians(tt * 11.5)
             inner.append((jx + cwr * 0.78 * math.cos(aa) - 1.5,
                           jy + cwr * 0.78 * math.sin(aa) - 2))
-        pygame.draw.polygon(self.screen, (78, 84, 98), inner)         # lit sheen
-        pygame.draw.polygon(self.screen, (24, 26, 32), fan, 1)
+        pygame.draw.polygon(self.screen, (164, 126, 56), inner)       # lit brass sheen
+        pygame.draw.polygon(self.screen, (40, 28, 10), fan, 1)
         # web carrying the rod journal
         webw = cr * 0.5
         ox, oy = -jdy, jdx
@@ -2908,6 +2909,11 @@ class App:
             sc.blit(self._grad_surf(r.w, r.h, (96, 130, 170), (40, 62, 92), 4), r.topleft)
             pygame.draw.rect(sc, (30, 44, 60), r, 1, border_radius=4)
             pygame.draw.rect(sc, (150, 200, 240), (cx - 4, r.y - 3, 8, 4), border_radius=1)
+        elif kind == "muf":                              # muffler / megaphone canister
+            r = pygame.Rect(cx - 18, cy - 7, 36, 14)
+            sc.blit(self._grad_surf(r.w, r.h, (130, 136, 150), (62, 68, 82), 7), r.topleft)
+            pygame.draw.rect(sc, (150, 156, 170), r, 1, border_radius=7)
+            pygame.draw.circle(sc, (20, 22, 28), (r.right - 3, cy), 3)    # tailpipe
         elif kind == "wg":                               # wastegate: valve + actuator
             pygame.draw.rect(sc, (96, 102, 116), (cx - 3, cy - 16, 6, 9), border_radius=2)
             pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 9)
@@ -2958,8 +2964,20 @@ class App:
         """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
         together by a charge/exhaust rail with a riser up to the engine: throttle
         body, intercooler, catalytic converter, wastegate, blow-off."""
-        diesel = eng.cylinders[0].compression_ratio >= 14.5
-        if diesel:                                       # diesel after-treatment train
+        aircraft = (getattr(eng, "is_radial", False)
+                    or getattr(eng, "gearbox_type", "") == "aircraft")
+        diesel = eng.cylinders[0].compression_ratio >= 14.5 and not aircraft
+        if aircraft:                                     # piston aircraft: NO civilian cat
+            items = [("throttle body", "tb"), ("intercooler", "ic")]
+            if eng.induction != "na":
+                items += [("wastegate", "wg"), ("blow-off", "bov")]
+        elif eng.induction == "na":                      # NA road/race: -> muffler
+            items = [("throttle body", "tb")]
+            if eng.has_cat:
+                items += [("catalytic", "cat"), ("muffler", "muf")]
+            else:
+                items.append(("megaphone", "muf"))       # open race exhaust
+        elif diesel:                                     # diesel after-treatment train
             items = [("intercooler", "ic"), ("DOC", "cat"), ("DPF", "dpf"),
                      ("SCR", "scr"), ("DEF", "def"), ("wastegate", "wg")]
         else:
@@ -3015,7 +3033,8 @@ class App:
         self._draw_oil_pan(bay)                        # furniture for every engine
         self._turbo_pts = []                           # collected as turbos are drawn
         ind = eng.induction
-        if ind == "na":
+        if ind == "na":                                # NA still gets the intake/
+            self._bay_ancillaries(bay, eng, min(max(sim.throttle, 0.0), 1.0))  # exhaust row
             return
         rpm = max(sim.rpm, 1.0)
         spin = sim.crank_angle * max(sim.forced_induction_rpm() / rpm, 1.0)
