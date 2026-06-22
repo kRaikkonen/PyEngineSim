@@ -600,38 +600,60 @@ class App:
             pass
         return out
 
+    _CJK_HINTS = ("noto", "sourcehan", "cjk", "pingfang", "yahei",
+                  "simhei", "simsun", "-sc", " zh")
+
+    def _bundled_by_kind(self, cjk):
+        """Bundled font paths matching (or NOT matching) CJK name hints."""
+        out = []
+        for p in getattr(self, "_bundled_fonts", []):
+            low = os.path.basename(p).lower()
+            is_cjk = any(h in low for h in self._CJK_HINTS)
+            if is_cjk == cjk:
+                out.append(p)
+        return out
+
     def _eng_font(self, size, bold=False):
         """English face: prefer a bundled BankGothic-style .ttf, then a matching
         installed industrial/gothic face, finally Consolas."""
-        for path in getattr(self, "_bundled_fonts", []):
+        for path in self._bundled_by_kind(cjk=False):
             try:
-                f = pygame.font.Font(path, size)
-                f.set_bold(bold)
-                return f
+                f = pygame.font.Font(path, size); f.set_bold(bold); return f
             except Exception:
                 pass
         name = pygame.font.match_font(
-            "bankgothicmdbt,bankgothic,bankgothicproregular,bahnschrift,"
-            "eurostile,microgramma,squarish,agencyfb,oswald")
+            "bankgothicmdbt,bankgothic,bahnschrift,eurostile,microgramma,oswald")
         if name:
             try:
-                f = pygame.font.Font(name, size)
-                f.set_bold(bold)
-                return f
+                f = pygame.font.Font(name, size); f.set_bold(bold); return f
             except Exception:
                 pass
         return pygame.font.SysFont("consolas", size, bold=bold)
 
+    def _cjk_font(self, size, bold=False):
+        """Chinese face: prefer a bundled CJK .otf (Noto Sans SC — works without
+        being installed), then PingFang / YaHei, then any CJK system face."""
+        for path in self._bundled_by_kind(cjk=True):
+            try:
+                f = pygame.font.Font(path, size); f.set_bold(bold); return f
+            except Exception:
+                pass
+        name = pygame.font.match_font("pingfangsc,pingfang,microsoftyaheui,"
+                                      "microsoftyahei,simhei,simsun")
+        if name:
+            try:
+                f = pygame.font.Font(name, size); f.set_bold(bold); return f
+            except Exception:
+                pass
+        return pygame.font.SysFont("microsoftyahei,simhei,simsun", size, bold=bold)
+
     def _init_fonts(self):
-        """(Re)build fonts for the current language — a CJK-capable face for
-        Chinese, a bundled BankGothic-style face for English."""
+        """(Re)build fonts for the current language — a bundled Noto Sans SC for
+        Chinese, a bundled BankGothic-style face for English (both embedded)."""
         if self.lang == "zh":
-            # prefer Apple PingFang, then Microsoft YaHei, then others
-            fam = ("pingfangsc,pingfangtc,pingfanghk,pingfang,苹方,"
-                   "microsoftyahei,microsoftyaheui,simhei,simsun")
-            self.font = pygame.font.SysFont(fam, 17)
-            self.font_big = pygame.font.SysFont(fam, 40, bold=True)
-            self.font_small = pygame.font.SysFont(fam, 14)
+            self.font = self._cjk_font(17)
+            self.font_big = self._cjk_font(38, bold=True)
+            self.font_small = self._cjk_font(14)
         else:
             self.font = self._eng_font(18)
             self.font_big = self._eng_font(42, bold=True)
