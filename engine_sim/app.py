@@ -1202,6 +1202,19 @@ class App:
                      and getattr(eng, "header_unequal_deg", 0.0) < 0.5)
         hdr = "equal-len" if equal_hdr else "uneven-len"
         maxang = max((abs(c.bank_angle_deg) for c in eng.cylinders), default=0.0)
+        # Crank plane (V8s): both flat- and cross-plane fire every 90° of CRANK,
+        # so the firing interval can't tell them apart.  What differs is whether
+        # the firing alternates banks cleanly (flat-plane, even per-bank) or not
+        # (cross-plane, the lumpy burble).  Detect it from the bank-firing order.
+        plane = ""
+        has_banks = any(c.bank_angle_deg < -0.1 for c in eng.cylinders) and \
+            any(c.bank_angle_deg > 0.1 for c in eng.cylinders)
+        if n == 8 and has_banks:
+            order = sorted(range(n),
+                           key=lambda i: eng.cylinders[i].cycle_offset_deg % 720.0)
+            signs = [1 if eng.cylinders[i].bank_angle_deg > 0 else -1 for i in order]
+            alternates = all(signs[j] != signs[(j + 1) % n] for j in range(n))
+            plane = " flat-plane" if alternates else " cross-plane"
         if eng.is_rotary:
             cfg = "rotary"
         elif getattr(eng, "is_radial", False):
@@ -1213,11 +1226,11 @@ class App:
         elif maxang > 80.0:
             cfg = f"flat-{n}"
         else:
-            cfg = f"V{n} {2 * maxang:.0f}°"
+            cfg = f"V{n} {2 * maxang:.0f}°{plane}"
         rot = "CCW" if getattr(eng, "rotation", "CW") == "CCW" else "CW"
         vv = getattr(eng, "variable_valve", "")
-        vv_txt = f"  ·  {vv}" if vv else ""
-        spec = (f"{cfg}  ·  {rot}  ·  {mat_lbl} exh  ·  {hdr}  ·  "
+        vv_txt = f" · {vv}" if vv else ""
+        spec = (f"{cfg} · {rot} · {mat_lbl} exh · {hdr} · "
                 f"{vt}{vv_txt}")
         stxt = self.font_small.render(spec, True, (138, 146, 162))
         self.screen.blit(stxt, (rect.x + 18, ty + 44))
