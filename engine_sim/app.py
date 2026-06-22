@@ -1775,11 +1775,28 @@ class App:
                              (bx + ux * cam_d - qx * (hw + 1), by + uy * cam_d - qy * (hw + 1)), 2)
             for qo, lift, vcol in ((-hw * 0.5, il, (110, 196, 255)),
                                    (hw * 0.5, el, (255, 146, 110))):
-                # valve head dips INTO the bore as it opens
+                # valve head dips INTO the bore as it opens — a tinted metal disc
                 vd = length - 1 - lift * 6.0
-                vx, vy = bx + ux * vd + qx * qo, by + uy * vd + qy * qo
-                pygame.draw.circle(sc, vcol, (int(vx), int(vy)), max(2, int(hw * 0.3)))
-                pygame.draw.circle(sc, (28, 30, 38), (int(vx), int(vy)), max(2, int(hw * 0.3)), 1)
+                vxp = int(bx + ux * vd + qx * qo); vyp = int(by + uy * vd + qy * qo)
+                vr = max(2, int(hw * 0.32))
+                lx, ly = -0.52, -0.62                       # screen upper-left light
+                # ambient occlusion: dark contact shadow where the valve seats
+                ao = pygame.Surface((vr * 4, vr * 4), pygame.SRCALPHA)
+                pygame.draw.circle(ao, (0, 0, 0, 150), (vr * 2, vr * 2 + 1), vr + 2)
+                sc.blit(pygame.transform.smoothscale(ao, (vr * 4, vr * 4)),
+                        (vxp - vr * 2, vyp - vr * 2))
+                # metallic radial gradient: dark rim -> lit face -> white-tinted crown
+                for sr, f, off, wt in ((vr, 0.5, 0.0, 0.0), (int(vr * 0.74), 0.95, 0.28, 0.0),
+                                       (int(vr * 0.46), 1.35, 0.5, 0.35),
+                                       (int(vr * 0.24), 1.7, 0.66, 0.62)):
+                    ox, oy = int(lx * vr * off), int(ly * vr * off)
+                    col = tuple(min(255, int(c * f + (255 - c * f) * wt)) for c in vcol)
+                    pygame.draw.circle(sc, col, (vxp + ox, vyp + oy), max(1, sr))
+                # sharp specular pip + dark seating rim
+                pygame.draw.circle(sc, (255, 255, 255),
+                                   (vxp + int(lx * vr * 0.6), vyp + int(ly * vr * 0.6)),
+                                   max(1, vr // 4))
+                pygame.draw.circle(sc, (18, 20, 26), (vxp, vyp), vr, 1)
                 # valve spring (compresses as the valve opens) — 4 coils
                 for ci in range(4):
                     d = length + 4 + ci * (3.0 - lift * 1.2)
