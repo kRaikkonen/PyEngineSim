@@ -1639,19 +1639,21 @@ class App:
                 # SHORT equal-length runners straight from the inner heads to the
                 # two valley turbos — the whole point of a hot-V — so the turbos
                 # are visibly plumbed in, not floating.  Thin pixel tubes.
-                thin = max(2, int(width * 0.12))
+                thin = max(2, int(width * 0.13))
                 near_t = (bay.centerx - 12, cyv + 6)
                 far_t = (bay.centerx + 12, cyv - 5)
                 if lports:
-                    self._draw_headers(eng, lports, near_t, thin)
+                    self._draw_headers(eng, lports, near_t, thin, cols=self._EXH_COLS)
                 if rports:
-                    self._draw_headers(eng, rports, far_t, thin)
+                    self._draw_headers(eng, rports, far_t, thin, cols=self._EXH_COLS)
             else:
                 offx = length * math.sin(bank) + width * 1.7
                 if lports:
-                    self._draw_headers(eng, lports, (cxx - offx, vy), hrad)
+                    self._draw_headers(eng, lports, (cxx - offx, vy), hrad,
+                                       cols=self._EXH_COLS)
                 if rports:
-                    self._draw_headers(eng, rports, (cxx + offx, vy), hrad)
+                    self._draw_headers(eng, rports, (cxx + offx, vy), hrad,
+                                       cols=self._EXH_COLS)
             for s, st in enumerate(stations):
                 jy = mtop + dy * (s + 0.5)
                 for i in st:
@@ -1699,22 +1701,38 @@ class App:
                                  (cx1, crank_y + e1), (cx0, crank_y + e1)])
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
-        # --- exhaust headers (behind the cylinders): runners exit each head to
-        # the exhaust side and merge into a collector down at the back-right ---
+        # --- colour-coded manifolds (behind the cylinders): a GREEN intake plenum
+        # on the left and a RED 4-into-1 exhaust manifold on the right sweeping to
+        # the turbo — gentle bends + flange joints for a real manifold look ---
         hrad = max(2, int(width * 0.16))
-        iports = []
-        for s, st in enumerate(stations):
-            jx = x_start + sw * (s + 0.5)
-            for i in st:
-                a = math.radians(eng.cylinders[i].bank_angle_deg)
-                hxc = jx + math.sin(a) * length
-                hyc = crank_y - math.cos(a) * length
-                px = hxc + math.cos(a) * width * 0.5     # exhaust on the right side
-                py = hyc + math.sin(a) * width * 0.5
-                iports.append((px, py, a, 1.0))
-        if iports:
-            self._draw_headers(eng, iports, (x_start + sw * ns + width * 0.6,
-                                             crank_y - length * 0.25), hrad)
+        irad = max(2, int(width * 0.13))
+        cyv = (bay.y + bay.bottom) // 2
+        heads = [(x_start + sw * (s + 0.5), crank_y - length * 0.82) for s in range(ns)]
+        # EXHAUST: each port bows down-right into a collector, which sweeps to the
+        # turbo on the right (a touch thicker than the runners).
+        mp = (x_start + sw * ns + 8, crank_y - length * 0.30)
+        for jx, hy in heads:
+            px = jx + width * 0.42
+            ctrl = (px * 0.3 + mp[0] * 0.7, hy + 16)
+            self._draw_header_tube((px, hy), mp, ctrl, hrad, cols=self._EXH_COLS,
+                                   joint=True)
+        self._collector_slug(mp, hrad)
+        turbo = (bay.right - 50, cyv)
+        cmid = ((mp[0] + turbo[0]) * 0.5 + 6, mp[1] + (turbo[1] - mp[1]) * 0.18)
+        self._draw_header_tube(mp, turbo, cmid, hrad + 1, cols=self._EXH_COLS)
+        # INTAKE: a plenum up-left, each port bowing into it, then a feed running
+        # down the left side toward the throttle body / intercooler.
+        plen = (x_start - 4, crank_y - length * 0.62)
+        for jx, hy in heads:
+            ix = jx - width * 0.42
+            ctrl = (ix * 0.4 + plen[0] * 0.6, hy - 14)
+            self._draw_header_tube((ix, hy), plen, ctrl, irad, cols=self._INT_COLS,
+                                   joint=True)
+        self._collector_slug(plen, irad)
+        feed_end = (bay.x + 34, bay.bottom - 58)
+        self._draw_header_tube(plen, feed_end,
+                               (bay.x + 20, (plen[1] + feed_end[1]) * 0.5),
+                               irad, cols=self._INT_COLS)
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2077,23 +2095,42 @@ class App:
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
 
-    def _draw_header_tube(self, p0, p1, ctrl, rad):
-        """A curved metallic exhaust-header runner from a head port (p0) bowing
-        through ctrl into the collector (p1): dark casing, lit steel body and a
-        top sheen so it reads as a polished tube."""
+    # manifold pipe colour sets — (dark casing, lit body, top sheen)
+    _EXH_COLS = ((54, 18, 14), (176, 62, 38), (230, 124, 86))   # hot exhaust = red
+    _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
+
+    def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
+        """A curved manifold runner from a head port (p0) bowing through ctrl into
+        the collector (p1): dark casing, lit body and a top sheen so it reads as a
+        polished tube.  A gentle bezier bend (never dead straight).  ``joint``
+        caps the port end with a flange fitting."""
+        cols = cols or self._EXH_COLS
         sc = self.screen
         pts = []
-        for k in range(11):
-            t = k / 10.0
+        for k in range(13):
+            t = k / 12.0
             u = 1.0 - t
             pts.append((u * u * p0[0] + 2 * u * t * ctrl[0] + t * t * p1[0],
                         u * u * p0[1] + 2 * u * t * ctrl[1] + t * t * p1[1]))
-        pygame.draw.lines(sc, (26, 28, 36), False, pts, rad * 2 + 2)
-        pygame.draw.lines(sc, (122, 128, 142), False, pts, max(2, rad * 2))
-        hi = [(x, y - rad * 0.45) for x, y in pts]
-        pygame.draw.lines(sc, (182, 188, 202), False, hi, max(1, rad // 2))
+        pygame.draw.lines(sc, cols[0], False, pts, rad * 2 + 2)
+        pygame.draw.lines(sc, cols[1], False, pts, max(2, rad * 2))
+        hi = [(x - rad * 0.35, y - rad * 0.5) for x, y in pts]
+        pygame.draw.lines(sc, cols[2], False, hi, max(1, rad // 2))
+        if joint:                                          # short flange fitting
+            pygame.draw.circle(sc, cols[0], (int(p0[0]), int(p0[1])), rad + 2)
+            pygame.draw.circle(sc, cols[1], (int(p0[0]), int(p0[1])), rad)
+            pygame.draw.circle(sc, cols[2], (int(p0[0] - 1), int(p0[1] - 1)), max(1, rad // 2))
 
-    def _draw_headers(self, eng, ports, collector, rad):
+    def _collector_slug(self, pt, rad):
+        """A brushed merge slug where runners join the collector."""
+        cxc, cyc = int(pt[0]), int(pt[1])
+        pygame.draw.circle(self.screen, (30, 33, 42), (cxc, cyc), rad * 2 + 2)
+        self.screen.blit(self._grad_surf(rad * 4, rad * 4, (150, 156, 170),
+                                         (66, 72, 86), rad * 2, gloss=True),
+                         (cxc - rad * 2, cyc - rad * 2))
+        pygame.draw.circle(self.screen, (34, 38, 48), (cxc, cyc), rad * 2, 2)
+
+    def _draw_headers(self, eng, ports, collector, rad, cols=None):
         """Route every cylinder's exhaust runner (ports: list of (x, y, axis_ang,
         side)) into a shared collector, then cap it with a merged collector pipe —
         short equal-length headers for a hot-V, longer outboard runs otherwise."""
@@ -2101,13 +2138,8 @@ class App:
         for px, py, a, _side in ports:
             mx, my = (px + cxc) * 0.5, (py + cyc) * 0.5
             ctrl = (mx + math.cos(a) * rad * 1.6, my)      # bow the runner outward
-            self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad)
-        # collector merge: a brushed slug where the runners meet
-        pygame.draw.circle(self.screen, (30, 33, 42), (int(cxc), int(cyc)), rad * 2 + 2)
-        self.screen.blit(self._grad_surf(rad * 4, rad * 4, (150, 156, 170),
-                                         (66, 72, 86), rad * 2, gloss=True),
-                         (int(cxc) - rad * 2, int(cyc) - rad * 2))
-        pygame.draw.circle(self.screen, (34, 38, 48), (int(cxc), int(cyc)), rad * 2, 2)
+            self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad, cols=cols, joint=True)
+        self._collector_slug(collector, rad)
 
     def _draw_crank_diagram(self, cx, cy, r, plane, angle):
         """A small END-ON crankshaft view showing the crankpin phase: a FLAT-plane
@@ -2561,8 +2593,8 @@ class App:
         cx, cy = self._crank_xy
         top_y = int(cy + self._crank_h + 7)
         h = 20
-        if top_y + h > bay.bottom - 46:               # keep clear of the icon row
-            top_y = bay.bottom - 46 - h
+        if top_y + h > bay.bottom - 72:               # keep clear of the rail/icon row
+            top_y = bay.bottom - 72 - h
         if top_y < cy + 4:
             return
         cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
@@ -2590,14 +2622,14 @@ class App:
             items.append(("GPF", "cat"))
         items.append(("wastegate", "wg"))
         items.append(("blow-off", "bov"))
-        y = bay.bottom - 36
+        y = bay.bottom - 50                              # lifted off the bottom edge
         x0, span = bay.x + 30, bay.width - 60
         step = span / max(len(items), 1)
         xs = [int(x0 + step * (i + 0.5)) for i in range(len(items))]
         rail_y = y - 17
         self._pipe((xs[0], rail_y), (xs[-1], rail_y), 3)        # the rail
-        self._pipe((xs[-1], rail_y - 1),                        # riser up to engine
-                   (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 3)
+        self._pipe((xs[-1], rail_y - 1),                        # thicker riser to engine
+                   (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 5)
         for cx in xs:                                           # drop to each unit
             self._pipe((cx, rail_y), (cx, y - 7), 2)
         for i, (name, kind) in enumerate(items):
