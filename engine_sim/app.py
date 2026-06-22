@@ -1436,6 +1436,8 @@ class App:
         self.screen.blit(self.font_small.render(
             f"{self.tr('Firing voice:')} {voice}  (V){cab}",
             True, ACCENT), (rect.x + 18, ty + 64))
+        # firing order — in the open area to the RIGHT of the firing-voice line
+        self._blit_firing(eng, rect.x + 286, ty + 64, rect.right - 18 - (rect.x + 286))
 
         self._draw_telemetry(rect, ty + 86)
 
@@ -1504,7 +1506,6 @@ class App:
         # draw it as two side-by-side VR groups — not one strung-out column.
         if left and right and getattr(eng, "is_w", False):
             self._draw_w_banks(bay, sim, eng, left, right, top, bottom)
-            self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
             return
         if left and right:
             cxx = bay.centerx
@@ -1560,7 +1561,6 @@ class App:
                     ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
-            self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
             return
 
         # size the cylinder by displacement, then space the stations TIGHTLY
@@ -1604,9 +1604,6 @@ class App:
                 ly = crank_y - math.cos(a) * (length + 14)
                 lab = self.font_small.render(f"{i + 1}", True, DIM)
                 self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
-
-        # firing order (derived from the cycle offsets, so it's always physical)
-        self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
 
     def _flash_surf(self, radius, glow):
         """A SOFT combustion bloom — a smooth radial gradient (white-hot core ->
@@ -1782,14 +1779,22 @@ class App:
             subA = [i for i in grp if eng.cylinders[i].bank_angle_deg < mid]
             subB = [i for i in grp if eng.cylinders[i].bank_angle_deg >= mid]
             nsu = max(len(subA), len(subB), 1)
-            dy = (mbot - mtop) / nsu
-            # open the vee wider so cylinders fan OUT (horizontal) rather than UP.
-            # HALF-size cylinders, capped tightly so the W12 (3 stations) fits.
             tilt = math.radians(34.0)
-            width = min(dy * 0.30, 13.0)
-            length = min(dy * 0.78, rect.width * 0.13, 56.0)
+            width = 13.0
+            length = 52.0
+            # TIGHT vertical pitch so the V-pairs sit close (no big gaps), then
+            # fit & centre the VR unit in the bay.
+            dy = max(width * 1.7, length * math.cos(tilt) * 0.58)
+            reach_up = length * math.cos(tilt)
+            block_h = dy * (nsu - 1) + reach_up + 14
+            avail = mbot - mtop
+            if block_h > avail:
+                f = avail / block_h
+                dy *= f; width *= f; length *= f; reach_up *= f
+                block_h = dy * (nsu - 1) + reach_up + 14
+            u_mtop = (mtop + mbot) * 0.5 - block_h * 0.5 - dy * 0.5 + reach_up
             # vertical crankshaft for this unit (strip-shaded metal)
-            cy0, cy1 = mtop + dy * 0.5 - 12, mtop + dy * (nsu - 0.5) + 12
+            cy0, cy1 = u_mtop + dy * 0.5 - 10, u_mtop + dy * (nsu - 0.5) + 10
             chw = max(width * 0.30, 8.0)
             for si in range(7):
                 e0 = (si / 7 * 2 - 1) * chw; e1 = ((si + 1) / 7 * 2 - 1) * chw
@@ -1799,7 +1804,7 @@ class App:
                                     [(ux + e0, cy0), (ux + e0, cy1),
                                      (ux + e1, cy1), (ux + e1, cy0)])
             for s in range(nsu):
-                jy = mtop + dy * (s + 0.5)
+                jy = u_mtop + dy * (s + 0.5)
                 for sub, sgn in ((subA, -1.0), (subB, 1.0)):
                     if s >= len(sub):
                         continue
@@ -1849,7 +1854,6 @@ class App:
         # hub on top of all the rod big-ends
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, ACCENT, (cx, cy), 4)
-        self._blit_firing(eng, rect.x + 18, rect.bottom - 6, rect.width - 36)
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
@@ -2542,12 +2546,12 @@ class App:
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
         yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
         # --- control-key hint, tucked into the empty space RIGHT of the lights ---
-        hint = ["Up/Dn gas · ZX shift", "A ign · S start · M mute",
-                "C mixer · E scope · Esc quit"]
+        hint = ["Up/Dn gas · Shift clutch", "ZX shift · A ign · S start",
+                "C mixer · E scope · M mute · Esc"]
         for li, line in enumerate(hint):
             ht = self.font_small.render(line, True, ACCENT)
             self.screen.blit(ht, (rect.right - 14 - ht.get_width(),
-                                  rect.y + 222 + li * 15))
+                                  rect.y + 208 + li * 15))
 
         # --- digital readouts ---
         tq = self._disp_torque
