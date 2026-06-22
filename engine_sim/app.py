@@ -1543,10 +1543,11 @@ class App:
             nsu = max(len(subA), len(subB), 1)
             dy = (mbot - mtop) / nsu
             # open the vee wider so cylinders fan OUT (horizontal) rather than UP,
-            # keeping their tops clear of the telemetry gauges above.
+            # keeping their tops clear of the telemetry gauges above.  Cap the
+            # size tightly so the taller-dy W12 (3 stations) doesn't overgrow.
             tilt = math.radians(34.0)
-            width = min(dy * 0.46, 26.0)
-            length = min(dy * 1.5, rect.width * 0.21, 122.0)
+            width = min(dy * 0.38, 20.0)
+            length = min(dy * 1.1, rect.width * 0.16, 80.0)
             # vertical crankshaft for this unit (strip-shaded metal)
             cy0, cy1 = mtop + dy * 0.5 - 12, mtop + dy * (nsu - 0.5) + 12
             chw = max(width * 0.30, 8.0)
@@ -1916,30 +1917,28 @@ class App:
                          (x + 5, y + 3))
 
     def _airflow_base(self, w):
-        """Analytic EXHAUST AIRFLOW across a fixed-TIME window: the per-cylinder
-        blowdown pulse train.  More pulses pack in as rpm rises (pitch up) and the
-        whole pattern SCROLLS as the crank turns — the real mass-flow waveform,
-        not the audio.  Returns an all-positive array of length w."""
+        """Analytic EXHAUST AIRFLOW over ONE fixed 720-deg cycle (refresh-style,
+        not scrolling): every cylinder's blowdown pulse sits at a FIXED position
+        and lights up / swells live as that cylinder actually fires.  You see the
+        firing-pattern shape, steady, not a trace sliding with rpm.  All-positive,
+        length w."""
         sim = self.sim
         n = sim.engine.num_cylinders
         if n < 1 or w < 2:
             return np.zeros(max(w, 1))
         offs = sim._offset_deg
-        crank_now = math.degrees(sim.crank_angle)
-        rpm = max(sim.rpm, 1.0)
-        # crank degrees spanned by the window: grows with rpm => pulses bunch up
-        # (pitch climbs) and the trace scrolls as crank_now advances each frame.
-        deg_visible = max(rpm * 6.0 * 0.16, 360.0)        # 6 deg/s per rpm, ~0.16 s
-        crank = crank_now - deg_visible * (1.0 - np.arange(w) / (w - 1))
         load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
                        0.30), 1.05)
+        ang = np.arange(w) / (w - 1) * 720.0              # FIXED one-cycle axis
         flow = np.zeros(w)
         for i in range(n):
-            phi = (crank + offs[i]) % 720.0
+            phi = (ang + offs[i]) % 720.0
             d = phi - 505.0                               # 0 at exhaust-valve open
-            flow += np.where((d >= 0) & (d < 210.0),
-                             np.clip(d / 4.0, 0.0, 1.0)
-                             * np.exp(-np.clip(d, 0, None) / 30.0), 0.0)
+            env = np.where((d >= 0) & (d < 210.0),
+                           np.clip(d / 4.0, 0.0, 1.0)
+                           * np.exp(-np.clip(d, 0, None) / 30.0), 0.0)
+            flash = self._ign_flash.get(i, 0.0)           # live per-cylinder firing
+            flow += env * (0.45 + 0.55 * flash)
         return flow * load
 
     @staticmethod
@@ -1949,6 +1948,16 @@ class App:
             return arr
         k = min(k, len(arr))
         return np.convolve(arr, np.ones(k) / k, mode="same")
+
+    @staticmethod
+    def _stabilize(wave):
+        """Peak-trigger an audio tap so the dominant transient sits at a FIXED
+        position every frame — you see the steady TIMBRE SHAPE instead of a trace
+        sliding with rpm (a poor-man's scope trigger)."""
+        if wave is None or len(wave) < 4:
+            return wave
+        shift = len(wave) // 3 - int(np.argmax(np.abs(wave)))
+        return np.roll(wave, shift)
 
     def _draw_exhaust_scopes(self, rect):
         """Overlay: a grid of per-stage waveform windows.  FLOW mode shows the
@@ -1998,7 +2007,8 @@ class App:
                                  unipolar=True, col=(236, 150, 60))
             else:
                 self._mini_scope(int(cx), int(cy), int(cw), int(ch),
-                                 f"{idx + 1} {self.tr(name)}", taps.get(name))
+                                 f"{idx + 1} {self.tr(name)}",
+                                 self._stabilize(taps.get(name)))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
