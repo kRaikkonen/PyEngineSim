@@ -1638,7 +1638,9 @@ class App:
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
             # manifolds ON TOP of the banks so the red/green pipes are never hidden
             self._draw_v_timing(cxx, mtop, dy, (cy0 + cy1) * 0.5, sim, eng)
+            self._begin_pipe_layers()
             self._draw_v_manifolds(eng, stations, cxx, mtop, dy, bank, length, width, bay)
+            self._end_pipe_layers()
             self._draw_bay_induction(bay, eng, sim)
             return
 
@@ -1682,6 +1684,7 @@ class App:
         # across the top with runners down to the intake ports, and the exhaust
         # plumbed to the turbo — TWIN-SCROLL engines split into two scrolls (the
         # firing pairs) in red + orange feeding the divided housing ---
+        self._begin_pipe_layers()
         hrad = max(2, int(width * 0.16))
         irad = max(3, int(width * 0.2))                 # thick intake PLENUM
         brad = max(2, irad - 2)                          # thin individual RUNNERS
@@ -1741,6 +1744,7 @@ class App:
                                    (int(px0) + 12, int(plen_y))], 2, self._INT_COLS)
             tag = self.font_small.render("EGR", True, (150, 158, 174))
             scr.blit(tag, (cool.centerx - tag.get_width() // 2, cool.y - 12))
+        self._end_pipe_layers()
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2111,6 +2115,7 @@ class App:
         # the units) so nothing crosses the pistons: a green intake plenum bar over
         # each VR unit with short down-runners, and the exhaust taken up-and-over to
         # the two turbos on that unit's OUTER side (left VR8 -> left turbos, etc.).
+        self._begin_pipe_layers()
         cyv = int((mtop + mbot) * 0.5)
         hrad = max(2, int(wwidth * 0.16)); irad = max(2, int(wwidth * 0.13))
         ctop = int(min((min(h[1] for h in headsL) if headsL else mtop),
@@ -2143,6 +2148,7 @@ class App:
             self._draw_ortho_pipe([(rail_x, cyv - 34), (turbo_x, cyv - 34)], hrad,
                                   self._EXH_COLS)
         self._collector_slug((rect.centerx, ctop), irad + 1)
+        self._end_pipe_layers()
 
     def _draw_radial(self, rect, top, bottom):
         """Aircraft radial: cylinders arranged in a STAR around a central crank,
@@ -2178,13 +2184,36 @@ class App:
     _EXH2_COLS = ((56, 32, 10), (200, 116, 32), (240, 176, 84))  # 2nd scroll = orange
     _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
 
+    def _pipe_target(self, cols):
+        """Route green/red manifold pipes onto translucent layers (set up by
+        _begin_pipe_layers) so they can be composited semi-transparently."""
+        pl = getattr(self, "_pipe_layers", None)
+        if pl is not None:
+            if cols is self._INT_COLS:
+                return pl[0]
+            if cols is self._EXH_COLS or cols is self._EXH2_COLS:
+                return pl[1]
+        return self.screen
+
+    def _begin_pipe_layers(self):
+        real = self.screen
+        self._pl_real = real
+        self._pipe_layers = (pygame.Surface(real.get_size(), pygame.SRCALPHA),
+                             pygame.Surface(real.get_size(), pygame.SRCALPHA))
+
+    def _end_pipe_layers(self):
+        g, r = self._pipe_layers
+        self._pipe_layers = None
+        r.set_alpha(115); self._pl_real.blit(r, (0, 0))   # red ~45% opacity
+        g.set_alpha(140); self._pl_real.blit(g, (0, 0))   # green ~55% opacity
+
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
         """A manifold runner from a head port (p0) bending through ctrl into the
         collector (p1): dark casing, lit body and a top sheen.  Sampled at only a
         few points so the bend is FACETED (bent-metal polygon), not an organic
         curve.  ``joint`` caps the port end with a flange fitting."""
         cols = cols or self._EXH_COLS
-        sc = self.screen
+        sc = self._pipe_target(cols)
         pts = []
         for k in range(5):
             t = k / 4.0
@@ -2208,7 +2237,7 @@ class App:
         Corners are softened with a small CHAMFER so the bends read as gently
         rounded rather than robotically square (a slight 488-style curve)."""
         cols = cols or self._EXH_COLS
-        sc = self.screen
+        sc = self._pipe_target(cols)
         raw = [(float(x), float(y)) for x, y in pts]
         if len(raw) >= 3:                              # chamfer the interior corners
             soft = [raw[0]]
@@ -2966,7 +2995,6 @@ class App:
     def _draw_oil_pan(self, bay):
         """The oil pan / sump bolted under the crankcase — a ribbed trapezoidal
         pan with a drain plug, hung below the crankshaft."""
-        sc = self.screen
         cx, cy = self._crank_xy
         top_y = int(cy + self._crank_h + 7)
         h = 20
@@ -2974,6 +3002,7 @@ class App:
             top_y = bay.bottom - 72 - h
         if top_y < cy + 4:
             return
+        sc = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)   # 75% layer
         cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
         pts = [(cxp - wt // 2, top_y), (cxp + wt // 2, top_y),
                (cxp + wb // 2, top_y + h), (cxp - wb // 2, top_y + h)]
@@ -2987,6 +3016,8 @@ class App:
         pygame.draw.polygon(sc, (30, 33, 42), pts, 2)
         pygame.draw.circle(sc, (120, 126, 140), (cxp, top_y + h), 3)   # drain plug
         pygame.draw.circle(sc, (40, 44, 54), (cxp, top_y + h), 3, 1)
+        sc.set_alpha(191)                             # ~75% opacity
+        self.screen.blit(sc, (0, 0))
 
     def _bay_ancillaries(self, bay, eng, throttle=0.0):
         """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
@@ -3029,6 +3060,7 @@ class App:
         tps = getattr(self, "_turbo_pts", [])
         catx = next((xs[i] for i, (n, k) in enumerate(items) if k == "cat"), None)
         icx = next((xs[i] for i, (n, k) in enumerate(items) if k == "ic"), None)
+        self._begin_pipe_layers()                    # same translucency as the manifolds
         # charge pipe: GREEN, turbo compressor outlet -> intercooler
         if icx is not None and tps:
             tx, ty, tr = min(tps, key=lambda p: abs(p[0] - icx))
@@ -3040,6 +3072,7 @@ class App:
             for tx, ty, tr in tps:
                 self._draw_ortho_pipe([(int(tx), int(ty + tr)), (int(tx), y - 12),
                                        (catx, y - 12), (catx, y - 8)], 3, self._EXH_COLS)
+        self._end_pipe_layers()
         for i, (name, kind) in enumerate(items):
             cx = xs[i]
             self._draw_ancillary(cx, y, kind, throttle)
@@ -3048,6 +3081,8 @@ class App:
         intake_x = next((xs[i] for i, (n, k) in enumerate(items) if k in ("tb", "ic")),
                         bay.x + 70)
         self._draw_front_intake(bay, eng, intake_x, y)   # cold-air front of the chain
+        if not getattr(eng, "is_radial", False):         # liquid-cooled: radiator
+            self._draw_cooling(bay)
         # F1 hybrid power unit: MGU-H on the turbo shaft, MGU-K on the crank nose
         if getattr(eng, "mgu_whine", 0.0) > 0.0:
             tps = getattr(self, "_turbo_pts", [])
@@ -3056,6 +3091,23 @@ class App:
                 self._draw_mgu(tx, ty, tr + 2, "MGU-H", ring_only=True)
             ccx, ccy = self._crank_xy
             self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 12, "MGU-K")
+
+    def _draw_cooling(self, bay):
+        """A liquid-cooling radiator on the bay's front (left) edge with two cyan
+        coolant hoses running to the block."""
+        sc = self.screen
+        rad = pygame.Rect(bay.x + 6, bay.centery - 32, 11, 64)
+        sc.blit(self._grad_surf(rad.w, rad.h, (88, 108, 130), (38, 54, 72), 3), rad.topleft)
+        for fy in range(rad.y + 3, rad.bottom - 2, 3):       # core fins
+            pygame.draw.line(sc, (40, 54, 70), (rad.x + 1, fy), (rad.right - 1, fy), 1)
+        pygame.draw.rect(sc, (36, 50, 66), rad, 1, border_radius=2)
+        cx, cy = self._crank_xy
+        for hy in (rad.y + 8, rad.bottom - 8):               # coolant hoses (cyan)
+            self._draw_ortho_pipe([(rad.right, hy), (rad.right + 14, hy),
+                                   (rad.right + 14, int(cy))], 2,
+                                  ((16, 44, 54), (40, 120, 140), (120, 200, 220)))
+        t = self.font_small.render(self.tr("radiator"), True, (110, 170, 190))
+        sc.blit(t, (rad.x - 2, rad.bottom + 2))
 
     def _draw_mgu(self, cx, cy, r, label, ring_only=False):
         """An F1 motor-generator unit: a blue-glowing electric machine with copper
