@@ -1665,36 +1665,45 @@ class App:
                                  (cx1, crank_y + e1), (cx0, crank_y + e1)])
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
-        # --- colour-coded manifolds (behind the cylinders): a GREEN intake plenum
-        # on the left and a RED 4-into-1 exhaust manifold on the right sweeping to
-        # the turbo — gentle bends + flange joints for a real manifold look ---
+        # --- colour-coded manifolds (per the I4 reference): a GREEN plenum LOG
+        # across the top with runners down to the intake ports, and the exhaust
+        # plumbed to the turbo — TWIN-SCROLL engines split into two scrolls (the
+        # firing pairs) in red + orange feeding the divided housing ---
         hrad = max(2, int(width * 0.16))
-        irad = max(2, int(width * 0.13))
+        irad = max(2, int(width * 0.14))
         cyv = (bay.y + bay.bottom) // 2
         heads = [(x_start + sw * (s + 0.5), crank_y - length * 0.82) for s in range(ns)]
-        base = min(h[1] for h in heads) - 12
-        stag = max(4, hrad + 2)
-        # EXHAUST (red): riser UP from each port, square out to the right, run to a
-        # collector beside the turbo, then drop into it (leftmost run on top).
         turbo = (bay.right - 50, cyv)
-        coll_x = turbo[0] - 16
-        for i, (jx, hy) in enumerate(heads):
-            px = jx + width * 0.42
-            yr = base - (ns - 1 - i) * stag
-            self._draw_ortho_pipe([(px, hy), (px, yr), (coll_x, yr)], hrad,
-                                  self._EXH_COLS, joint=True)
-        self._draw_ortho_pipe([(coll_x, base - (ns - 1) * stag), (coll_x, turbo[1]),
-                               turbo], hrad + 1, self._EXH_COLS)
-        # INTAKE (green): riser UP from each intake port, square out to the LEFT to
-        # a plenum rail, then drop down to the throttle body (rightmost run on top).
-        plen_x = bay.x + 36
-        for i, (jx, hy) in enumerate(heads):
+        sub = getattr(eng, "induction_subtype", "")
+        # INTAKE (green): a plenum log over the heads, curved runners down to each
+        # intake port, and a throttle inlet looping down the left.
+        plen_y = min(h[1] for h in heads) - 18
+        lx0 = heads[0][0] - width * 0.42
+        lx1 = heads[-1][0] - width * 0.42
+        self._draw_header_tube((lx0 - 4, plen_y), (lx1 + 4, plen_y),
+                               ((lx0 + lx1) * 0.5, plen_y - 3), irad + 2,
+                               cols=self._INT_COLS)
+        for jx, hy in heads:
             ix = jx - width * 0.42
-            yr = base - i * stag
-            self._draw_ortho_pipe([(ix, hy), (ix, yr), (plen_x, yr)], irad,
-                                  self._INT_COLS, joint=True)
-        self._draw_ortho_pipe([(plen_x, base - (ns - 1) * stag),
-                               (plen_x, bay.bottom - 58)], irad, self._INT_COLS)
+            self._draw_header_tube((ix, plen_y), (ix, hy), (ix - 4, (plen_y + hy) * 0.5),
+                                   irad, cols=self._INT_COLS, joint=True)
+        self._draw_header_tube((lx0 - 4, plen_y), (bay.x + 34, bay.bottom - 58),
+                               (bay.x + 18, plen_y + 30), irad, cols=self._INT_COLS)
+        self._collector_slug((lx0 - 4, plen_y), irad)
+        # EXHAUST: twin-scroll SPLIT (two colours), else a single 4-into-1
+        ex_ports = [(jx + width * 0.42, hy, 0.0, 1.0) for jx, hy in heads]
+        if sub == "twin_scroll" and ns >= 4:
+            fo = eng.firing_order
+            sA, sB = set(fo[0::2]), set(fo[1::2])
+            pA = [p for s, p in enumerate(ex_ports) if (s + 1) in sA]
+            pB = [p for s, p in enumerate(ex_ports) if (s + 1) in sB]
+            self._draw_headers(eng, pA, (turbo[0] - 16, turbo[1] - 9), hrad,
+                               cols=self._EXH_COLS)
+            self._draw_headers(eng, pB, (turbo[0] - 16, turbo[1] + 9), hrad,
+                               cols=self._EXH2_COLS)
+        else:
+            self._draw_headers(eng, ex_ports, (turbo[0] - 14, turbo[1]), hrad,
+                               cols=self._EXH_COLS)
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2086,6 +2095,7 @@ class App:
 
     # manifold pipe colour sets — (dark casing, lit body, top sheen)
     _EXH_COLS = ((54, 18, 14), (176, 62, 38), (230, 124, 86))   # hot exhaust = red
+    _EXH2_COLS = ((56, 32, 10), (200, 116, 32), (240, 176, 84))  # 2nd scroll = orange
     _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
 
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
