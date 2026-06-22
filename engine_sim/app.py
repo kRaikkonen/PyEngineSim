@@ -1666,6 +1666,17 @@ class App:
                                  (cx1, crank_y + e1), (cx0, crank_y + e1)])
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
+        # balance shaft — a slim CYAN-BLACK counter-rotating shaft below the crank,
+        # spun the opposite way so it reads as a distinct part
+        bsy = int(crank_y + chh + 7)
+        ba = -sim.crank_angle
+        pygame.draw.line(self.screen, (10, 26, 30), (cx0 + 8, bsy), (cx1 - 8, bsy), 5)
+        pygame.draw.line(self.screen, (38, 120, 130), (cx0 + 8, bsy), (cx1 - 8, bsy), 3)
+        pygame.draw.line(self.screen, (90, 200, 210), (cx0 + 8, bsy - 1), (cx1 - 8, bsy - 1), 1)
+        for bi in range(ns):                              # eccentric balance weights
+            bx = cx0 + 8 + (cx1 - cx0 - 16) * (bi + 0.5) / ns
+            pygame.draw.circle(self.screen, (16, 60, 66),
+                               (int(bx), int(bsy + math.sin(ba + bi) * 3)), 3)
         # --- colour-coded manifolds (per the I4 reference): a GREEN plenum LOG
         # across the top with runners down to the intake ports, and the exhaust
         # plumbed to the turbo — TWIN-SCROLL engines split into two scrolls (the
@@ -1713,6 +1724,22 @@ class App:
         else:
             self._draw_exhaust_fork(ex_ports, spine_y, (turbo[0], turbo[1]),
                                     hrad, self._EXH_COLS, axis="h")
+        if eng.cylinders[0].compression_ratio >= 14.5:    # diesel EGR cooler loop
+            scr = self.screen
+            egr_y = int(plen_y - 16)
+            tap_x = int(turbo[0] - 44)
+            cool = pygame.Rect(int(bay.centerx) - 16, egr_y - 5, 32, 11)
+            self._draw_ortho_pipe([(tap_x, int(spine_y)), (tap_x, egr_y),
+                                   (cool.right, egr_y)], 2, self._EXH_COLS)   # hot tap
+            scr.blit(self._grad_surf(cool.w, cool.h, (108, 116, 128), (52, 58, 70), 3),
+                     cool.topleft)
+            for fx in range(cool.x + 3, cool.right - 2, 3):
+                pygame.draw.line(scr, (40, 44, 54), (fx, cool.y + 2), (fx, cool.bottom - 2), 1)
+            pygame.draw.rect(scr, (40, 44, 54), cool, 1, border_radius=2)
+            self._draw_ortho_pipe([(cool.left, egr_y), (int(px0) + 12, egr_y),
+                                   (int(px0) + 12, int(plen_y))], 2, self._INT_COLS)
+            tag = self.font_small.render("EGR", True, (150, 158, 174))
+            scr.blit(tag, (cool.centerx - tag.get_width() // 2, cool.y - 12))
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2861,6 +2888,26 @@ class App:
                 for hy in range(r.y + 4, r.bottom - 2, 5):
                     pygame.draw.circle(sc, (52, 56, 68), (hx, hy), 1)
             pygame.draw.rect(sc, (152, 158, 172), r, 1, border_radius=8)
+        elif kind == "dpf":                              # diesel particulate filter
+            r = pygame.Rect(cx - 17, cy - 8, 34, 16)
+            sc.blit(self._grad_surf(r.w, r.h, (120, 122, 130), (58, 60, 68), 6), r.topleft)
+            for fx in range(r.x + 3, r.right - 2, 2):    # fine soot channels
+                pygame.draw.line(sc, (40, 42, 48), (fx, r.y + 2), (fx, r.bottom - 2), 1)
+            pygame.draw.rect(sc, (150, 152, 162), r, 1, border_radius=6)
+        elif kind == "scr":                              # SCR catalyst + DEF injector
+            r = pygame.Rect(cx - 16, cy - 8, 32, 16)
+            sc.blit(self._grad_surf(r.w, r.h, (118, 132, 150), (62, 72, 90), 8), r.topleft)
+            for hx in range(r.x + 5, r.right - 3, 5):
+                for hy in range(r.y + 4, r.bottom - 2, 5):
+                    pygame.draw.circle(sc, (52, 60, 74), (hx, hy), 1)
+            pygame.draw.rect(sc, (150, 160, 176), r, 1, border_radius=8)
+            pygame.draw.line(sc, (90, 150, 220), (cx, r.y - 6), (cx, r.y), 3)  # DEF nozzle
+            pygame.draw.circle(sc, (120, 180, 240), (cx, r.y - 7), 2)
+        elif kind == "def":                              # DEF / AdBlue urea tank
+            r = pygame.Rect(cx - 10, cy - 9, 20, 18)
+            sc.blit(self._grad_surf(r.w, r.h, (96, 130, 170), (40, 62, 92), 4), r.topleft)
+            pygame.draw.rect(sc, (30, 44, 60), r, 1, border_radius=4)
+            pygame.draw.rect(sc, (150, 200, 240), (cx - 4, r.y - 3, 8, 4), border_radius=1)
         elif kind == "wg":                               # wastegate: valve + actuator
             pygame.draw.rect(sc, (96, 102, 116), (cx - 3, cy - 16, 6, 9), border_radius=2)
             pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 9)
@@ -2911,13 +2958,18 @@ class App:
         """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
         together by a charge/exhaust rail with a riser up to the engine: throttle
         body, intercooler, catalytic converter, wastegate, blow-off."""
-        items = [("throttle body", "tb"), ("intercooler", "ic")]
-        if eng.has_cat:
-            items.append(("catalytic", "cat"))
-        if getattr(eng, "has_gpf", False):
-            items.append(("GPF", "cat"))
-        items.append(("wastegate", "wg"))
-        items.append(("blow-off", "bov"))
+        diesel = eng.cylinders[0].compression_ratio >= 14.5
+        if diesel:                                       # diesel after-treatment train
+            items = [("intercooler", "ic"), ("DOC", "cat"), ("DPF", "dpf"),
+                     ("SCR", "scr"), ("DEF", "def"), ("wastegate", "wg")]
+        else:
+            items = [("throttle body", "tb"), ("intercooler", "ic")]
+            if eng.has_cat:
+                items.append(("catalytic", "cat"))
+            if getattr(eng, "has_gpf", False):
+                items.append(("GPF", "cat"))
+            items.append(("wastegate", "wg"))
+            items.append(("blow-off", "bov"))
         y = bay.bottom - 50                              # lifted off the bottom edge
         x0, span = bay.x + 30, bay.width - 60
         step = span / max(len(items), 1)
