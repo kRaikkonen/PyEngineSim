@@ -227,6 +227,7 @@ class App:
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
         self._cyl_flow_hist = []  # per-cylinder exhaust-flow scope ring buffers
         self._fuel_total_l = 0.0  # integrated fuel burned (L)
+        self._odo_km = 0.0        # total distance travelled (km)
         self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
         self._ign_flash = {}      # per-cylinder ignition-light fade
         self._wheel_ang = 0.0     # spinning road-wheel angle (rad)
@@ -835,8 +836,20 @@ class App:
 
         def metal_pedal(name, frac, label, glow):
             r = R[name]
-            sc.blit(self._grad_surf(r.w, r.h, (156, 162, 176), (66, 72, 86), 10), r.topleft)
-            sc.blit(self._brushed(r.w, r.h, 10), r.topleft)   # brushed grain
+            sc.blit(self._grad_surf(r.w, r.h, (176, 182, 196), (74, 80, 94), 10), r.topleft)
+            # strong vertical brushed grain (fine light/dark streaks down the plate)
+            grain = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+            for gx in range(4, r.w - 4, 2):
+                v = (gx * 73 + 17) % 11
+                col = (236, 240, 248, 26) if v < 5 else (24, 26, 32, 34)
+                pygame.draw.line(grain, col, (gx, 4), (gx, r.h - 4), 1)
+            pygame.draw.rect(grain, (0, 0, 0, 0), (0, 0, r.w, r.h), border_radius=10)
+            sc.blit(grain, r.topleft)
+            # glossy diagonal sheen across the upper-left
+            gl = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+            pygame.draw.polygon(gl, (255, 255, 255, 46),
+                                [(0, 0), (int(r.w * 0.62), 0), (int(r.w * 0.26), r.h), (0, r.h)])
+            sc.blit(gl, r.topleft)
             for ry in range(r.y + 24, r.bottom - 30, 26):     # drilled sport holes
                 for rx in (r.centerx - 13, r.centerx + 13):
                     pygame.draw.circle(sc, (44, 48, 58), (rx, ry), 5)
@@ -2101,6 +2114,8 @@ class App:
             fuel_ls = 0.0
         self._fuel_lph += (fuel_ls * 3600.0 - self._fuel_lph) * 0.12
         self._fuel_total_l += fuel_ls / FPS
+        # odometer: integrate road/air speed -> total distance (km)
+        self._odo_km += getattr(sim.drivetrain, "v", 0.0) / FPS / 1000.0
         # spin the road wheel at the real wheel rate (v / wheel_radius)
         dt = sim.drivetrain
         self._wheel_ang += (dt.v / max(dt.wheel_radius, 0.1)) / FPS
@@ -2638,8 +2653,10 @@ class App:
             vs = self.font_small.render(val, True, INK)
             self.screen.blit(vs, (col_rt[c] - vs.get_width(), ry))
         y += 3 * 18 + 2
+        odo = self._odo_km * (0.621371 if self.speed_mph else 1.0)
+        odo_u = "mi" if self.speed_mph else "km"
         used = (f"{T('USED')} {self._fuel_total_l:.3f} L  ·  "
-                f"${self._fuel_total_l * 1.5:.2f}")
+                f"${self._fuel_total_l * 1.5:.2f}  ·  {odo:.2f} {odo_u}")
         self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
         y += 19
 
@@ -2663,69 +2680,70 @@ class App:
             self._status_dot(int(c0 + j * cstep), status_y2, T(lab), on, c1, c2)
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
-        """A spinning Pirelli P Zero road wheel — fat tyre with the yellow PZERO
-        sidewall marking, a big lit alloy rim + spokes, drilled brake disc &
-        caliper — turning at the real road rate."""
+        """A Lamborghini-style 5-spoke forged wheel — black tyre with the red
+        Pirelli P Zero sidewall stripe + lettering, a dark carbon 5-twin-spoke
+        star, a red brake caliper and a drilled disc."""
         cx, cy = int(cx), int(cy)
-        fast = min(speed_kmh / 90.0, 1.0)
-        # tyre (with a soft top-left sheen so it reads as round rubber)
-        pygame.draw.circle(self.screen, (12, 13, 16), (cx, cy), R + 4)
-        sh = pygame.Surface((2 * (R + 4), 2 * (R + 4)), pygame.SRCALPHA)
-        pygame.draw.circle(sh, (255, 255, 255, 26), (R + 4 - 3, R + 4 - 4), R + 1, 3)
-        self.screen.blit(sh, (cx - R - 4, cy - R - 4))
-        # Pirelli P Zero yellow sidewall marking — TWO logos (top & bottom),
-        # orbiting with the wheel on the thin sidewall
-        base = self.font_small.render("PZERO", True, (255, 212, 0))
-        sc = min((R * 0.9) / max(base.get_width(), 1), 0.62)
-        rr = R * 0.92
-        for off in (0.0, math.pi):
+        sc = self.screen
+        # tyre (black) + soft sheen
+        pygame.draw.circle(sc, (10, 11, 13), (cx, cy), R + 4)
+        sh = pygame.Surface((2 * (R + 5), 2 * (R + 5)), pygame.SRCALPHA)
+        pygame.draw.circle(sh, (255, 255, 255, 26), (R + 5 - 3, R + 5 - 4), R + 2, 3)
+        sc.blit(sh, (cx - R - 5, cy - R - 5))
+        # red Pirelli rim-edge stripe
+        pygame.draw.circle(sc, (224, 46, 40), (cx, cy), int(R * 0.86), 3)
+        # red P ZERO / PIRELLI lettering on the sidewall (orbits with the wheel)
+        for txt, off in (("P ZERO", 0.0), ("PIRELLI", math.pi)):
+            lg = self.font_small.render(txt, True, (236, 58, 48))
+            zoom = min((R * 0.95) / max(lg.get_width(), 1), 0.62)
+            lg = pygame.transform.rotozoom(lg, -math.degrees(ang + off) - 90, zoom)
             a = ang + off
-            lg = pygame.transform.rotozoom(base, -math.degrees(a) - 90, sc)
-            lx, ly = cx + rr * math.cos(a), cy + rr * math.sin(a)
-            self.screen.blit(lg, (int(lx - lg.get_width() / 2),
-                                  int(ly - lg.get_height() / 2)))
-        # rim well + drilled brake disc + caliper (THIN tyre -> bigger rim well)
-        pygame.draw.circle(self.screen, (22, 24, 30), (cx, cy), int(R * 0.84))
-        pygame.draw.circle(self.screen, (50, 54, 64), (cx, cy), int(R * 0.74))
-        pygame.draw.circle(self.screen, (74, 80, 94), (cx, cy), int(R * 0.74), 1)
-        for k in range(10):
-            a = k * (2 * math.pi / 10)
-            pygame.draw.circle(self.screen, (18, 20, 26),
-                               (int(cx + R * 0.58 * math.cos(a)),
-                                int(cy + R * 0.58 * math.sin(a))), 2)
-        pygame.draw.rect(self.screen, (220, 92, 56),
-                         (cx - 3, cy - int(R * 0.84), 6, int(R * 0.28)), border_radius=2)
-        rim = int(R * 0.80)                               # BIGGER alloy rim, thin tyre
-        spoke_col = (int(176 - 92 * fast), int(182 - 92 * fast), int(196 - 92 * fast))
-        for k in range(5):                               # tapered, lit alloy spokes
-            a = ang + k * (2.0 * math.pi / 5.0)
-            ux, uy = math.cos(a), math.sin(a)
-            px, py = -uy, ux
-            tip = (cx + rim * 0.96 * ux, cy + rim * 0.96 * uy)
-            quad = [(cx + px * 5, cy + py * 5), (tip[0] + px * 3, tip[1] + py * 3),
-                    (tip[0] - px * 3, tip[1] - py * 3), (cx - px * 5, cy - py * 5)]
-            pygame.draw.polygon(self.screen, spoke_col, quad)
-            pygame.draw.line(self.screen, (210, 216, 228), (cx, cy), tip, 1)  # highlight
-        if fast > 0.25:                                  # motion-blur ring at speed
-            br = pygame.Surface((2 * rim + 6, 2 * rim + 6), pygame.SRCALPHA)
-            pygame.draw.circle(br, (190, 196, 210, int(80 * fast)),
-                               (rim + 3, rim + 3), rim, 3)
-            self.screen.blit(br, (cx - rim - 3, cy - rim - 3))
-        pygame.draw.circle(self.screen, (206, 212, 226), (cx, cy), rim, 3)    # rim lip
-        pygame.draw.circle(self.screen, (84, 90, 104), (cx, cy), rim, 1)
-        hub = int(R * 0.30)                              # BIGGER chrome hub + lug nuts
-        self.screen.blit(self._grad_surf(2 * hub, 2 * hub, (224, 230, 240),
-                                         (108, 116, 130), hub, gloss=True),
-                         (cx - hub, cy - hub))
-        pygame.draw.circle(self.screen, (60, 64, 74), (cx, cy), hub, 1)
+            lx, ly = cx + R * 0.93 * math.cos(a), cy + R * 0.93 * math.sin(a)
+            sc.blit(lg, (int(lx - lg.get_width() / 2), int(ly - lg.get_height() / 2)))
+        # rim well (dark)
+        pygame.draw.circle(sc, (16, 17, 20), (cx, cy), int(R * 0.80))
+        # red brake caliper + drilled disc behind the spokes
+        cal = pygame.Rect(cx - int(R * 0.66), cy - int(R * 0.66), int(R * 1.32), int(R * 1.32))
+        pygame.draw.arc(sc, (206, 40, 34), cal, math.radians(120), math.radians(168), 5)
+        pygame.draw.circle(sc, (44, 48, 56), (cx, cy), int(R * 0.6))
+        pygame.draw.circle(sc, (66, 72, 84), (cx, cy), int(R * 0.6), 1)
+        for k in range(12):
+            da = k * (2 * math.pi / 12)
+            pygame.draw.circle(sc, (18, 20, 26),
+                               (int(cx + R * 0.46 * math.cos(da)),
+                                int(cy + R * 0.46 * math.sin(da))), 1)
+        # five twin (forked) carbon spokes
+        rr = R * 0.78
         for k in range(5):
-            a = ang * 0.5 + k * (2 * math.pi / 5)
-            pygame.draw.circle(self.screen, (96, 102, 116),
-                               (int(cx + hub * 0.55 * math.cos(a)),
-                                int(cy + hub * 0.55 * math.sin(a))), 2)
+            a = ang * 0.5 + k * (2 * math.pi / 5.0)
+            ca, sa = math.cos(a), math.sin(a)
+            pa, ps = -sa, ca
+            hub = (cx + R * 0.18 * ca, cy + R * 0.18 * sa)
+            fork = (cx + R * 0.42 * ca, cy + R * 0.42 * sa)
+
+            def bar(p0, w0, p1, w1, perp, col):
+                px, py = perp
+                pygame.draw.polygon(sc, col, [
+                    (p0[0] + px * w0, p0[1] + py * w0), (p1[0] + px * w1, p1[1] + py * w1),
+                    (p1[0] - px * w1, p1[1] - py * w1), (p0[0] - px * w0, p0[1] - py * w0)])
+            bar(hub, R * 0.15, fork, R * 0.085, (pa, ps), (46, 49, 56))   # stem
+            for sgn in (-1, 1):                          # two prongs to the rim
+                a2 = a + sgn * 0.30
+                ca2, sa2 = math.cos(a2), math.sin(a2)
+                tip = (cx + rr * ca2, cy + rr * sa2)
+                bar(fork, R * 0.07, tip, R * 0.045, (-sa2, ca2), (42, 45, 52))
+                pygame.draw.line(sc, (96, 100, 112), fork, tip, 1)       # carbon sheen
+            pygame.draw.line(sc, (104, 108, 120), hub, fork, 1)
+        # rim lip + centre cap with the marque dome
+        pygame.draw.circle(sc, (150, 156, 170), (cx, cy), int(rr), 2)
+        pygame.draw.circle(sc, (70, 75, 88), (cx, cy), int(rr), 1)
+        hub = int(R * 0.2)
+        pygame.draw.circle(sc, (28, 30, 36), (cx, cy), hub)
+        pygame.draw.circle(sc, (120, 126, 140), (cx, cy), hub, 1)
+        pygame.draw.circle(sc, (180, 186, 200), (cx - 2, cy - 2), max(1, int(hub * 0.5)))
         sval, sunit = self._speed_disp(speed_kmh)
         lab = self.font_small.render(f"{sval:.0f} {sunit}", True, DIM)
-        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
+        sc.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
 
     def _draw_pedal_bars(self, x, y, h):
         """Two inset vertical bars — throttle (green) and brake (red) — showing
@@ -2810,7 +2828,7 @@ class App:
         # digital SPEED window — NARROW and centred in the lower waist so it
         # clears the corner numbers (the "0" at the very bottom is not drawn)
         sval, sunit = self._speed_disp(speed_kmh)
-        win = pygame.Rect(cx - 37, cy + int(r * 0.27), 74, 22)
+        win = pygame.Rect(cx - 37, cy + int(r * 0.46), 74, 22)
         self._recess(win, 5)
         txt = self.font_small.render(f"{int(sval)} {sunit}", True, ACCENT)
         if txt.get_width() > win.w - 8:
