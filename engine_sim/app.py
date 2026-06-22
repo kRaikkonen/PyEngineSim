@@ -2464,27 +2464,25 @@ class App:
         self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
         y += 19
 
-        # --- total exhaust-flow oscilloscope ---
-        self._draw_scope(rect.x + 24, y, rect.width - 48, 56, "TOTAL EXHAUST FLOW")
-        y += 56 + 7
-
-        # --- status indicators (compact) ---
-        self._status_dot(rect.x + 24, y, T("IGNITION"), sim.ignition_on, GOOD, WARN)
-        self._status_dot(rect.x + 150, y, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
-        self._status_dot(rect.x + 276, y, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
-        y += 21
-        self._status_dot(rect.x + 24, y, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
-        self._status_dot(rect.x + 150, y, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
-        self._status_dot(rect.x + 276, y, T("AUDIO"),
+        # The status rows + key-hint are ANCHORED to the panel bottom so a taller
+        # ignition bank (V8/W) can never shove them off; the exhaust-flow scope
+        # then fills whatever space is left above them (clamped to a sane size).
+        hint_y = rect.bottom - 30
+        status_y2 = hint_y - 22
+        status_y1 = status_y2 - 21
+        scope_h = max(30, min(56, int(status_y1 - 8 - y)))
+        self._draw_scope(rect.x + 24, y, rect.width - 48, scope_h, "TOTAL EXHAUST FLOW")
+        self._status_dot(rect.x + 24, status_y1, T("IGNITION"), sim.ignition_on, GOOD, WARN)
+        self._status_dot(rect.x + 150, status_y1, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
+        self._status_dot(rect.x + 276, status_y1, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
+        self._status_dot(rect.x + 24, status_y2, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
+        self._status_dot(rect.x + 150, status_y2, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
+        self._status_dot(rect.x + 276, status_y2, T("AUDIO"),
                          self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
-        y += 21
-        # two short lines so the hint never runs off the panel's right edge
         self.screen.blit(self.font_small.render(
-            "Up/Dn gas · ZX shift · A ign · S start", True, ACCENT),
-            (rect.x + 24, y))
+            "Up/Dn gas · ZX shift · A ign · S start", True, ACCENT), (rect.x + 24, hint_y))
         self.screen.blit(self.font_small.render(
-            "C mixer · E scope · M mute · Esc quit", True, ACCENT),
-            (rect.x + 24, y + 15))
+            "C mixer · E scope · M mute · Esc quit", True, ACCENT), (rect.x + 24, hint_y + 15))
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
         """A spinning Pirelli P Zero road wheel — fat tyre with the yellow PZERO
@@ -2497,26 +2495,29 @@ class App:
         sh = pygame.Surface((2 * (R + 4), 2 * (R + 4)), pygame.SRCALPHA)
         pygame.draw.circle(sh, (255, 255, 255, 26), (R + 4 - 3, R + 4 - 4), R + 1, 3)
         self.screen.blit(sh, (cx - R - 4, cy - R - 4))
-        # Pirelli P Zero yellow sidewall marking — orbits with the wheel
-        logo = self.font_small.render("PZERO", True, (255, 212, 0))
-        sc = min((R * 1.0) / max(logo.get_width(), 1), 0.72)
-        logo = pygame.transform.rotozoom(logo, -math.degrees(ang) - 90, sc)
-        rr = R * 0.86
-        lx, ly = cx + rr * math.cos(ang), cy + rr * math.sin(ang)
-        self.screen.blit(logo, (int(lx - logo.get_width() / 2),
-                                int(ly - logo.get_height() / 2)))
-        # rim well + drilled brake disc + caliper (show between the spokes)
-        pygame.draw.circle(self.screen, (22, 24, 30), (cx, cy), int(R * 0.74))
-        pygame.draw.circle(self.screen, (50, 54, 64), (cx, cy), int(R * 0.64))
-        pygame.draw.circle(self.screen, (74, 80, 94), (cx, cy), int(R * 0.64), 1)
-        for k in range(8):
-            a = k * (2 * math.pi / 8)
+        # Pirelli P Zero yellow sidewall marking — TWO logos (top & bottom),
+        # orbiting with the wheel on the thin sidewall
+        base = self.font_small.render("PZERO", True, (255, 212, 0))
+        sc = min((R * 0.9) / max(base.get_width(), 1), 0.62)
+        rr = R * 0.92
+        for off in (0.0, math.pi):
+            a = ang + off
+            lg = pygame.transform.rotozoom(base, -math.degrees(a) - 90, sc)
+            lx, ly = cx + rr * math.cos(a), cy + rr * math.sin(a)
+            self.screen.blit(lg, (int(lx - lg.get_width() / 2),
+                                  int(ly - lg.get_height() / 2)))
+        # rim well + drilled brake disc + caliper (THIN tyre -> bigger rim well)
+        pygame.draw.circle(self.screen, (22, 24, 30), (cx, cy), int(R * 0.84))
+        pygame.draw.circle(self.screen, (50, 54, 64), (cx, cy), int(R * 0.74))
+        pygame.draw.circle(self.screen, (74, 80, 94), (cx, cy), int(R * 0.74), 1)
+        for k in range(10):
+            a = k * (2 * math.pi / 10)
             pygame.draw.circle(self.screen, (18, 20, 26),
-                               (int(cx + R * 0.5 * math.cos(a)),
-                                int(cy + R * 0.5 * math.sin(a))), 2)
+                               (int(cx + R * 0.58 * math.cos(a)),
+                                int(cy + R * 0.58 * math.sin(a))), 2)
         pygame.draw.rect(self.screen, (220, 92, 56),
-                         (cx - 3, cy - int(R * 0.74), 6, int(R * 0.26)), border_radius=2)
-        rim = int(R * 0.68)                               # BIGGER alloy rim
+                         (cx - 3, cy - int(R * 0.84), 6, int(R * 0.28)), border_radius=2)
+        rim = int(R * 0.80)                               # BIGGER alloy rim, thin tyre
         spoke_col = (int(176 - 92 * fast), int(182 - 92 * fast), int(196 - 92 * fast))
         for k in range(5):                               # tapered, lit alloy spokes
             a = ang + k * (2.0 * math.pi / 5.0)
@@ -2534,7 +2535,7 @@ class App:
             self.screen.blit(br, (cx - rim - 3, cy - rim - 3))
         pygame.draw.circle(self.screen, (206, 212, 226), (cx, cy), rim, 3)    # rim lip
         pygame.draw.circle(self.screen, (84, 90, 104), (cx, cy), rim, 1)
-        hub = int(R * 0.26)                              # BIGGER chrome hub + lug nuts
+        hub = int(R * 0.30)                              # BIGGER chrome hub + lug nuts
         self.screen.blit(self._grad_surf(2 * hub, 2 * hub, (224, 230, 240),
                                          (108, 116, 130), hub, gloss=True),
                          (cx - hub, cy - hub))
