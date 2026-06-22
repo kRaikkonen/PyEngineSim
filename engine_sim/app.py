@@ -1472,20 +1472,27 @@ class App:
             return
         if left and right:
             cxx = bay.centerx
-            # V tilt: a gentle up-angle from horizontal.
-            trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
-            width = 36.0 * cyl_scale
-            length = 124.0 * cyl_scale
-            # fit the horizontal reach inside the bay half-width
-            reach = length * max(math.cos(trad), 0.4) + width
-            maxreach = bay.width * 0.5 - 18.0
+            # use the REAL bank angle from vertical (60-deg V -> +/-30 deg,
+            # 90-deg V -> +/-45 deg, boxer -> nearly horizontal).
+            bank = math.radians(min(maxang, 82.0))
+            width = 18.0 * cyl_scale                  # HALF size
+            length = 62.0 * cyl_scale
+            reach = length * math.sin(bank) + width   # fan-out within the bay
+            maxreach = bay.width * 0.5 - 16.0
             if reach > maxreach:
                 f = maxreach / reach; width *= f; length *= f
-            dy = max(width * 1.5, 20.0)               # TIGHT vertical pitch
+            # vertical pitch: enough that stacked V-pairs don't overlap badly
+            dy = max(width * 1.5, length * math.cos(bank) * 0.78)
             avail = bottom - top
-            if ns * dy > avail:                       # shrink to fit the bay height
-                f = avail / (ns * dy); dy *= f; width *= f; length *= f
-            mtop = (top + bottom) * 0.5 - ns * dy * 0.5   # centre the engine
+            # the top cylinders point UP past the top journal by reach_up, so the
+            # full visual block is taller than the journal span — fit & centre THAT
+            reach_up = length * math.cos(bank)
+            block_h = dy * (ns - 1) + reach_up + 18
+            if block_h > avail:
+                f = avail / block_h
+                dy *= f; width *= f; length *= f; reach_up *= f
+                block_h = dy * (ns - 1) + reach_up + 18
+            mtop = (top + bottom) * 0.5 - block_h * 0.5 - dy * 0.5 + reach_up
             # vertical metallic crankshaft behind every journal (strip-shaded)
             cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
             chw = max(width * 0.30, 9.0)
@@ -1510,8 +1517,8 @@ class App:
                             if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
                             else 0.0)
                     side = -1.0 if cyl.bank_angle_deg < 0 else 1.0
-                    # each bank tilts up by trad (V) — W is handled separately
-                    a = side * (math.pi / 2.0 - trad)        # left/right, tilt up
+                    # tilt each bank out by the REAL bank angle from vertical
+                    a = side * bank
                     self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow)
                     lx = cxx + math.sin(a) * (length + 16)
                     ly = jy - math.cos(a) * (length + 16)
@@ -1522,12 +1529,12 @@ class App:
 
         # size the cylinder by displacement, then space the stations TIGHTLY
         # around it (no huge gaps for small cylinders) and centre the row.
-        width = 36.0 * cyl_scale
-        length = 124.0 * cyl_scale
-        sw = max(width * 1.5, 22.0)
+        width = 18.0 * cyl_scale                      # HALF size
+        length = 62.0 * cyl_scale
+        sw = max(width * 1.5, 16.0)
         if ns * sw > bay.width - 24:                  # shrink to fit the bay width
             f = (bay.width - 24) / (ns * sw); sw *= f; width *= f; length *= f
-        crank_y = bottom - 30 - (bottom - top - 70) * min(maxang / 90.0, 1.0) * 0.5
+        crank_y = (top + bottom) * 0.5 + length * 0.42   # centre the row vertically
         if length > (crank_y - top) * 0.92:           # fit the height too
             f = (crank_y - top) * 0.92 / length; length *= f; width *= f
         x_start = bay.centerx - ns * sw * 0.5
@@ -1610,10 +1617,20 @@ class App:
                     (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
                     (bx + ux * d0 + qx * e1, by + uy * d0 + qy * e1)])
 
-        def cap(d, halfw, base):                      # rounded end-cap (circle)
-            cxp = int(bx + ux * d); cyp = int(by + uy * d)
-            pygame.draw.circle(self.screen, base, (cxp, cyp), int(halfw))
-            pygame.draw.circle(self.screen, (24, 26, 32), (cxp, cyp), int(halfw), 1)
+        def cap(d, halfw, base):                      # DOMED rounded end-cap
+            cxp = int(bx + ux * d); cyp = int(by + uy * d); rr = int(halfw)
+            for sr, f, off in ((rr, 0.62, 0.0), (int(rr * 0.72), 1.0, 0.26),
+                               (int(rr * 0.40), 1.45, 0.46)):
+                ox = int(qx * halfw * off); oy = int(qy * halfw * off)   # toward light
+                col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
+                       min(255, int(base[2] * f)))
+                pygame.draw.circle(self.screen, col, (cxp + ox, cyp + oy), max(1, sr))
+            pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), rr, 1)
+
+        def along(d0, d1, e, col, w=1):               # a line running ALONG the bore
+            pygame.draw.line(self.screen, col,
+                             (bx + ux * d0 + qx * e, by + uy * d0 + qy * e),
+                             (bx + ux * d1 + qx * e, by + uy * d1 + qy * e), w)
 
         def edge(d0, d1, halfw, col, w=1):
             pygame.draw.polygon(self.screen, col, [
@@ -1622,16 +1639,20 @@ class App:
                 (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
                 (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
 
-        cap(length + 4, hw + 3, (92, 98, 112))        # rounded head + base caps
+        cap(-2, hw + 3, (60, 66, 78))                 # base cap (behind)
         shaded(-2, length + 4, hw + 3, (78, 84, 96))  # finned metal sleeve
-        cap(-2, hw + 3, (66, 72, 84))
-        cap(length + 4, hw + 3, (88, 94, 108))
+        # brushed grain (faint lines running along the bore) + a gloss specular
+        for be in (-0.55, -0.25, 0.55):
+            along(0, length + 2, be * (hw + 3), (94, 100, 114), 1)
+        along(1, length + 2, 0.18 * (hw + 3), (188, 196, 210), 2)   # specular stripe
+        along(1, length + 2, 0.30 * (hw + 3), (140, 148, 164), 1)
         for fz in range(4):                           # cooling fins near the head
             d = length - 2 - fz * 5
             pygame.draw.line(self.screen, (40, 44, 54),
                              (bx + ux * d + qx * (hw + 3), by + uy * d + qy * (hw + 3)),
                              (bx + ux * d - qx * (hw + 3), by + uy * d - qy * (hw + 3)), 2)
-        edge(-2, length + 4, hw + 3, (24, 26, 32), 2)
+        edge(-2, length + 4, hw + 3, (22, 24, 30), 2)
+        cap(length + 4, hw + 3, (104, 110, 124))      # DOMED head cap on top
         # dark bore interior
         pygame.draw.polygon(self.screen, (24, 26, 32), [
             (bx + ux * 1 + qx * (hw - 2), by + uy * 1 + qy * (hw - 2)),
@@ -1659,12 +1680,23 @@ class App:
         pygame.draw.circle(self.screen, (150, 156, 168), (int(pin[0]), int(pin[1])), 4, 1)
         jrn = (jx + cr * math.sin(theta), jy + cr * math.cos(theta))   # crank journal
         self._draw_rod(pin, jrn, max(cr * 0.42, 3))
-        # crank web (counterweight) + journal
+
+        def metal_disc(px, py, rad, base):            # domed steel disc, lit top-left
+            for sr, f, off in ((rad, 0.6, 0), (rad * 0.72, 1.0, 0.22),
+                               (rad * 0.42, 1.4, 0.42)):
+                o = int(rad * off)
+                col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
+                       min(255, int(base[2] * f)))
+                pygame.draw.circle(self.screen, col, (int(px) - o, int(py) - o),
+                                   max(1, int(sr)))
+            pygame.draw.circle(self.screen, (22, 24, 30), (int(px), int(py)), int(rad), 1)
+        # counterweight web, then the main journal, both shaded steel
         cwx, cwy = jx - cr * 0.5 * math.sin(theta), jy - cr * 0.5 * math.cos(theta)
-        pygame.draw.circle(self.screen, (46, 50, 60), (int(cwx), int(cwy)), int(cr * 1.25))
-        pygame.draw.circle(self.screen, (66, 72, 84), (int(jx), int(jy)), int(cr * 0.7))
-        pygame.draw.circle(self.screen, ACCENT, (int(jrn[0]), int(jrn[1])), 4)
-        pygame.draw.circle(self.screen, (20, 60, 110), (int(jrn[0]), int(jrn[1])), 4, 1)
+        metal_disc(cwx, cwy, cr * 1.3, (58, 63, 76))
+        metal_disc(jx, jy, cr * 0.78, (96, 102, 118))
+        # rod big-end pin
+        pygame.draw.circle(self.screen, (150, 158, 174), (int(jrn[0]), int(jrn[1])), 4)
+        pygame.draw.circle(self.screen, ACCENT, (int(jrn[0]), int(jrn[1])), 3)
 
     def _reuleaux(self, verts, samples=10):
         """Polygon points for a Reuleaux triangle through three apexes: each side
@@ -1699,19 +1731,18 @@ class App:
         mbot = bottom if bottom is not None else rect.bottom - 12
         unit_name = f"VR{len(left)}"
         for ui, grp in enumerate((left, right)):
-            ux = rect.x + int(rect.width * (0.29 if ui == 0 else 0.71))
+            ux = rect.x + int(rect.width * (0.40 if ui == 0 else 0.60))  # closer columns
             # split this VR unit into its two sub-banks by bank angle
             mid = sum(eng.cylinders[i].bank_angle_deg for i in grp) / max(len(grp), 1)
             subA = [i for i in grp if eng.cylinders[i].bank_angle_deg < mid]
             subB = [i for i in grp if eng.cylinders[i].bank_angle_deg >= mid]
             nsu = max(len(subA), len(subB), 1)
             dy = (mbot - mtop) / nsu
-            # open the vee wider so cylinders fan OUT (horizontal) rather than UP,
-            # keeping their tops clear of the telemetry gauges above.  Cap the
-            # size tightly so the taller-dy W12 (3 stations) doesn't overgrow.
+            # open the vee wider so cylinders fan OUT (horizontal) rather than UP.
+            # HALF-size cylinders, capped tightly so the W12 (3 stations) fits.
             tilt = math.radians(34.0)
-            width = min(dy * 0.38, 20.0)
-            length = min(dy * 1.1, rect.width * 0.16, 80.0)
+            width = min(dy * 0.30, 13.0)
+            length = min(dy * 0.78, rect.width * 0.13, 56.0)
             # vertical crankshaft for this unit (strip-shaded metal)
             cy0, cy1 = mtop + dy * 0.5 - 12, mtop + dy * (nsu - 0.5) + 12
             chw = max(width * 0.30, 8.0)
@@ -2504,36 +2535,43 @@ class App:
                          (rect.x + 24, y - 4), (rect.right - 24, y - 4))
         flow = [
             ("MANIFOLD", f"{t['vacuum_inhg']:+.1f} inHg"),
-            ("AIR", f"{t['scfm']:5.0f} scfm"),
-            ("VOL EFF", f"{t['ve_pct']:4.0f} %"),
-            ("IN AFR", f"{t['afr']:5.1f}"),
-            ("EX O2", f"{t['o2_pct']:4.1f} %"),
-            ("FUEL", f"{self._fuel_lph:4.1f} L/h"),
+            ("AIR", f"{t['scfm']:.0f} scfm"),
+            ("VOL EFF", f"{t['ve_pct']:.0f} %"),
+            ("IN AFR", f"{t['afr']:.1f}"),
+            ("EX O2", f"{t['o2_pct']:.1f} %"),
+            ("FUEL", f"{self._fuel_lph:.1f} L/h"),
         ]
-        cols = [rect.x + 24, rect.x + 220]
+        col_lab = [rect.x + 24, rect.x + 220]
+        col_rt = [rect.x + 200, rect.right - 26]      # values right-aligned per column
         for i, (lab, val) in enumerate(flow):
-            bx, ry = cols[i % 2], y + (i // 2) * 18
-            self.screen.blit(self.font_small.render(T(lab), True, DIM), (bx, ry))
-            self.screen.blit(self.font_small.render(val, True, INK), (bx + 76, ry))
+            c = i % 2; ry = y + (i // 2) * 18
+            self.screen.blit(self.font_small.render(T(lab), True, DIM), (col_lab[c], ry))
+            vs = self.font_small.render(val, True, INK)
+            self.screen.blit(vs, (col_rt[c] - vs.get_width(), ry))
         y += 3 * 18 + 2
         used = (f"{T('USED')} {self._fuel_total_l:.3f} L  ·  "
                 f"${self._fuel_total_l * 1.5:.2f}")
         self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
         y += 19
 
-        # Status rows are ANCHORED to the panel bottom (the key-hint now lives up
-        # beside the ignition lights); the exhaust-flow scope fills the space left.
+        # Status rows ANCHORED to the panel bottom (evenly spaced 3 columns); the
+        # exhaust-flow scope grows to fill whatever space is left above them.
         status_y2 = rect.bottom - 26
         status_y1 = status_y2 - 22
-        scope_h = max(30, min(60, int(status_y1 - 8 - y)))
+        scope_h = max(34, min(74, int(status_y1 - 8 - y)))
         self._draw_scope(rect.x + 24, y, rect.width - 48, scope_h, "TOTAL EXHAUST FLOW")
-        self._status_dot(rect.x + 24, status_y1, T("IGNITION"), sim.ignition_on, GOOD, WARN)
-        self._status_dot(rect.x + 150, status_y1, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
-        self._status_dot(rect.x + 276, status_y1, T("REV LIMIT"), sim._fuel_cut, WARN, DIM)
-        self._status_dot(rect.x + 24, status_y2, T("CLUTCH IN"), dt.clutch < 0.5, ACCENT, DIM)
-        self._status_dot(rect.x + 150, status_y2, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
-        self._status_dot(rect.x + 276, status_y2, T("AUDIO"),
-                         self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
+        c0 = rect.x + 22
+        cstep = (rect.width - 40) / 3.0               # 3 evenly-spaced columns
+        row1 = [("IGNITION", sim.ignition_on, GOOD, WARN),
+                ("STARTER", sim.starter_engaged, ACCENT, DIM),
+                ("REV LIMIT", sim._fuel_cut, WARN, DIM)]
+        row2 = [("CLUTCH IN", dt.clutch < 0.5, ACCENT, DIM),
+                ("IN GEAR", dt.gear > 0, GOOD, DIM),
+                ("AUDIO", self.synth.enabled and self.synth.volume > 0, GOOD, DIM)]
+        for j, (lab, on, c1, c2) in enumerate(row1):
+            self._status_dot(int(c0 + j * cstep), status_y1, T(lab), on, c1, c2)
+        for j, (lab, on, c1, c2) in enumerate(row2):
+            self._status_dot(int(c0 + j * cstep), status_y2, T(lab), on, c1, c2)
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
         """A spinning Pirelli P Zero road wheel — fat tyre with the yellow PZERO
@@ -2652,7 +2690,7 @@ class App:
             col = WARN if over else (214, 219, 228) if major else (110, 116, 128)
             pygame.draw.line(self.screen, col, pt(r0, a), pt(r - 3, a),
                              3 if major else 1)
-            if major:
+            if major and k > 0:                      # skip "0" — the speed window sits there
                 num = self.font.render(str(k // 1000), True, col)
                 nx, ny = pt(r - 36, a)
                 self.screen.blit(num, (nx - num.get_width() // 2,
@@ -2680,17 +2718,17 @@ class App:
                                          11, gloss=True), (cx - 11, cy - 11))
         pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), 11, 1)
 
-        # digital SPEED window — kept high in the dial so it never covers the
-        # lower numbers (rpm is shown by the needle + its own readout)
+        # digital SPEED window — NARROW and centred in the lower waist so it
+        # clears the corner numbers (the "0" at the very bottom is not drawn)
         sval, sunit = self._speed_disp(speed_kmh)
-        win = pygame.Rect(cx - 48, cy + int(r * 0.22), 96, 26)
-        self._recess(win, 6)
-        st_ = self.font_big.render(f"{int(sval)}", True, ACCENT)
-        st_ = pygame.transform.smoothscale(
-            st_, (int(st_.get_width() * 20 / max(st_.get_height(), 1)), 20))
-        self.screen.blit(st_, (win.centerx - st_.get_width() // 2 - 12, win.y + 3))
-        u = self.font_small.render(sunit, True, DIM)
-        self.screen.blit(u, (win.centerx + st_.get_width() // 2 - 6, win.centery - 6))
+        win = pygame.Rect(cx - 37, cy + int(r * 0.27), 74, 22)
+        self._recess(win, 5)
+        txt = self.font_small.render(f"{int(sval)} {sunit}", True, ACCENT)
+        if txt.get_width() > win.w - 8:
+            txt = pygame.transform.smoothscale(
+                txt, (win.w - 8, int(txt.get_height() * (win.w - 8) / txt.get_width())))
+        self.screen.blit(txt, (win.centerx - txt.get_width() // 2,
+                               win.centery - txt.get_height() // 2))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
         col = on_col if on else off_col
