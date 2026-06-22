@@ -1974,6 +1974,8 @@ class App:
         mtop = top if top is not None else rect.y + 32
         mbot = bottom if bottom is not None else rect.bottom - 12
         unit_name = f"VR{len(left)}"
+        exhL, exhR, intk = [], [], []                 # manifold ports (drawn on top)
+        wwidth = 13.0
         for ui, grp in enumerate((left, right)):
             ux = rect.x + int(rect.width * (0.40 if ui == 0 else 0.60))  # closer columns
             # split this VR unit into its two sub-banks by bank angle
@@ -2021,12 +2023,37 @@ class App:
                             else 0.0)
                     a = sgn * tilt
                     self._draw_cyl(ux, jy, a, length, width, frac, theta, glow, phi)
+                    hx = ux + math.sin(a) * length     # head; ports to each side
+                    hy = jy - math.cos(a) * length
+                    osign = -1.0 if ui == 0 else 1.0   # exhaust toward the unit's outer
+                    (exhL if ui == 0 else exhR).append(
+                        (hx + osign * width * 0.5, hy))
+                    intk.append((hx - osign * width * 0.5, hy))
                     lx = ux + math.sin(a) * (length + 14)
                     ly = jy - math.cos(a) * (length + 14)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
             ulab = self.font_small.render(unit_name, True, (150, 158, 172))
             self.screen.blit(ulab, (ux - ulab.get_width() // 2, mbot + 6))
+            wwidth = width
+        # manifolds ON TOP: red exhaust squares out to each side, green intake up
+        cyv = int((mtop + mbot) * 0.5)
+        hrad = max(2, int(wwidth * 0.16)); irad = max(2, int(wwidth * 0.13))
+        for ports, rail_x, tgt in ((exhL, rect.x + 30, (rect.x + 46, cyv)),
+                                   (exhR, rect.right - 30, (rect.right - 46, cyv))):
+            if not ports:
+                continue
+            ports.sort(key=lambda p: p[1])
+            for px, py in ports:
+                self._draw_ortho_pipe([(px, py), (rail_x, py)], hrad,
+                                      self._EXH_COLS, joint=True)
+            self._draw_ortho_pipe([(rail_x, ports[0][1]), (rail_x, tgt[1]), tgt],
+                                  hrad + 1, self._EXH_COLS)
+        plen_y = mtop - 6
+        for px, py in intk:
+            self._draw_ortho_pipe([(px, py), (px, plen_y), (rect.centerx, plen_y)],
+                                  irad, self._INT_COLS, joint=True)
+        self._collector_slug((rect.centerx, plen_y), irad)
 
     def _draw_radial(self, rect, top, bottom):
         """Aircraft radial: cylinders arranged in a STAR around a central crank,
