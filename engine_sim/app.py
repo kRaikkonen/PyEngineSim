@@ -2235,8 +2235,8 @@ class App:
     def _end_pipe_layers(self):
         g, r = self._pipe_layers
         self._pipe_layers = None
-        r.set_alpha(115); self._pl_real.blit(r, (0, 0))   # red ~45% opacity
-        g.set_alpha(140); self._pl_real.blit(g, (0, 0))   # green ~55% opacity
+        r.set_alpha(204); self._pl_real.blit(r, (0, 0))   # red 80% opacity
+        g.set_alpha(204); self._pl_real.blit(g, (0, 0))   # green 80% opacity
 
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
         """A manifold runner from a head port (p0) bending through ctrl into the

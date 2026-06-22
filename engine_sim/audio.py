@@ -1227,6 +1227,14 @@ class Synthesizer:
                                                  nz2, zi=self._roadn_lp_zi)
                 sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
 
+        # gentle anti-harshness low-pass: tames the very top end where high-rpm
+        # aliasing/breakup lives (F1, rotary), with little effect on the body
+        if _HAVE_SCIPY:
+            if not hasattr(self, "_aa_zi"):
+                self._aa = butter(2, min(17000.0, self.sample_rate * 0.46)
+                                  / (self.sample_rate / 2), btype="low")
+                self._aa_zi = np.zeros(2)
+            sig, self._aa_zi = lfilter(self._aa[0], self._aa[1], sig, zi=self._aa_zi)
         out = np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
         # exhaust loudness meter (RMS of the final output) for the HUD readout
         self.last_level = float(np.sqrt(np.mean(out * out))) if frames else 0.0
@@ -1246,8 +1254,10 @@ class Synthesizer:
         inc = 2.0 * math.pi * freq / sr
         ph = ph0 + inc * np.arange(frames)
         sig = np.zeros(frames, dtype=np.float64)
+        nyq = sr * 0.47
         for h, a in harmonics:
-            sig += a * np.sin(h * ph)
+            if h * freq < nyq:                    # skip harmonics that would ALIAS
+                sig += a * np.sin(h * ph)
         setattr(self, phase_attr, (ph0 + inc * frames) % (2.0 * math.pi))
         return sig
 
