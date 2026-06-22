@@ -1528,9 +1528,11 @@ class App:
         cyl_scale = max(0.55, min(1.30, (per_cc / 500.0) ** (1.0 / 3.0)))
         if eng.is_rotary:
             self._draw_rotary(bay, top, bottom)
+            self._draw_bay_induction(bay, eng, sim)
             return
         if getattr(eng, "is_radial", False):
             self._draw_radial(bay, top, bottom)
+            self._draw_bay_induction(bay, eng, sim)
             return
         # Group cylinders by bank so the drawing matches the real layout: an
         # inline engine is one upright row, a V is two angled banks meeting at a
@@ -1561,6 +1563,7 @@ class App:
         # draw it as two side-by-side VR groups — not one strung-out column.
         if left and right and getattr(eng, "is_w", False):
             self._draw_w_banks(bay, sim, eng, left, right, top, bottom)
+            self._draw_bay_induction(bay, eng, sim)
             return
         if left and right:
             cxx = bay.centerx
@@ -1616,6 +1619,7 @@ class App:
                     ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+            self._draw_bay_induction(bay, eng, sim)
             return
 
         # size the cylinder by displacement, then space the stations TIGHTLY
@@ -1659,6 +1663,7 @@ class App:
                 ly = crank_y - math.cos(a) * (length + 14)
                 lab = self.font_small.render(f"{i + 1}", True, DIM)
                 self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+        self._draw_bay_induction(bay, eng, sim)
 
     def _flash_surf(self, radius, glow):
         """A SOFT combustion bloom — a smooth radial gradient (white-hot core ->
@@ -1673,8 +1678,9 @@ class App:
             size = 2 * pad
             yy, xx = np.mgrid[0:size, 0:size]
             d = np.clip(np.sqrt((xx - pad) ** 2 + (yy - pad) ** 2) / (R * 1.75), 0.0, 1.0)
-            stops = [(0.0, (255, 255, 246)), (0.30, (255, 234, 162)),
-                     (0.55, (255, 182, 92)), (0.80, (255, 112, 46)), (1.0, (208, 58, 26))]
+            # vivid, high-saturation fire ramp (white-hot core -> deep red edge)
+            stops = [(0.0, (255, 255, 250)), (0.22, (255, 240, 120)),
+                     (0.45, (255, 170, 30)), (0.70, (255, 80, 12)), (1.0, (220, 24, 8))]
             rgb = np.zeros((size, size, 3), dtype=np.float32)
             for i in range(len(stops) - 1):
                 t0, c0 = stops[i]; t1, c1 = stops[i + 1]
@@ -1682,7 +1688,8 @@ class App:
                 fr = (d[m] - t0) / max(t1 - t0, 1e-6)
                 for ch in range(3):
                     rgb[..., ch][m] = c0[ch] + (c1[ch] - c0[ch]) * fr
-            alpha = np.clip((1.0 - d) ** 2.0, 0.0, 1.0) * (gq / 8.0) * 235.0
+            # brighter & punchier: shallower falloff + higher peak alpha
+            alpha = np.clip((1.0 - d) ** 1.4, 0.0, 1.0) * (gq / 8.0) * 255.0
             arr = np.ascontiguousarray(
                 np.dstack([rgb, alpha]).astype(np.uint8))
             s = pygame.image.frombuffer(arr.tobytes(), (size, size), "RGBA").convert_alpha()
@@ -2095,6 +2102,92 @@ class App:
         if label:
             lab = self.font_small.render(self.tr(txt), True, DIM)
             self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+
+    def _bay_turbo(self, cx, cy, r, spin, load, electric=False):
+        """A detailed turbocharger for the engine bay: brushed-alloy snail volute,
+        a spinning compressor wheel, a discharge snout, a hot-side glow and a
+        chrome centre — lit & brushed for the Apple-grade look."""
+        cx, cy, r = int(cx), int(cy), int(r)
+        sc = self.screen
+        # compressor housing — brushed alloy disc
+        sc.blit(self._grad_surf(2 * r, 2 * r, (152, 158, 172), (68, 74, 88), r, gloss=True),
+                (cx - r, cy - r))
+        sc.blit(self._brushed(2 * r, 2 * r, r), (cx - r, cy - r))
+        pygame.draw.circle(sc, (32, 35, 44), (cx, cy), r, 2)
+        # volute scroll (the snail) — two tapering wrapped arcs
+        for rad, wd, col in ((r * 0.92, 4, (58, 62, 76)), (r * 0.72, 3, (46, 50, 62))):
+            rr = pygame.Rect(cx - int(rad), cy - int(rad), int(2 * rad), int(2 * rad))
+            pygame.draw.arc(sc, col, rr, math.radians(28), math.radians(332), int(wd))
+        # compressor discharge snout (tangent, top-right)
+        sx, sy = cx + int(r * 0.6), cy - int(r * 0.66)
+        pygame.draw.rect(sc, (126, 132, 146), (sx - 5, sy - 6, 15, 13), border_radius=3)
+        pygame.draw.rect(sc, (38, 42, 52), (sx - 5, sy - 6, 15, 13), 1, border_radius=3)
+        # spinning compressor wheel
+        ir = int(r * 0.52)
+        pygame.draw.circle(sc, (20, 22, 28), (cx, cy), ir)
+        hub = max(3, int(r * 0.18))
+        for k in range(11):
+            a = spin + k * (2 * math.pi / 11)
+            x1, y1 = cx + hub * math.cos(a), cy + hub * math.sin(a)
+            x2 = cx + ir * 0.9 * math.cos(a + 0.5)
+            y2 = cy + ir * 0.9 * math.sin(a + 0.5)
+            pygame.draw.line(sc, (188, 194, 208), (x1, y1), (int(x2), int(y2)), 2)
+        if load > 0.02:                               # hot-side glow
+            gs = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+            pygame.draw.circle(gs, (255, 120, 44, int(130 * min(load, 1.0))),
+                               (r, r), int(r * 0.55))
+            sc.blit(gs, (cx - r, cy - r))
+        sc.blit(self._grad_surf(2 * hub, 2 * hub, (226, 232, 242), (110, 118, 132),
+                                hub, gloss=True), (cx - hub, cy - hub))
+        pygame.draw.circle(sc, (60, 64, 74), (cx, cy), hub, 1)
+        if electric:                                  # e-turbo: a blue stator ring
+            pygame.draw.circle(sc, (88, 178, 255), (cx, cy), r + 2, 2)
+
+    def _draw_bay_induction(self, bay, eng, sim):
+        """Draw the forced-induction hardware in the engine bay, placed by type:
+        a turbo in the VALLEY for a hot-V, OUTSIDE the banks for a cold-V, one per
+        bank (twin/quad), a single for an inline, a blower on top for an SC."""
+        ind = eng.induction
+        if ind == "na":
+            return
+        rpm = max(sim.rpm, 1.0)
+        spin = sim.crank_angle * max(sim.forced_induction_rpm() / rpm, 1.0)
+        load = (sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
+        cyl = eng.cylinders
+        has_banks = (any(c.bank_angle_deg < -0.1 for c in cyl)
+                     and any(c.bank_angle_deg > 0.1 for c in cyl))
+        cyv = (bay.y + bay.bottom) // 2
+
+        def lab(text, x, y):
+            t = self.font_small.render(self.tr(text), True, (150, 158, 174))
+            self.screen.blit(t, (int(x - t.get_width() // 2), int(y)))
+
+        if ind in ("roots", "centrifugal"):           # supercharger sits on top
+            self._draw_blower(bay.centerx, bay.y + 46, 24, spin, load,
+                              centri=(ind == "centrifugal"), label=False)
+            lab("supercharger" if ind == "roots" else "centrifugal SC",
+                bay.centerx, bay.y + 72)
+            return
+        hot = getattr(eng, "hot_v", False)
+        etb = getattr(eng, "electric_turbo", False)
+        if getattr(eng, "is_w", False):               # quad-turbo (Veyron W16)
+            for x, y in ((bay.x + 46, cyv - 34), (bay.x + 46, cyv + 34),
+                         (bay.right - 46, cyv - 34), (bay.right - 46, cyv + 34)):
+                self._bay_turbo(x, y, 18, spin, load)
+            lab("quad-turbo", bay.centerx, bay.bottom - 22)
+        elif has_banks:
+            r = 22
+            if hot:                                    # in the valley (centre)
+                for x in (bay.centerx - 36, bay.centerx + 36):
+                    self._bay_turbo(x, cyv, r, spin, load, electric=etb)
+                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 28)
+            else:                                      # outside the banks
+                for x in (bay.x + 48, bay.right - 48):
+                    self._bay_turbo(x, cyv, r, spin, load, electric=etb)
+                lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 28)
+        else:                                          # inline: single turbo, side
+            self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb)
+            lab("single turbo", bay.right - 50, cyv + 30)
 
     def _exhaust_db(self):
         """A rough exhaust-loudness readout from the synth's last output RMS."""
