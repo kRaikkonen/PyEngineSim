@@ -1318,13 +1318,19 @@ class App:
         # Spreading a wide V12 / W16 across the top made the tilted banks shoot
         # off the panel edge; going vertical uses the tall axis for the stations
         # and keeps every cylinder inside the frame.  (Inline = upright row below.)
+        # A W engine is TWO narrow-angle VR units (VR6/VR8) sharing one crank, so
+        # draw it as two side-by-side VR groups — not one strung-out column.
+        if left and right and getattr(eng, "is_w", False):
+            self._draw_w_banks(rect, sim, eng, left, right)
+            fo = "-".join(str(x) for x in eng.firing_order)
+            self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+                             True, ACCENT), (rect.x + 18, rect.bottom - 14))
+            return
         if left and right:
             cxx = rect.centerx
             mtop, mbot = rect.y + 306, rect.bottom - 48
             dy = (mbot - mtop) / ns
-            # V fans each side to one up-angle; a boxer is ~horizontal opposed
-            # (tiny tilt); a W staggers each bank into TWO interleaved rows
-            # (cylinders alternately tilt up / down) for the real \/\/ shape.
+            # V fans each side to one up-angle; a boxer is ~horizontal opposed.
             is_w = getattr(eng, "is_w", False)
             # V tilt: a gentle up-angle from horizontal (W uses real bank angles).
             trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
@@ -1521,6 +1527,56 @@ class App:
                 a = a0 + d * k / samples
                 pts.append((vc[0] + rad * math.cos(a), vc[1] + rad * math.sin(a)))
         return pts
+
+    def _draw_w_banks(self, rect, sim, eng, left, right):
+        """A W engine drawn as its TWO real VR units (VR6/VR8) side by side: each
+        unit is an upright narrow-angle vee with its own vertical crank and two
+        tight sub-banks (the 15-deg VR vee); the two units sit 90 deg apart."""
+        mtop, mbot = rect.y + 322, rect.bottom - 48
+        unit_name = f"VR{len(left)}"
+        for ui, grp in enumerate((left, right)):
+            ux = rect.x + int(rect.width * (0.29 if ui == 0 else 0.71))
+            # split this VR unit into its two sub-banks by bank angle
+            mid = sum(eng.cylinders[i].bank_angle_deg for i in grp) / max(len(grp), 1)
+            subA = [i for i in grp if eng.cylinders[i].bank_angle_deg < mid]
+            subB = [i for i in grp if eng.cylinders[i].bank_angle_deg >= mid]
+            nsu = max(len(subA), len(subB), 1)
+            dy = (mbot - mtop) / nsu
+            tilt = math.radians(20.0)                      # narrow VR vee, fanned L/R
+            width = min(dy * 0.46, 26.0)
+            length = min(dy * 1.5, rect.width * 0.20, 120.0)
+            # vertical crankshaft for this unit (strip-shaded metal)
+            cy0, cy1 = mtop + dy * 0.5 - 12, mtop + dy * (nsu - 0.5) + 12
+            chw = max(width * 0.30, 8.0)
+            for si in range(7):
+                e0 = (si / 7 * 2 - 1) * chw; e1 = ((si + 1) / 7 * 2 - 1) * chw
+                f = 0.40 + 0.66 * (1.0 - abs((si + 0.5) / 7 * 2 - 1))
+                pygame.draw.polygon(self.screen, (min(255, int(70 * f)),
+                                    min(255, int(76 * f)), min(255, int(90 * f))),
+                                    [(ux + e0, cy0), (ux + e0, cy1),
+                                     (ux + e1, cy1), (ux + e1, cy0)])
+            for s in range(nsu):
+                jy = mtop + dy * (s + 0.5)
+                for sub, sgn in ((subA, -1.0), (subB, 1.0)):
+                    if s >= len(sub):
+                        continue
+                    i = sub[s]
+                    cyl = eng.cylinders[i]
+                    phi = sim.cycle_phase_deg(i)
+                    theta = math.radians(phi % 360.0)
+                    frac = sim.piston_fraction(i)
+                    glow = (min(max(sim.cylinder_pressure[i] - 101325.0, 0.0)
+                                / (5.0 * 101325.0), 1.0)
+                            if sim.ignition_on and not sim._fuel_cut and 360 <= phi < 445
+                            else 0.0)
+                    a = sgn * tilt
+                    self._draw_cyl(ux, jy, a, length, width, frac, theta, glow)
+                    lx = ux + math.sin(a) * (length + 14)
+                    ly = jy - math.cos(a) * (length + 14)
+                    lab = self.font_small.render(f"{i + 1}", True, DIM)
+                    self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+            ulab = self.font_small.render(unit_name, True, (150, 158, 172))
+            self.screen.blit(ulab, (ux - ulab.get_width() // 2, mbot + 6))
 
     def _draw_radial(self, rect, top, bottom):
         """Aircraft radial: cylinders arranged in a STAR around a central crank,
