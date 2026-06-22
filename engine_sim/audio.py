@@ -470,6 +470,7 @@ class Synthesizer:
         self._gear_phase = 0.0    # gear-mesh phase for the gear-grain whir
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
         self._gearbox_phase = 0.0 # gearbox whine oscillator phase
+        self._finaldrive_phase = 0.0  # final-drive whine oscillator phase
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
         self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
@@ -1268,17 +1269,26 @@ class Synthesizer:
 
         gv = P["gearbox_vol"]
         dt = sim.drivetrain
-        # Straight-cut gear whine tracks ROAD SPEED (the output-shaft / final-drive
-        # mesh), NOT engine rpm.  So the pitch sweeps continuously low->high as the
-        # car accelerates and does NOT dip on every upshift the way an rpm-tracked
-        # tone wrongly would — that single rising whine is the straight-cut sound.
-        if self.straight_cut and gv > 1e-3 and dt.v > 0.4 and dt.gear > 0:
-            wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
-            f = wheel_rps * dt.final_drive * 9.0             # final-drive mesh ~ speed
-            if 30.0 < f < sr * 0.45:
-                # augmented-triad voicing (root + maj3 + aug5) for the gear whine
-                gw += (gv * 0.4) * self._whine(
-                    f, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
+        # Straight-cut (spur) sequential / dog box: the gears are CONSTANT-MESH and
+        # the input/layshaft pair runs at ENGINE speed and is always loaded, so the
+        # dominant gearbox whine TRACKS ENGINE RPM — it rises through a gear and
+        # DROPS on every upshift (the classic race-box 'weee-WHEE-weee'), with a
+        # slightly different mesh pitch per selected gear.  A much quieter final-
+        # drive / crown-wheel layer tracks ROAD SPEED underneath (the continuous
+        # part).  (The old model used only the road-speed final drive — wrong: it
+        # never dipped on a shift.)
+        if self.straight_cut and gv > 1e-3 and dt.gear > 0 and rpm > 350.0:
+            gmesh = (rpm / 60.0) * 12.0                      # input mesh ~ engine rpm
+            gmesh *= 1.0 + 0.06 * (dt.gear - 1)              # per-gear pitch step
+            if 30.0 < gmesh < sr * 0.45:
+                gw += (gv * 0.42) * self._whine(
+                    gmesh, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
+            if dt.v > 0.4:                                   # quiet final-drive whine
+                wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
+                ff = wheel_rps * dt.final_drive * 9.0
+                if 30.0 < ff < sr * 0.45:
+                    gw += (gv * 0.13) * self._whine(
+                        ff, frames, [(1, 1.0), (2, 0.4)], phase_attr="_finaldrive_phase")
 
         # --- hybrid power unit: MGU-K (motor) + MGU-H (e-turbo) electric whine ---
         hv = P["hybrid_vol"]
@@ -1289,9 +1299,9 @@ class Synthesizer:
             if eng.hybrid_kw > 0.0 and sim.hybrid_on and sim.throttle > 0.02:
                 fm = (rpm / 60.0) * 14.0                  # geared-up motor whine
                 if 60.0 < fm < sr * 0.45:
-                    amp = hv * (0.18 + 0.5 * mgu) * min(sim.throttle, 1.0)
-                    out += amp * self._whine(fm, frames, [(1, 1.0), (2, 0.35),
-                                             (3, 0.18)], phase_attr="_motor_phase")
+                    amp = hv * (0.18 + 0.30 * mgu) * min(sim.throttle, 1.0)
+                    out += amp * self._whine(fm, frames, [(1, 1.0), (2, 0.28)],
+                                             phase_attr="_motor_phase")
             # MGU-H (heat): the motor on the TURBO SHAFT spins it ~125,000 rpm, so
             # the modern-F1 PU has a piercing high electric WHISTLE and near-instant
             # boost (no lag).  On an F1 PU it keeps singing even slightly off the
@@ -1302,12 +1312,14 @@ class Synthesizer:
                     present = max(bfrac, 0.28 * min(rpm / max(eng.redline_rpm, 1.0),
                                                     1.0))
                 if present > 0.02:
-                    fe = (2400.0 + 4200.0 * bfrac) * (1.0 + 0.6 * mgu)
-                    amp = hv * (0.22 + 0.6 * mgu) * present
+                    # lower & capped so the MGU-H whistle is present but not
+                    # ear-piercing; one gentle 2nd harmonic, very little air hiss.
+                    fe = min((1600.0 + 2400.0 * bfrac) * (1.0 + 0.3 * mgu), 5200.0)
+                    amp = hv * (0.20 + 0.38 * mgu) * present
                     out += amp * self._whine(min(fe, sr * 0.45), frames,
-                                             [(1, 1.0), (2, 0.4)],
+                                             [(1, 1.0), (2, 0.28)],
                                              phase_attr="_ecomp_phase")
-                    out += (amp * 0.3) * self._rng.standard_normal(frames)  # air-rush
+                    out += (amp * 0.10) * self._rng.standard_normal(frames)  # air-rush
 
         # pipe-wall thickness: dull the brassy 'trumpet' edge of the whines
         wt = P["wall_thickness"]
