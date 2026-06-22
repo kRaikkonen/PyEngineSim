@@ -1529,10 +1529,14 @@ class App:
         # oil pan etc.; default to the bay centre for layouts that don't set it.
         self._crank_xy = (bay.centerx, (bay.y + bay.bottom) // 2)
         self._crank_h = 30.0
+        self._bay_rect = bay.inflate(40, 40)             # alpha-layer composite region
         self._cur_vt = getattr(eng, "valvetrain", "dohc")   # for per-cylinder cams
+        self._exh_exit = None                            # NA engine's exhaust outlet
         vv = getattr(eng, "variable_valve", "")
-        self._vtec_on = ("VTEC" in vv or "VVTL" in vv) and \
-            sim.rpm > 0.74 * eng.redline_rpm             # VTEC engages high up
+        # VTEC and all its cousins (MIVEC / VVTL-i / Valvematic / AVS / Valvetronic /
+        # VarioCam Plus / Ti-VCT / CVVT / D-VVT ...) switch to the aggressive cam
+        # profile high up — shown as the high-lift cam engaging.
+        self._vtec_on = bool(vv) and sim.rpm > 0.74 * eng.redline_rpm
         self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         cp = getattr(eng, "crank_plane", "")
@@ -1751,9 +1755,13 @@ class App:
             exit_pt = (bay.right - 60, cyv)
             self._draw_exhaust_fork([cA, cB], int(bay.centerx + 30),
                                     exit_pt, hrad + 1, self._EXH_COLS, axis="v")
+            if eng.induction == "na":
+                self._exh_exit = exit_pt
         else:
             self._draw_exhaust_fork(ex_ports, spine_y, (turbo[0], turbo[1]),
                                     hrad, self._EXH_COLS, axis="h")
+            if eng.induction == "na":
+                self._exh_exit = turbo
         if eng.cylinders[0].compression_ratio >= 14.5:    # diesel EGR cooler loop
             scr = self.screen
             egr_y = int(plen_y - 16)
@@ -2266,17 +2274,32 @@ class App:
                 return pl[1]
         return self.screen
 
+    def _get_layer(self, idx):
+        """A CACHED full-window SRCALPHA scratch layer (reused per frame, only the
+        bay region cleared) — avoids re-allocating big surfaces every frame, which
+        was holding the GIL long enough to glitch the audio at high rpm."""
+        cache = getattr(self, "_alpha_cache", None)
+        if cache is None:
+            cache = self._alpha_cache = {}
+        sz = self.screen.get_size()
+        s = cache.get(idx)
+        if s is None or s.get_size() != sz:
+            s = cache[idx] = pygame.Surface(sz, pygame.SRCALPHA)
+        br = getattr(self, "_bay_rect", None)
+        s.fill((0, 0, 0, 0), br)
+        return s
+
     def _begin_pipe_layers(self):
-        real = self.screen
-        self._pl_real = real
-        self._pipe_layers = (pygame.Surface(real.get_size(), pygame.SRCALPHA),
-                             pygame.Surface(real.get_size(), pygame.SRCALPHA))
+        self._pl_real = self.screen
+        self._pipe_layers = (self._get_layer(0), self._get_layer(1))
 
     def _end_pipe_layers(self):
         g, r = self._pipe_layers
         self._pipe_layers = None
-        r.set_alpha(204); self._pl_real.blit(r, (0, 0))   # red 80% opacity
-        g.set_alpha(204); self._pl_real.blit(g, (0, 0))   # green 80% opacity
+        br = getattr(self, "_bay_rect", None)
+        dst = br.topleft if br else (0, 0)
+        r.set_alpha(204); self._pl_real.blit(r, dst, br)   # red 80% opacity
+        g.set_alpha(204); self._pl_real.blit(g, dst, br)   # green 80% opacity
 
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
         """A manifold runner from a head port (p0) bending through ctrl into the
@@ -2496,15 +2519,29 @@ class App:
             # bank (never crossing the cylinders), then on to the outboard turbo if
             # there is one; intake is two valley arms (below).
             turbo = (eng.induction == "turbo")
+            aircraft = getattr(eng, "gearbox_type", "") == "aircraft"
             for ports_t, sgn in ((Lout, -1), (Rout, 1)):
                 if not ports_t:
                     continue
                 pts = [(p[0], p[1]) for p in ports_t]
                 ex_x = (min if sgn < 0 else max)(p[0] for p in pts)
-                spine_x = int(ex_x + sgn * 16)
-                handle = ((bay.x + 48 if sgn < 0 else bay.right - 48), cyv) \
-                    if turbo else (spine_x, cyv)
-                self._draw_exhaust_fork(pts, spine_x, handle, hrad, self._EXH_COLS)
+                if aircraft:
+                    # literal STUB-TO-RAIL (like the radial ring): a straight short
+                    # collector rail hugging the bank + one short stub per head, the
+                    # gas dumped overboard at the rail's aft end.
+                    rail_x = int(ex_x + sgn * 9)
+                    ys = [int(p[1]) for p in pts]
+                    self._draw_ortho_pipe([(rail_x, min(ys) - 4), (rail_x, max(ys) + 6)],
+                                          hrad + 1, self._EXH_COLS)
+                    for px, py in pts:
+                        self._draw_ortho_pipe([(int(px), int(py)), (rail_x, int(py))],
+                                              hrad, self._EXH_COLS, joint=True)
+                    self._collector_slug((rail_x, max(ys) + 6), hrad)
+                else:
+                    spine_x = int(ex_x + sgn * 16)
+                    handle = ((bay.x + 48 if sgn < 0 else bay.right - 48), cyv) \
+                        if turbo else (spine_x, cyv)
+                    self._draw_exhaust_fork(pts, spine_x, handle, hrad, self._EXH_COLS)
             # INTAKE: a valley plenum log at the top feeding N SEPARATE thin runners
             # — one per cylinder — so the per-cylinder distribution reads clearly
             # (the plenum stays high in the open part of the vee; runners are thin).
@@ -3037,6 +3074,14 @@ class App:
             sc.blit(self._grad_surf(r.w, r.h, (96, 130, 170), (40, 62, 92), 4), r.topleft)
             pygame.draw.rect(sc, (30, 44, 60), r, 1, border_radius=4)
             pygame.draw.rect(sc, (150, 200, 240), (cx - 4, r.y - 3, 8, 4), border_radius=1)
+        elif kind == "res":                              # mid resonator (small chamber)
+            r = pygame.Rect(cx - 13, cy - 6, 26, 12)
+            sc.blit(self._grad_surf(r.w, r.h, (124, 130, 144), (58, 64, 78), 6), r.topleft)
+            pygame.draw.rect(sc, (146, 152, 166), r, 1, border_radius=6)
+        elif kind == "tail":                             # rear exhaust tip
+            pygame.draw.rect(sc, (60, 64, 76), (cx - 4, cy - 5, 14, 10), border_radius=2)
+            pygame.draw.circle(sc, (18, 20, 26), (cx + 9, cy), 4)
+            pygame.draw.circle(sc, (120, 126, 140), (cx + 9, cy), 4, 1)
         elif kind == "muf":                              # muffler / megaphone canister
             r = pygame.Rect(cx - 18, cy - 7, 36, 14)
             sc.blit(self._grad_surf(r.w, r.h, (130, 136, 150), (62, 68, 82), 7), r.topleft)
@@ -3073,7 +3118,7 @@ class App:
             top_y = bay.bottom - 72 - h
         if top_y < cy + 4:
             return
-        sc = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)   # 75% layer
+        sc = self._get_layer(2)                       # 75% layer (cached)
         cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
         pts = [(cxp - wt // 2, top_y), (cxp + wt // 2, top_y),
                (cxp + wb // 2, top_y + h), (cxp - wb // 2, top_y + h)]
@@ -3088,7 +3133,8 @@ class App:
         pygame.draw.circle(sc, (120, 126, 140), (cxp, top_y + h), 3)   # drain plug
         pygame.draw.circle(sc, (40, 44, 54), (cxp, top_y + h), 3, 1)
         sc.set_alpha(191)                             # ~75% opacity
-        self.screen.blit(sc, (0, 0))
+        br = getattr(self, "_bay_rect", None)
+        self.screen.blit(sc, br.topleft if br else (0, 0), br)
 
     def _bay_ancillaries(self, bay, eng, throttle=0.0):
         """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
@@ -3101,10 +3147,11 @@ class App:
             items = [("throttle body", "tb"), ("intercooler", "ic")]
             if eng.induction != "na":
                 items += [("wastegate", "wg"), ("blow-off", "bov")]
-        elif eng.induction == "na":                      # NA road/race: -> muffler
+        elif eng.induction == "na":                      # NA road: full exhaust line
             items = [("throttle body", "tb")]
             if eng.has_cat:
-                items += [("catalytic", "cat"), ("muffler", "muf")]
+                items += [("catalytic", "cat"), ("resonator", "res"),
+                          ("muffler", "muf"), ("tailpipe", "tail")]
             else:
                 items.append(("megaphone", "muf"))       # open race exhaust
         elif diesel:                                     # diesel after-treatment train
@@ -3143,6 +3190,17 @@ class App:
             for tx, ty, tr in tps:
                 self._draw_ortho_pipe([(int(tx), int(ty + tr)), (int(tx), y - 12),
                                        (catx, y - 12), (catx, y - 8)], 3, self._EXH_COLS)
+        # NA exhaust line: engine outlet -> cat -> resonator -> muffler -> tailpipe
+        if catx is not None and getattr(self, "_exh_exit", None) is not None:
+            kx = {}
+            for i, (n, k) in enumerate(items):
+                kx.setdefault(k, xs[i])
+            ex = self._exh_exit
+            self._draw_ortho_pipe([(int(ex[0]), int(ex[1])), (int(ex[0]), y - 12),
+                                   (catx, y - 12), (catx, y - 6)], 3, self._EXH_COLS)
+            seq = [k for k in ("cat", "res", "muf", "tail") if k in kx]
+            for a, b in zip(seq, seq[1:]):
+                self._draw_ortho_pipe([(kx[a], y), (kx[b], y)], 2, self._EXH_COLS)
         self._end_pipe_layers()
         for i, (name, kind) in enumerate(items):
             cx = xs[i]
@@ -3255,7 +3313,7 @@ class App:
         # cool-air ducts from the filter down to each turbo's compressor inlet,
         # drawn onto a temp layer at ~35% opacity (semi-transparent blue)
         real = self.screen
-        ds = pygame.Surface(real.get_size(), pygame.SRCALPHA)
+        ds = self._get_layer(3)
         self.screen = ds
         if tps:                                       # turbo: filter -> compressors
             for tx, ty, tr in tps:
@@ -3270,7 +3328,8 @@ class App:
             pygame.draw.circle(ds, cool[1], (int(intake_x), int(row_y) - 9), 3)
         self.screen = real
         ds.set_alpha(89)
-        real.blit(ds, (0, 0))
+        br = getattr(self, "_bay_rect", None)
+        real.blit(ds, br.topleft if br else (0, 0), br)
 
     def _forced_drive(self, eng, sim):
         """(spin, load) for the forced-induction hardware — shaft spin scaled by

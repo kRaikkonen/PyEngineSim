@@ -1235,7 +1235,15 @@ class Synthesizer:
                                   / (self.sample_rate / 2), btype="low")
                 self._aa_zi = np.zeros(2)
             sig, self._aa_zi = lfilter(self._aa[0], self._aa[1], sig, zi=self._aa_zi)
-        out = np.tanh(sig * (self.volume * self.params["master"] * 1.5)).astype(np.float32)
+        # soft peak limiter BEFORE the tanh: a slow peak-follower pulls sustained
+        # over-level back so high-rpm crests stay in tanh's musical range instead
+        # of crushing into harsh 'clipping' breakup (F1 / high-revvers).
+        x = sig * (self.volume * self.params["master"] * 1.5)
+        pk = float(np.max(np.abs(x))) + 1e-9
+        self._lim = max(pk, getattr(self, "_lim", pk) * 0.992)
+        if self._lim > 1.0:
+            x = x * (1.0 / self._lim)
+        out = np.tanh(x).astype(np.float32)
         # exhaust loudness meter (RMS of the final output) for the HUD readout
         self.last_level = float(np.sqrt(np.mean(out * out))) if frames else 0.0
         # keep a decimated copy of the waveform for the HUD exhaust-flow scope
