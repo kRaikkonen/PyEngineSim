@@ -116,7 +116,11 @@ class Simulator:
                 self.boost += (target - self.boost) * rate
                 return
             spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
-            target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0)
+            # A turbo spools on EXHAUST MASS-FLOW, which is high only under LOAD.
+            # Free-revving in neutral makes little boost (so the car doesn't just
+            # surge to the limiter the instant you blip it); in gear it spools fully.
+            load_gate = 1.0 if self.drivetrain.gear > 0 else 0.3
+            target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0) * load_gate
             tau = eng.turbo_lag if target > self.boost else 0.18
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate

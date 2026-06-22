@@ -2292,6 +2292,173 @@ def ariel_atom_v8() -> Engine:
                 gearbox_type="single")
 
 
+def ferrari_250_california() -> Engine:
+    """Ferrari 250 California — Colombo 3.0 60-deg V12 — a mellow, warm, vintage wail."""
+    return _vee("Ferrari 250 California Colombo 3.0 V12", 12, 73.0, 58.8, 130.0, 9.0,
+                30.0, _FO_V12, flywheel_inertia=0.3, redline_rpm=7000, idle_rpm=750,
+                heat_release_k=2.6, ve_width_frac=0.66, closed_map_fraction=0.16,
+                exhaust_tone=80.0, exhaust_primary_m=0.55, exhaust_total_m=2.0,
+                exhaust_radius_m=0.025, exhaust_channels=2, exhaust_openness=0.82,
+                muffler_volume_m3=0.0022, gear_grain=0.2,
+                gear_ratios=[3.14, 2.1, 1.55, 1.18, 0.9], final_drive=3.44,
+                vehicle_mass=1100.0, wheel_radius=0.34, clutch_capacity=400.0,
+                gearbox_type="manual")
+
+
+def ferrari_488_gtb() -> Engine:
+    """Ferrari 488 GTB — F154CB 3.9 twin-turbo flat-plane V8 — the modern turbo scream."""
+    return _vee("Ferrari 488 GTB F154 3.9TT V8", 8, 86.5, 83.0, 152.0, 9.4, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.2, redline_rpm=8000, idle_rpm=850,
+                heat_release_k=3.2, ve_peak_frac=0.7, ve_width_frac=0.62,
+                closed_map_fraction=0.14, exhaust_tone=108.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.9, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.78, muffler_volume_m3=0.0016, induction="turbo",
+                boost_bar=1.2, turbo_lag=0.25, wall_material="titanium", gear_grain=0.35,
+                gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.7,
+                vehicle_mass=1475.0, wheel_radius=0.34, clutch_capacity=700.0,
+                gearbox_type="dct")
+
+
+def ferrari_488_pista() -> Engine:
+    """Ferrari 488 Pista — F154 twin-turbo V8, the track-sharpened, more-open 488."""
+    return _vee("Ferrari 488 Pista F154 3.9TT V8", 8, 86.5, 83.0, 152.0, 9.45, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=850,
+                heat_release_k=3.3, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.13, exhaust_tone=112.0, exhaust_primary_m=0.48,
+                exhaust_total_m=1.8, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.86, muffler_volume_m3=0.0012, induction="turbo",
+                boost_bar=1.3, turbo_lag=0.22, wall_material="titanium", gear_grain=0.38,
+                gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.7,
+                vehicle_mass=1385.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="dct")
+
+
+def ferrari_f50_gt() -> Engine:
+    """Ferrari F50 GT — F130 4.7 NA V12 race — a raw, 10,000-rpm race scream."""
+    return _vee("Ferrari F50 GT F130B 4.7 V12", 12, 85.0, 69.0, 140.0, 12.1, 32.5, _FO_V12,
+                flywheel_inertia=0.18, redline_rpm=10000, idle_rpm=1000,
+                heat_release_k=3.7, ve_peak_frac=0.78, ve_width_frac=0.58,
+                closed_map_fraction=0.11, exhaust_tone=140.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.5, exhaust_radius_m=0.019, exhaust_channels=2,
+                exhaust_openness=0.97, muffler_volume_m3=0.0007, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.4,
+                gear_ratios=[2.9, 2.05, 1.6, 1.3, 1.08, 0.9], final_drive=3.5,
+                vehicle_mass=1000.0, wheel_radius=0.33, clutch_capacity=720.0,
+                gearbox_type="single")
+
+
+def ferrari_fxxk() -> Engine:
+    """Ferrari FXX-K — F140 6.3 V12 hybrid track car — the F140 scream + ERS shove."""
+    return _vee("Ferrari FXX-K F140 6.3 V12 hybrid", 12, 94.0, 75.2, 147.0, 13.5, 32.5, _FO_V12,
+                flywheel_inertia=0.24, redline_rpm=9200, idle_rpm=950,
+                heat_release_k=3.7, ve_peak_frac=0.76, ve_width_frac=0.6,
+                closed_map_fraction=0.12, exhaust_tone=112.0, exhaust_primary_m=0.55,
+                exhaust_total_m=1.7, exhaust_radius_m=0.021, exhaust_channels=2,
+                exhaust_openness=0.94, muffler_volume_m3=0.0009, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.45,
+                hybrid_kw=140.0, hybrid_base_rpm=3000.0,
+                gear_ratios=[3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69], final_drive=3.7,
+                vehicle_mass=1255.0, wheel_radius=0.34, clutch_capacity=760.0,
+                gearbox_type="dct")
+
+
+def mclaren_senna() -> Engine:
+    """McLaren Senna — M840TR 4.0 twin-turbo flat-plane V8 — hard, clinical, brutal."""
+    return _vee("McLaren Senna M840TR 4.0TT V8", 8, 93.0, 73.5, 150.0, 9.4, 45.0, _FO_V8_FLAT,
+                flywheel_inertia=0.18, redline_rpm=8200, idle_rpm=850,
+                heat_release_k=3.3, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.13, exhaust_tone=110.0, exhaust_primary_m=0.45,
+                exhaust_total_m=1.6, exhaust_radius_m=0.022, exhaust_channels=2,
+                exhaust_openness=0.84, muffler_volume_m3=0.0011, induction="turbo",
+                boost_bar=1.35, turbo_lag=0.22, wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[3.0, 2.19, 1.69, 1.37, 1.14, 0.95, 0.79], final_drive=3.31,
+                vehicle_mass=1300.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="dct")
+
+
+def lamborghini_countach_qv() -> Engine:
+    """Lamborghini Countach LP5000 QV — 5.2 60-deg V12 — raw, hard, analog 80s V12."""
+    return _vee("Lamborghini Countach LP5000 QV 5.2 V12", 12, 85.5, 75.0, 142.0, 9.5,
+                30.0, _FO_V12, flywheel_inertia=0.32, redline_rpm=7200, idle_rpm=900,
+                heat_release_k=3.5, ve_width_frac=0.62, closed_map_fraction=0.12,
+                exhaust_tone=70.0, exhaust_primary_m=0.56, exhaust_total_m=2.0,
+                exhaust_radius_m=0.028, exhaust_channels=2, exhaust_openness=0.84,
+                muffler_volume_m3=0.0016, backpressure_coupling=0.7, gear_grain=0.2,
+                gear_ratios=[2.99, 2.04, 1.43, 1.0, 0.78], final_drive=4.09,
+                vehicle_mass=1490.0, wheel_radius=0.34, clutch_capacity=560.0,
+                gearbox_type="manual")
+
+
+def aston_valkyrie_v12() -> Engine:
+    """Aston Martin Valkyrie — Cosworth 6.5 NA V12 to 11,100 rpm — the ultimate scream."""
+    return _vee("Aston Martin Valkyrie Cosworth 6.5 V12", 12, 89.0, 87.0, 150.0, 11.5,
+                32.5, _FO_V12, flywheel_inertia=0.16, redline_rpm=11100, idle_rpm=1000,
+                heat_release_k=3.7, ve_peak_frac=0.8, ve_width_frac=0.58,
+                closed_map_fraction=0.11, exhaust_tone=150.0, exhaust_primary_m=0.42,
+                exhaust_total_m=1.4, exhaust_radius_m=0.018, exhaust_channels=2,
+                exhaust_openness=0.98, muffler_volume_m3=0.0006, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.45,
+                gear_ratios=[2.9, 2.1, 1.65, 1.35, 1.12, 0.95, 0.8], final_drive=3.4,
+                vehicle_mass=1030.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="single")
+
+
+def aston_valhalla_v8() -> Engine:
+    """Aston Martin Valhalla — AMG M178 4.0 twin-turbo flat-plane V8 hybrid."""
+    return _vee("Aston Martin Valhalla M178 4.0TT V8 hybrid", 8, 83.0, 92.0, 150.0, 8.6,
+                45.0, _FO_V8_FLAT, flywheel_inertia=0.2, redline_rpm=7200, idle_rpm=820,
+                heat_release_k=3.0, ve_width_frac=0.66, closed_map_fraction=0.16,
+                exhaust_tone=96.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.72,
+                muffler_volume_m3=0.0018, induction="turbo", boost_bar=1.3,
+                turbo_lag=0.25, hybrid_kw=150.0, hybrid_base_rpm=2800.0, gear_grain=0.2,
+                gear_ratios=[3.0, 2.19, 1.69, 1.37, 1.14, 0.95, 0.79], final_drive=3.31,
+                vehicle_mass=1550.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="dct")
+
+
+def aston_vulcan_v12() -> Engine:
+    """Aston Martin Vulcan — 7.0 NA V12 track car — a deep, raw, race V12 roar."""
+    return _vee("Aston Martin Vulcan 7.0 V12", 12, 100.0, 74.5, 150.0, 11.0, 30.0, _FO_V12,
+                flywheel_inertia=0.26, redline_rpm=7750, idle_rpm=900,
+                heat_release_k=3.6, ve_peak_frac=0.72, ve_width_frac=0.62,
+                closed_map_fraction=0.12, exhaust_tone=86.0, exhaust_primary_m=0.55,
+                exhaust_total_m=1.8, exhaust_radius_m=0.023, exhaust_channels=2,
+                exhaust_openness=0.93, muffler_volume_m3=0.0012, has_cat=False,
+                straight_cut=True, gear_grain=0.35,
+                gear_ratios=[2.9, 2.05, 1.6, 1.3, 1.08, 0.9], final_drive=3.6,
+                vehicle_mass=1350.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="single")
+
+
+def mercedes_clk_gtr() -> Engine:
+    """Mercedes-Benz CLK GTR — M120 6.0 60-deg V12 GT1 race — open, raw, race wail."""
+    return _vee("Mercedes-Benz CLK GTR M120 6.0 V12", 12, 89.0, 80.2, 147.0, 10.5, 30.0,
+                _FO_V12, flywheel_inertia=0.26, redline_rpm=7500, idle_rpm=950,
+                heat_release_k=3.6, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.12, exhaust_tone=98.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.6, exhaust_radius_m=0.023, exhaust_channels=2,
+                exhaust_openness=0.92, muffler_volume_m3=0.001, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.32,
+                gear_ratios=[2.6, 1.9, 1.5, 1.25, 1.05, 0.88], final_drive=3.5,
+                vehicle_mass=1440.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="single")
+
+
+def ford_gt40_mk2() -> Engine:
+    """Ford GT40 MK2 — 427 (7.0) NA OHV cross-plane V8 — the Le Mans American thunder."""
+    return _vee("Ford GT40 MK2 427 7.0 V8", 8, 107.4, 96.0, 160.0, 10.5, 45.0, _FO_V8_X,
+                flywheel_inertia=0.34, redline_rpm=6500, idle_rpm=750,
+                heat_release_k=3.5, ve_width_frac=0.66, closed_map_fraction=0.12,
+                exhaust_tone=60.0, exhaust_primary_m=0.55, exhaust_total_m=1.7,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.92,
+                muffler_volume_m3=0.001, valvetrain="ohv", valves_per_cyl=2,
+                has_cat=False, straight_cut=True,
+                gear_ratios=[2.36, 1.62, 1.27, 1.0], final_drive=3.09,
+                vehicle_mass=1180.0, wheel_radius=0.33, clutch_capacity=680.0,
+                gearbox_type="manual")
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -2387,6 +2554,18 @@ PRESETS = [
     ("zondar", "Pagani Zonda R M120 V12", pagani_zonda_r),
     ("one1", "Koenigsegg One:1 V8", koenigsegg_one1_v8),
     ("atomv8", "Ariel Atom V8 10500rpm", ariel_atom_v8),
+    ("250cal", "Ferrari 250 California V12", ferrari_250_california),
+    ("488", "Ferrari 488 GTB F154 V8", ferrari_488_gtb),
+    ("pista", "Ferrari 488 Pista V8", ferrari_488_pista),
+    ("f50gt", "Ferrari F50 GT F130 V12", ferrari_f50_gt),
+    ("fxxk", "Ferrari FXX-K V12 hybrid", ferrari_fxxk),
+    ("senna", "McLaren Senna M840 V8", mclaren_senna),
+    ("countach", "Countach LP5000 QV V12", lamborghini_countach_qv),
+    ("valk", "Aston Valkyrie 11100rpm V12", aston_valkyrie_v12),
+    ("valhalla", "Aston Valhalla M178 V8", aston_valhalla_v8),
+    ("vulcan", "Aston Vulcan 7.0 V12", aston_vulcan_v12),
+    ("clkgtr", "Mercedes CLK GTR V12", mercedes_clk_gtr),
+    ("gt40", "Ford GT40 MK2 427 V8", ford_gt40_mk2),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
