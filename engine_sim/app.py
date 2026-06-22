@@ -3045,6 +3045,41 @@ class App:
             self._draw_ancillary(cx, y, kind, throttle)
             t = self.font_small.render(self.tr(name), True, (140, 148, 164))
             self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
+        self._draw_front_intake(bay, eng)            # cold-air front-end of the chain
+
+    # cool pre-turbo intake air (light blue) — (casing, body, sheen)
+    _COOL_COLS = ((18, 46, 64), (64, 134, 176), (150, 205, 235))
+
+    def _draw_front_intake(self, bay, eng):
+        """The cold-air FRONT of the charge path: a body scoop -> air filter ->
+        light-blue ducts feeding each turbo's compressor inlet (so the chain reads
+        scoop -> filter -> compressor -> intercooler -> throttle -> manifold)."""
+        tps = getattr(self, "_turbo_pts", [])
+        if not tps:
+            return
+        sc = self.screen
+        cool = self._COOL_COLS
+        afx = bay.x + 96
+        afy = bay.y + 26
+        # body intake scoop at the bay's top edge
+        pygame.draw.polygon(sc, (58, 64, 78), [(afx - 11, bay.y + 5), (afx + 11, bay.y + 5),
+                                               (afx + 6, afy - 7), (afx - 6, afy - 7)])
+        pygame.draw.polygon(sc, (28, 31, 40), [(afx - 11, bay.y + 5), (afx + 11, bay.y + 5),
+                                               (afx + 6, afy - 7), (afx - 6, afy - 7)], 1)
+        # air-filter element (ribbed cylinder)
+        af = pygame.Rect(afx - 17, afy - 7, 34, 15)
+        sc.blit(self._grad_surf(af.w, af.h, (150, 156, 170), (70, 76, 90), 7), af.topleft)
+        for fx in range(af.x + 3, af.right - 2, 3):
+            pygame.draw.line(sc, (60, 66, 80), (fx, af.y + 2), (fx, af.bottom - 2), 1)
+        pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
+        lab = self.font_small.render(self.tr("air filter"), True, (120, 168, 196))
+        sc.blit(lab, (af.centerx - lab.get_width() // 2, af.bottom))
+        # cool-air ducts from the filter down to each turbo's compressor inlet
+        for tx, ty, tr in tps:
+            inx = int(tx - tr - 4) if tx > bay.centerx else int(tx + tr + 4)
+            self._draw_ortho_pipe([(af.centerx, af.bottom + 1), (af.centerx, int(ty)),
+                                   (inx, int(ty))], 3, cool)
+            pygame.draw.circle(sc, cool[1], (inx, int(ty)), 3)
 
     def _forced_drive(self, eng, sim):
         """(spin, load) for the forced-induction hardware — shaft spin scaled by
