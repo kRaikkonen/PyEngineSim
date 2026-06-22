@@ -469,8 +469,11 @@ class Synthesizer:
         self._cold = 1.0          # cold-start factor (1 cold .. 0 warmed up)
         self._gear_phase = 0.0    # gear-mesh phase for the gear-grain whir
         self._whine_phase = 0.0   # blower / turbo whistle oscillator phase
-        self._gearbox_phase = 0.0 # gearbox whine oscillator phase
-        self._finaldrive_phase = 0.0  # final-drive whine oscillator phase
+        self._gearbox_phase = 0.0 # gearbox whine: selected (loaded) gear mesh
+        self._gwinput_phase = 0.0 # gearbox whine: primary/input constant mesh
+        self._gwa_phase = 0.0     # gearbox whine: a quieter unselected gear mesh
+        self._gwb_phase = 0.0     # gearbox whine: another unselected gear mesh
+        self._finaldrive_phase = 0.0  # final-drive / crown-wheel whine
         self._flutter_phase = 0.0 # compressor-surge flutter oscillator phase
         self._motor_phase = 0.0   # hybrid electric-motor whine oscillator phase
         self._ecomp_phase = 0.0   # e-compressor (e-turbo) whine oscillator phase
@@ -1278,12 +1281,36 @@ class Synthesizer:
         # part).  (The old model used only the road-speed final drive — wrong: it
         # never dipped on a shift.)
         if self.straight_cut and gv > 1e-3 and dt.gear > 0 and rpm > 350.0:
-            gmesh = (rpm / 60.0) * 12.0                      # input mesh ~ engine rpm
-            gmesh *= 1.0 + 0.06 * (dt.gear - 1)              # per-gear pitch step
-            if 30.0 < gmesh < sr * 0.45:
-                gw += (gv * 0.42) * self._whine(
-                    gmesh, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
-            if dt.v > 0.4:                                   # quiet final-drive whine
+            erps = rpm / 60.0
+            ng = dt.num_gears
+
+            def gear_mesh_hz(g):
+                return erps * (11.0 + 1.5 * (g - 1))   # each gear: own tooth count
+
+            # (1) primary / input constant mesh — same pitch in every gear, two
+            # strong harmonics (a buzzy, tooth-impact tone, not a pure sine).
+            f_in = erps * 8.5
+            if 30.0 < f_in < sr * 0.45:
+                gw += (gv * 0.22) * self._whine(
+                    f_in, frames, [(1, 1.0), (2, 0.55), (3, 0.28)],
+                    phase_attr="_gwinput_phase")
+            # (2) the SELECTED (loaded) gear's output mesh — the loudest layer, a
+            # distinct pitch per gear (so it steps when you shift).
+            f_sel = gear_mesh_hz(dt.gear)
+            if 30.0 < f_sel < sr * 0.45:
+                gw += (gv * 0.40) * self._whine(
+                    f_sel, frames, list(_AUG_TRIAD), phase_attr="_gearbox_phase")
+            # (3) the OTHER constant-mesh gears keep spinning unloaded -> a quiet
+            # shimmer chorus of extra pitches underneath (use the neighbours).
+            for off, ph in ((-1, "_gwa_phase"), (2, "_gwb_phase")):
+                g2 = dt.gear + off
+                if 1 <= g2 <= ng:
+                    f2 = gear_mesh_hz(g2)
+                    if 30.0 < f2 < sr * 0.45:
+                        gw += (gv * 0.07) * self._whine(
+                            f2, frames, [(1, 1.0), (2, 0.3)], phase_attr=ph)
+            # (4) final-drive / crown-wheel whine — tracks ROAD speed (continuous).
+            if dt.v > 0.4:
                 wheel_rps = dt.v / (2.0 * math.pi * max(dt.wheel_radius, 0.05))
                 ff = wheel_rps * dt.final_drive * 9.0
                 if 30.0 < ff < sr * 0.45:
