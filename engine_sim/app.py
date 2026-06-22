@@ -135,6 +135,7 @@ TR_ZH = {
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
     "Scope": "波形",
+    "ENGINE BAY": "发动机舱",
     "ENGINE ANALYZER": "发动机分析仪",
     "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
     "WAVEFORM · master audio output": "WAVEFORM · 主音频输出波形",
@@ -269,6 +270,7 @@ class App:
         self._disp_torque = 0.0   # smoothed output torque for the gauges
         self._chip_rects = {}     # preset selector hit-boxes, keyed by preset key
         self.mixer_open = False   # audio console overlay (press C)
+        self.speed_mph = False    # show speed in mph (else km/h)
         self.scope_open = False   # exhaust-path per-stage waveform overlay (press E)
         self.scope_mode = "flow"  # "flow" (exhaust gas) | "audio" (listener chain)
         self._scope_toggle_rect = None
@@ -309,6 +311,9 @@ class App:
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
              lambda: sy.pops_on, 1),
+            ("mph" if self.speed_mph else "km/h",
+             lambda: setattr(self, "speed_mph", not self.speed_mph),
+             lambda: self.speed_mph, 1),
             ("Language", self.toggle_lang, None, 1, ((255, 120, 180), (224, 78, 146))),
             # row 2 — output / device / view
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
@@ -631,6 +636,12 @@ class App:
             self.font = self._eng_font(18)
             self.font_big = self._eng_font(42, bold=True)
             self.font_small = self._eng_font(14)
+
+    def _speed_disp(self, kmh):
+        """(value, unit-label) for the current speed unit (km/h or mph)."""
+        if self.speed_mph:
+            return kmh * 0.621371, "mph"
+        return kmh, "km/h"
 
     def tr(self, s):
         """Translate a UI string for the current language."""
@@ -1408,14 +1419,20 @@ class App:
             self.screen.blit(self.font_small.render(self._status, True, ACCENT),
                              (rect.x + 26, by + 18))
 
-        # Layout: one column per cylinder (or per rotor for a Wankel).
-        top = rect.y + 92
-        bottom = rect.bottom - 40
+        # --- ENGINE BAY: a recessed rounded-rect that frames the whole engine,
+        # whatever its layout (inline / V / W / boxer / rotary / radial) ---------
+        bay = pygame.Rect(rect.x + 14, ty + 198, rect.width - 28,
+                          rect.bottom - 14 - (ty + 198))
+        self._recess(bay, 12, fill=(19, 21, 26))
+        self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
+                                                (84, 90, 104)), (bay.x + 12, bay.y + 6))
+        top = bay.y + 26
+        bottom = bay.bottom - 24
         if eng.is_rotary:
-            self._draw_rotary(rect, top, bottom)
+            self._draw_rotary(bay, top, bottom)
             return
         if getattr(eng, "is_radial", False):
-            self._draw_radial(rect, top, bottom)
+            self._draw_radial(bay, top, bottom)
             return
         # Group cylinders by bank so the drawing matches the real layout: an
         # inline engine is one upright row, a V is two angled banks meeting at a
@@ -1445,21 +1462,19 @@ class App:
         # A W engine is TWO narrow-angle VR units (VR6/VR8) sharing one crank, so
         # draw it as two side-by-side VR groups — not one strung-out column.
         if left and right and getattr(eng, "is_w", False):
-            self._draw_w_banks(rect, sim, eng, left, right)
-            fo = "-".join(str(x) for x in eng.firing_order)
-            self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
-                             True, ACCENT), (rect.x + 18, rect.bottom - 14))
+            self._draw_w_banks(bay, sim, eng, left, right, top, bottom)
+            self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
             return
         if left and right:
-            cxx = rect.centerx
-            mtop, mbot = rect.y + 306, rect.bottom - 48
+            cxx = bay.centerx
+            mtop, mbot = top, bottom
             dy = (mbot - mtop) / ns
             # V fans each side to one up-angle; a boxer is ~horizontal opposed.
             is_w = getattr(eng, "is_w", False)
             # V tilt: a gentle up-angle from horizontal (W uses real bank angles).
             trad = math.radians(max(4.0, min(22.0, (90.0 - maxang) * 0.30)))
             width = min(dy * (0.46 if is_w else 0.60), 38.0)
-            length = min((rect.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
+            length = min((bay.width * 0.5 - 40.0) / max(math.cos(trad), 0.4),
                          dy * (1.55 if is_w else 2.7), 172.0)
             # vertical metallic crankshaft behind every journal (strip-shaded)
             cy0, cy1 = mtop + dy * 0.5 - 14, mtop + dy * (ns - 0.5) + 14
@@ -1498,21 +1513,19 @@ class App:
                     ly = jy - math.cos(a) * (length + 16)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
-            fo = "-".join(str(x) for x in eng.firing_order)
-            self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
-                             True, ACCENT), (rect.x + 18, rect.bottom - 14))
+            self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
             return
 
-        sw = rect.width / ns
+        sw = bay.width / ns
         crank_y = bottom - 30 - (bottom - top - 70) * min(maxang / 90.0, 1.0) * 0.5
         # cap the length so a tilted bank's HORIZONTAL reach never runs into the
-        # neighbouring station or off the panel (matters most for wide V / boxer).
+        # neighbouring station or off the bay (matters most for wide V / boxer).
         sinmax = math.sin(math.radians(maxang))
         length = min((crank_y - top) * 0.9, sw * 0.95, 0.46 * sw / max(sinmax, 0.34))
         width = min(sw * 0.32, 40)
         # metallic crankshaft running behind every journal (round strip-shaded)
-        cx0 = rect.x + sw * 0.5 - 16
-        cx1 = rect.x + sw * (ns - 0.5) + 16
+        cx0 = bay.x + sw * 0.5 - 16
+        cx1 = bay.x + sw * (ns - 0.5) + 16
         chh = max(width * 0.30, 9.0)
         for si in range(7):
             e0 = (si / 7 * 2 - 1) * chh; e1 = ((si + 1) / 7 * 2 - 1) * chh
@@ -1524,7 +1537,7 @@ class App:
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y - chh), (cx1, crank_y - chh))
         pygame.draw.line(self.screen, (24, 26, 32), (cx0, crank_y + chh), (cx1, crank_y + chh))
         for s, st in enumerate(stations):
-            jx = rect.x + sw * (s + 0.5)
+            jx = bay.x + sw * (s + 0.5)
             for i in st:
                 cyl = eng.cylinders[i]
                 a = math.radians(cyl.bank_angle_deg)
@@ -1542,9 +1555,7 @@ class App:
                 self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
 
         # firing order (derived from the cycle offsets, so it's always physical)
-        fo = "-".join(str(x) for x in eng.firing_order)
-        self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
-                                                True, ACCENT), (rect.x + 18, bottom + 26))
+        self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
 
     def _flash_surf(self, radius, glow):
         """A layered combustion FLASH (white-hot core -> yellow -> orange -> red
@@ -1652,11 +1663,22 @@ class App:
                 pts.append((vc[0] + rad * math.cos(a), vc[1] + rad * math.sin(a)))
         return pts
 
-    def _draw_w_banks(self, rect, sim, eng, left, right):
+    def _blit_firing(self, eng, x, y, maxw):
+        """Draw the firing-order line, shrinking it to fit maxw (a long W16 order
+        would otherwise overrun the panel)."""
+        fo = "-".join(str(v) for v in eng.firing_order)
+        surf = self.font_small.render(f"{self.tr('Firing order:')} {fo}", True, ACCENT)
+        if surf.get_width() > maxw and maxw > 20:
+            h = max(9, int(surf.get_height() * maxw / surf.get_width()))
+            surf = pygame.transform.smoothscale(surf, (int(maxw), h))
+        self.screen.blit(surf, (x, y))
+
+    def _draw_w_banks(self, rect, sim, eng, left, right, top=None, bottom=None):
         """A W engine drawn as its TWO real VR units (VR6/VR8) side by side: each
         unit is an upright narrow-angle vee with its own vertical crank and two
         tight sub-banks (the 15-deg VR vee); the two units sit 90 deg apart."""
-        mtop, mbot = rect.y + 338, rect.bottom - 46
+        mtop = top if top is not None else rect.y + 32
+        mbot = bottom if bottom is not None else rect.bottom - 12
         unit_name = f"VR{len(left)}"
         for ui, grp in enumerate((left, right)):
             ux = rect.x + int(rect.width * (0.29 if ui == 0 else 0.71))
@@ -1733,9 +1755,7 @@ class App:
         # hub on top of all the rod big-ends
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, ACCENT, (cx, cy), 4)
-        fo = "-".join(str(x) for x in eng.firing_order)
-        self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
-                         True, ACCENT), (rect.x + 18, rect.bottom - 14))
+        self._blit_firing(eng, rect.x + 18, rect.bottom - 6, rect.width - 36)
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
@@ -1745,71 +1765,82 @@ class App:
         sim, eng = self.sim, self.sim.engine
         n = max(1, eng.num_cylinders // 2)
         col_w = rect.width / n
-        R = min(col_w * 0.34, (bottom - top) * 0.40)
+        R = min(col_w * 0.30, (bottom - top) * 0.34)   # fit inside the engine bay
         sx = 1.15                                      # housing is wider than tall
         e = R * 0.15                                   # eccentricity
         cy = (top + bottom) / 2.0
         shaft0 = sim.crank_angle
         TAU3 = 2.0943951                               # 120 deg
+        def troch(cx, cy, a):
+            return (cx + (R * math.cos(a) + e * math.cos(3 * a)) * sx,
+                    cy + R * math.sin(a) + e * math.sin(3 * a))
+
         for i in range(n):
             cx = rect.x + col_w * (i + 0.5)
             shaft = shaft0 + i * (2.0 * math.pi / n)
-            # --- epitrochoid housing (2-lobe, horizontally stretched) ---
-            hull = []
-            for k in range(96):
-                a = 2.0 * math.pi * k / 96.0
-                hx = (R * math.cos(a) + e * math.cos(3 * a)) * sx
-                hy = R * math.sin(a) + e * math.sin(3 * a)
-                hull.append((cx + hx, cy + hy))
-            pygame.draw.polygon(self.screen, (32, 35, 42), hull)       # chamber void
-            pygame.draw.polygon(self.screen, (96, 102, 116), hull, 3)  # housing wall
-            pygame.draw.polygon(self.screen, (60, 64, 74), hull, 1)
-            # spark plugs (leading + trailing) at the top waist
-            for sp in (-0.16, 0.16):
-                spx, spy = cx + sx * R * sp, cy - R * 0.9
-                pygame.draw.circle(self.screen, (150, 156, 168), (int(spx), int(spy)), 3)
-            # --- combustion glow in the firing chamber (top-right of housing) ---
+            # --- epitrochoid housing (2-lobe peanut), recessed chamber ---
+            hull = [troch(cx, cy, 2.0 * math.pi * k / 120.0) for k in range(120)]
+            pygame.draw.polygon(self.screen, (24, 26, 32), hull)        # chamber void
+            pygame.draw.polygon(self.screen, (164, 170, 184), hull, 3)  # polished wall
+            pygame.draw.polygon(self.screen, (70, 75, 88), hull, 1)
+            # intake/exhaust ports (side notches) + two spark plugs at the waist
+            for sp in (-0.5, 0.5):
+                spx, spy = cx + sx * R * sp * 0.12, cy - R * 0.86
+                pygame.draw.circle(self.screen, (40, 43, 50), (int(spx), int(spy)), 4)
+                pygame.draw.circle(self.screen, (210, 180, 90), (int(spx), int(spy)), 2)
+            # --- rotor: 3 apexes ALWAYS riding the housing wall (epitrochoid) ---
+            phase = shaft * 0.5
+            apex = [troch(cx, cy, phase + k * TAU3) for k in range(3)]
+            rcx = sum(p[0] for p in apex) / 3.0
+            rcy = sum(p[1] for p in apex) / 3.0
+            # combustion glow in the working chamber straddling the spark plugs
             j = min(2 * i + 1, eng.num_cylinders - 1)
             press = max(sim.cylinder_pressure[2 * i], sim.cylinder_pressure[j])
             glow = (min(max(press - 101325.0, 0.0) / (5.0 * 101325.0), 1.0)
                     if sim.ignition_on and not sim._fuel_cut else 0.0)
             if glow > 0.03:
-                gx, gy = cx + sx * R * 0.42, cy - R * 0.42
-                gs = self._flash_surf(R * 0.5, glow)
-                self.screen.blit(gs, (int(gx) - gs.get_width() // 2,
-                                      int(gy) - gs.get_height() // 2))
-            # --- Reuleaux rotor: centre orbits, body spins at 1/3 shaft speed ---
-            rcx = cx + e * sx * math.cos(shaft)
-            rcy = cy + e * math.sin(shaft)
-            rotang = -shaft / 3.0
-            apex = [(rcx + R * 0.66 * sx * math.cos(rotang + k * TAU3),
-                     rcy + R * 0.66 * math.sin(rotang + k * TAU3)) for k in range(3)]
+                gs = self._flash_surf(R * 0.55, glow)
+                self.screen.blit(gs, (int(cx) - gs.get_width() // 2,
+                                      int(cy - R * 0.5) - gs.get_height() // 2))
             body = self._reuleaux(apex)
-            pygame.draw.polygon(self.screen, (120, 126, 140), body)        # rotor base
-            # beveled metal sheen: a shrunk, brighter Reuleaux offset up-left
-            hi_apex = [(rcx + (ax - rcx) * 0.82 - R * 0.06,
-                        rcy + (ay - rcy) * 0.82 - R * 0.06) for ax, ay in apex]
-            pygame.draw.polygon(self.screen, (176, 182, 196), self._reuleaux(hi_apex))
-            pygame.draw.polygon(self.screen, (90, 96, 110), body, 2)
-            # face recesses (the dish in each rotor flank) + side seal lines
+            pygame.draw.polygon(self.screen, (108, 116, 130), body)        # rotor base
+            # metallic sheen: a shrunk, brighter rotor offset toward the light
+            hi = [(rcx + (ax - rcx) * 0.78 - 2, rcy + (ay - rcy) * 0.78 - 3)
+                  for ax, ay in apex]
+            pygame.draw.polygon(self.screen, (172, 180, 196), self._reuleaux(hi))
+            pygame.draw.polygon(self.screen, (78, 84, 98), body, 2)
+            # combustion-dish recess on each rotor flank
             for k in range(3):
                 m = ((apex[k][0] + apex[(k + 1) % 3][0]) / 2,
                      (apex[k][1] + apex[(k + 1) % 3][1]) / 2)
-                fx, fy = rcx + (m[0] - rcx) * 0.55, rcy + (m[1] - rcy) * 0.55
-                pygame.draw.circle(self.screen, (96, 102, 118), (int(fx), int(fy)), int(R * 0.2))
-            pygame.draw.line(self.screen, (60, 64, 74),
-                             (apex[0][0], apex[0][1]), (apex[1][0], apex[1][1]), 1)
-            # internal ring gear hint + apex seals
-            pygame.draw.circle(self.screen, (40, 43, 50), (int(rcx), int(rcy)), int(R * 0.34))
-            pygame.draw.circle(self.screen, (70, 75, 88), (int(rcx), int(rcy)), int(R * 0.34), 1)
+                fx, fy = rcx + (m[0] - rcx) * 0.5, rcy + (m[1] - rcy) * 0.5
+                pygame.draw.circle(self.screen, (86, 92, 108),
+                                   (int(fx), int(fy)), int(R * 0.18))
+            # internal ring gear (the rotor's phasing gear)
+            pygame.draw.circle(self.screen, (46, 50, 60), (int(rcx), int(rcy)), int(R * 0.30))
+            pygame.draw.circle(self.screen, (84, 90, 104), (int(rcx), int(rcy)), int(R * 0.30), 1)
+            for k in range(12):
+                ga = shaft + k * (2 * math.pi / 12)
+                pygame.draw.circle(self.screen, (60, 64, 76),
+                                   (int(rcx + R * 0.30 * math.cos(ga)),
+                                    int(rcy + R * 0.30 * math.sin(ga))), 1)
+            # apex seals: a bright bar riding each apex on the wall
             for v in apex:
-                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 3)
-            # --- eccentric shaft: fixed stationary gear + orbiting journal ---
-            pygame.draw.circle(self.screen, (54, 58, 68), (int(cx), int(cy)), int(R * 0.2))
-            pygame.draw.circle(self.screen, (90, 96, 110), (int(cx), int(cy)), int(R * 0.2), 1)
-            pygame.draw.circle(self.screen, ACCENT, (int(rcx), int(rcy)), 4)
+                ux, uy = v[0] - rcx, v[1] - rcy
+                ln = math.hypot(ux, uy) or 1.0
+                px, py = -uy / ln * 4, ux / ln * 4
+                pygame.draw.line(self.screen, (220, 226, 238),
+                                 (v[0] + px, v[1] + py), (v[0] - px, v[1] - py), 3)
+                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 2)
+            # --- eccentric shaft: fixed centre gear + orbiting journal ---
+            pygame.draw.circle(self.screen, (54, 58, 68), (int(cx), int(cy)), int(R * 0.16))
+            pygame.draw.circle(self.screen, (90, 96, 110), (int(cx), int(cy)), int(R * 0.16), 1)
+            pygame.draw.line(self.screen, (60, 64, 74), (int(cx), int(cy)),
+                             (int(rcx), int(rcy)), 2)
+            pygame.draw.circle(self.screen, (200, 206, 220), (int(rcx), int(rcy)), 4)
+            pygame.draw.circle(self.screen, (40, 43, 50), (int(rcx), int(rcy)), 4, 1)
             lbl = self.font_small.render(f"R{i + 1}", True, DIM)
-            self.screen.blit(lbl, (int(cx) - 8, bottom + 8))
+            self.screen.blit(lbl, (int(cx) - lbl.get_width() // 2, bottom + 8))
 
     def _air_gauge(self, cx, cy, r, frac, label, value, danger=False):
         """An old-school round aircraft instrument: metal bezel, black face, tick
@@ -2416,6 +2447,13 @@ class App:
 
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
         yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
+        # --- control-key hint, tucked into the empty space RIGHT of the lights ---
+        hint = ["Up/Dn gas · ZX shift", "A ign · S start · M mute",
+                "C mixer · E scope · Esc quit"]
+        for li, line in enumerate(hint):
+            ht = self.font_small.render(line, True, ACCENT)
+            self.screen.blit(ht, (rect.right - 14 - ht.get_width(),
+                                  rect.y + 222 + li * 15))
 
         # --- digital readouts ---
         tq = self._disp_torque
@@ -2430,7 +2468,8 @@ class App:
             ("THROTTLE", f"{sim.throttle*100:.0f} %", INK),
             ("GEAR", f"{dt.gear_name} {mode}"
                      f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
-            ("SPEED", f"{dt.speed_kmh:.0f} km/h", INK),
+            ("SPEED", f"{self._speed_disp(dt.speed_kmh)[0]:.0f} "
+                      f"{self._speed_disp(dt.speed_kmh)[1]}", INK),
         ]
         val_x = rect.x + 136
         val_w = rect.right - 22 - val_x
@@ -2464,13 +2503,11 @@ class App:
         self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
         y += 19
 
-        # The status rows + key-hint are ANCHORED to the panel bottom so a taller
-        # ignition bank (V8/W) can never shove them off; the exhaust-flow scope
-        # then fills whatever space is left above them (clamped to a sane size).
-        hint_y = rect.bottom - 30
-        status_y2 = hint_y - 22
-        status_y1 = status_y2 - 21
-        scope_h = max(30, min(56, int(status_y1 - 8 - y)))
+        # Status rows are ANCHORED to the panel bottom (the key-hint now lives up
+        # beside the ignition lights); the exhaust-flow scope fills the space left.
+        status_y2 = rect.bottom - 26
+        status_y1 = status_y2 - 22
+        scope_h = max(30, min(60, int(status_y1 - 8 - y)))
         self._draw_scope(rect.x + 24, y, rect.width - 48, scope_h, "TOTAL EXHAUST FLOW")
         self._status_dot(rect.x + 24, status_y1, T("IGNITION"), sim.ignition_on, GOOD, WARN)
         self._status_dot(rect.x + 150, status_y1, T("STARTER"), sim.starter_engaged, ACCENT, DIM)
@@ -2479,10 +2516,6 @@ class App:
         self._status_dot(rect.x + 150, status_y2, T("IN GEAR"), dt.gear > 0, GOOD, DIM)
         self._status_dot(rect.x + 276, status_y2, T("AUDIO"),
                          self.synth.enabled and self.synth.volume > 0, GOOD, DIM)
-        self.screen.blit(self.font_small.render(
-            "Up/Dn gas · ZX shift · A ign · S start", True, ACCENT), (rect.x + 24, hint_y))
-        self.screen.blit(self.font_small.render(
-            "C mixer · E scope · M mute · Esc quit", True, ACCENT), (rect.x + 24, hint_y + 15))
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
         """A spinning Pirelli P Zero road wheel — fat tyre with the yellow PZERO
@@ -2545,7 +2578,8 @@ class App:
             pygame.draw.circle(self.screen, (96, 102, 116),
                                (int(cx + hub * 0.55 * math.cos(a)),
                                 int(cy + hub * 0.55 * math.sin(a))), 2)
-        lab = self.font_small.render(f"{speed_kmh:.0f} km/h", True, DIM)
+        sval, sunit = self._speed_disp(speed_kmh)
+        lab = self.font_small.render(f"{sval:.0f} {sunit}", True, DIM)
         self.screen.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
 
     def _draw_pedal_bars(self, x, y, h):
@@ -2628,15 +2662,17 @@ class App:
                                          11, gloss=True), (cx - 11, cy - 11))
         pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), 11, 1)
 
-        # digital SPEED window (rpm is shown by the needle + its own readout)
-        win = pygame.Rect(cx - 50, cy + int(r * 0.42), 100, 28)
+        # digital SPEED window — kept high in the dial so it never covers the
+        # lower numbers (rpm is shown by the needle + its own readout)
+        sval, sunit = self._speed_disp(speed_kmh)
+        win = pygame.Rect(cx - 48, cy + int(r * 0.22), 96, 26)
         self._recess(win, 6)
-        st_ = self.font_big.render(f"{int(speed_kmh)}", True, ACCENT)
+        st_ = self.font_big.render(f"{int(sval)}", True, ACCENT)
         st_ = pygame.transform.smoothscale(
-            st_, (int(st_.get_width() * 22 / max(st_.get_height(), 1)), 22))
+            st_, (int(st_.get_width() * 20 / max(st_.get_height(), 1)), 20))
         self.screen.blit(st_, (win.centerx - st_.get_width() // 2 - 12, win.y + 3))
-        kmh = self.font_small.render("km/h", True, DIM)
-        self.screen.blit(kmh, (win.centerx + st_.get_width() // 2 - 8, win.centery - 6))
+        u = self.font_small.render(sunit, True, DIM)
+        self.screen.blit(u, (win.centerx + st_.get_width() // 2 - 6, win.centery - 6))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
         col = on_col if on else off_col
