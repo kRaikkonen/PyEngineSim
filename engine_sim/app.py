@@ -1532,7 +1532,7 @@ class App:
         """A W engine drawn as its TWO real VR units (VR6/VR8) side by side: each
         unit is an upright narrow-angle vee with its own vertical crank and two
         tight sub-banks (the 15-deg VR vee); the two units sit 90 deg apart."""
-        mtop, mbot = rect.y + 322, rect.bottom - 48
+        mtop, mbot = rect.y + 338, rect.bottom - 46
         unit_name = f"VR{len(left)}"
         for ui, grp in enumerate((left, right)):
             ux = rect.x + int(rect.width * (0.29 if ui == 0 else 0.71))
@@ -1542,9 +1542,11 @@ class App:
             subB = [i for i in grp if eng.cylinders[i].bank_angle_deg >= mid]
             nsu = max(len(subA), len(subB), 1)
             dy = (mbot - mtop) / nsu
-            tilt = math.radians(20.0)                      # narrow VR vee, fanned L/R
+            # open the vee wider so cylinders fan OUT (horizontal) rather than UP,
+            # keeping their tops clear of the telemetry gauges above.
+            tilt = math.radians(34.0)
             width = min(dy * 0.46, 26.0)
-            length = min(dy * 1.5, rect.width * 0.20, 120.0)
+            length = min(dy * 1.5, rect.width * 0.21, 122.0)
             # vertical crankshaft for this unit (strip-shaded metal)
             cy0, cy1 = mtop + dy * 0.5 - 12, mtop + dy * (nsu - 0.5) + 12
             chw = max(width * 0.30, 8.0)
