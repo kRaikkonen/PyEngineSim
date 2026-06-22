@@ -85,7 +85,7 @@ TR_ZH = {
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
-    "off": "关", "firing order:": "点火顺序:",
+    "off": "关", "Firing order:": "点火顺序:",
     # gauges / readouts
     "RPM": "转速", "TORQUE": "扭矩", "POWER": "功率", "THROTTLE": "油门",
     "GEAR": "挡位", "SPEED": "车速", "TELEMETRY": "遥测",
@@ -109,7 +109,7 @@ TR_ZH = {
     "waiting for Data Out on UDP": "等待 Data Out 广播 UDP",
     "rpm   x1000": "转速 x1000",
     # firing voice + voices
-    "firing voice:": "点火音色:", "cabin": "车内",
+    "Firing voice:": "点火音色:", "cabin": "车内",
     "Balanced": "均衡", "Sharp": "尖锐", "Deep": "低沉", "Raspy": "沙哑",
     "Hollow": "空洞",
     # slider labels
@@ -134,11 +134,15 @@ TR_ZH = {
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
     "Scope": "波形",
-    "EXHAUST FLOW — STAGE WAVEFORMS": "排气流 — 各级波形",
-    "LISTENER AUDIO — STAGE WAVEFORMS": "听感音频 — 各级波形",
-    "each window = that stage's output  ·  E / click to close":
-        "每个窗口 = 该级输出  ·  按 E 或点击关闭",
-    "show: FLOW": "显示：排气流", "show: AUDIO": "显示：音频",
+    "ENGINE ANALYZER": "发动机分析仪",
+    "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
+    "WAVEFORM — final audio output": "波形 — 最终合成音频输出",
+    "Cylinder combustion pressure pulses": "气缸燃烧压力脉冲",
+    "Exhaust system output pressure": "排气系统输出压力",
+    "Valve lift (intake / exhaust)": "气门升程 (进气 / 排气)",
+    "Crankshaft output torque": "曲轴输出扭矩",
+    "Single-cylinder pressure (4-stroke)": "单缸缸压 (四冲程)",
+    "Ignition & cam timing": "点火与配气正时",
     "EQ low (dB)": "EQ低频(dB)",
     "EQ mid (dB)": "EQ中频(dB)", "EQ high (dB)": "EQ高频(dB)",
     "Presence (bite)": "临场(咬合)",
@@ -303,7 +307,7 @@ class App:
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
              lambda: sy.pops_on, 1),
-            (f"{'中/EN' if self.lang == 'en' else 'EN/中'}", self.toggle_lang, None, 1),
+            ("Language", self.toggle_lang, None, 1, ((255, 120, 180), (224, 78, 146))),
             # row 2 — output / device / view
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 2),
@@ -329,16 +333,18 @@ class App:
     def _rebuild_toolbar(self, panel):
         defs = self._toolbar_defs()
         rows = {}
-        for label, cb, active, row in defs:
-            rows.setdefault(row, []).append((label, cb, active))
+        for entry in defs:
+            label, cb, active, row = entry[0], entry[1], entry[2], entry[3]
+            color = entry[4] if len(entry) > 4 else None
+            rows.setdefault(row, []).append((label, cb, active, color))
         self._buttons = []
         y = panel.y + 12
         for ri in sorted(rows):
             x = panel.x + 14
-            for label, cb, active in rows[ri]:
+            for label, cb, active, color in rows[ri]:
                 w = self.font_small.size(label)[0] + 20
                 self._buttons.append({"label": label, "cb": cb, "active": active,
-                                      "rect": pygame.Rect(x, y, w, 26)})
+                                      "rect": pygame.Rect(x, y, w, 26), "color": color})
                 x += w + 6
             y += 32
         self._toolbar_bottom = y
@@ -676,11 +682,8 @@ class App:
 
     def _handle_press(self, mpos):
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
-        if self.scope_open:                  # modal overlay
-            if self._scope_toggle_rect and self._scope_toggle_rect.collidepoint(mpos):
-                self.scope_mode = "audio" if self.scope_mode == "flow" else "flow"
-            else:                            # any other click dismisses it
-                self.scope_open = False
+        if self.scope_open:                  # modal overlay: any click dismisses it
+            self.scope_open = False
         elif self._open_menu is not None:
             m = self._open_menu
             self._open_menu = None
@@ -1052,7 +1055,10 @@ class App:
         r = b["rect"]
         active = b["active"]() if b["active"] else False
         hot = r.collidepoint(mouse)
-        if active:
+        accent = b.get("color")
+        if accent:                              # fixed-colour accent button (e.g. pink)
+            c1, c2, txt = accent[0], accent[1], (255, 255, 255)
+        elif active:
             c1, c2, txt = BTN_ON_HI, BTN_ON_LO, (255, 255, 255)
         elif hot:
             c1, c2, txt = BTN_HOT_HI, BTN_HOT_LO, INK
@@ -1261,7 +1267,7 @@ class App:
         voice = self.tr(FIRING_VOICES[self.voice_idx][0])
         cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
         self.screen.blit(self.font_small.render(
-            f"{self.tr('firing voice:')} {voice}  (V){cab}",
+            f"{self.tr('Firing voice:')} {voice}  (V){cab}",
             True, ACCENT), (rect.x + 18, ty + 64))
 
         self._draw_telemetry(rect, ty + 86)
@@ -1321,7 +1327,7 @@ class App:
         if left and right and getattr(eng, "is_w", False):
             self._draw_w_banks(rect, sim, eng, left, right)
             fo = "-".join(str(x) for x in eng.firing_order)
-            self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+            self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
                              True, ACCENT), (rect.x + 18, rect.bottom - 14))
             return
         if left and right:
@@ -1373,7 +1379,7 @@ class App:
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
                     self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
             fo = "-".join(str(x) for x in eng.firing_order)
-            self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+            self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
                              True, ACCENT), (rect.x + 18, rect.bottom - 14))
             return
 
@@ -1417,7 +1423,7 @@ class App:
 
         # firing order (derived from the cycle offsets, so it's always physical)
         fo = "-".join(str(x) for x in eng.firing_order)
-        self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+        self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
                                                 True, ACCENT), (rect.x + 18, bottom + 26))
 
     def _flash_surf(self, radius, glow):
@@ -1608,7 +1614,7 @@ class App:
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
         pygame.draw.circle(self.screen, ACCENT, (cx, cy), 4)
         fo = "-".join(str(x) for x in eng.firing_order)
-        self.screen.blit(self.font_small.render(f"{self.tr('firing order:')} {fo}",
+        self.screen.blit(self.font_small.render(f"{self.tr('Firing order:')} {fo}",
                          True, ACCENT), (rect.x + 18, rect.bottom - 14))
 
     def _draw_rotary(self, rect, top, bottom):
@@ -1824,17 +1830,17 @@ class App:
         nrows = len(rows_list)
         per_row = max((len(rw) for rw in rows_list), default=1)
         dx = min((w - 12) / max(per_row, 1), 30.0)
-        # Keep the whole bank within a fixed height (so a 4-bank W doesn't shove
-        # the readouts/scope/hints below it off the bottom of the panel): squeeze
-        # the row pitch when there are many banks.
-        max_h = 60
-        pitch = min(20, (max_h - 16) // max(nrows, 1))
-        r = 6 if pitch >= 17 else (5 if pitch >= 13 else 4)
+        # Start the lights BELOW the "IGNITION" label, and keep the whole bank
+        # within a fixed height (so a 4-bank W doesn't shove the readouts off the
+        # bottom): squeeze the row pitch when there are many banks.
+        top0 = y + 20
+        pitch = min(20, 52 // max(nrows, 1))
+        r = 6 if pitch >= 17 else (5 if pitch >= 12 else 4)
         fade = self._ign_flash
         for rr, rw in enumerate(rows_list):
             for cc, i in enumerate(rw):
                 cxp = int(x + 8 + dx * (cc + 0.5))
-                cyp = int(y + 16 + rr * pitch)
+                cyp = int(top0 + rr * pitch)
                 phi = sim.cycle_phase_deg(i)
                 firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
                 fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
@@ -1843,7 +1849,7 @@ class App:
                 pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
                 pygame.draw.circle(self.screen, col, (cxp, cyp), r)
                 pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
-        return y + 16 + min(nrows * pitch + 4, 44)   # never taller than a 2-bank V
+        return top0 + min(nrows * pitch + 4, 46)      # bounded height for any layout
 
     def _draw_scope(self, x, y, w, h, label):
         """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
@@ -1989,56 +1995,156 @@ class App:
         shift = len(wave) // 3 - int(np.argmax(np.abs(wave)))
         return np.roll(wave, shift)
 
-    def _draw_exhaust_scopes(self, rect):
-        """Overlay: a grid of per-stage waveform windows.  FLOW mode shows the
-        physical EXHAUST AIRFLOW (rpm-pitched, scrolling) progressively damped down
-        the pipe; AUDIO mode shows the synth's listener-audio chain taps."""
-        self._panel(rect)
-        flow = self.scope_mode == "flow"
-        title = (self.tr("EXHAUST FLOW — STAGE WAVEFORMS") if flow
-                 else self.tr("LISTENER AUDIO — STAGE WAVEFORMS"))
-        self.screen.blit(self.font.render(title, True, INK), (rect.x + 18, rect.y + 14))
-        hint = self.tr("each window = that stage's output  ·  E / click to close")
-        self.screen.blit(self.font_small.render(hint, True, DIM),
-                         (rect.x + 18, rect.y + 40))
-        # flow / audio toggle button (top-right) — click switches, doesn't close
-        bw, bh = 150, 26
-        btn = pygame.Rect(rect.right - 18 - bw, rect.y + 12, bw, bh)
-        self._scope_toggle_rect = btn
-        self.screen.blit(self._grad_surf(btn.w, btn.h, BTN_ON_HI, BTN_ON_LO, 5,
-                                         gloss=True), btn.topleft)
-        pygame.draw.rect(self.screen, BEVEL_LO, btn, width=1, border_radius=5)
-        bl = self.tr("show: FLOW") if flow else self.tr("show: AUDIO")
-        bt = self.font_small.render(bl, True, (255, 255, 255))
-        self.screen.blit(bt, (btn.centerx - bt.get_width() // 2,
-                              btn.centery - bt.get_height() // 2))
-        taps = getattr(self.synth, "_stage_taps", {}) if self.synth else {}
-        order = ((self.synth._flow_stages if flow else self.synth._audio_stages)
-                 if self.synth else [])
-        if not order:
+    def _ascope(self, x, y, w, h, title, series, bipolar=False, vmax=None):
+        """A framed signal window plotting one or more (array, colour) traces."""
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
+        pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
+        self.screen.blit(self.font_small.render(self.tr(title), True, (150, 158, 172)),
+                         (x + 5, y + 3))
+        base = y + h * 0.5 if bipolar else y + h - 7
+        pygame.draw.line(self.screen, (32, 36, 44), (x, int(base)), (x + w, int(base)), 1)
+        good = [(a, c) for a, c in series if a is not None and len(a) > 1]
+        if not good:
             return
-        cols, rows = 4, 3
-        gx, gy = rect.x + 18, rect.y + 64
-        gw, gh = rect.width - 36, rect.height - 82
-        cw = (gw - (cols - 1) * 12) / cols
-        ch = (gh - (rows - 1) * 12) / rows
-        # FLOW: one coloured trace PER CYLINDER, each window damped a bit more down
-        # the pipe (header sharp -> tailpipe smoothed).
-        base_waves = self._airflow_cyl(int(cw) - 2) if flow else None
-        cyl_cols = self._cyl_colors(len(base_waves)) if flow else None
-        for idx, name in enumerate(order):
-            r, c = divmod(idx, cols)
-            cx = gx + c * (cw + 12)
-            cy = gy + r * (ch + 12)
-            if flow:
-                k = max(1, int((int(cw) - 2) * (0.006 + idx * 0.012)))
-                waves = [self._smooth(wv, k) for wv in base_waves]
-                self._mini_scope_multi(int(cx), int(cy), int(cw), int(ch),
-                                       f"{idx + 1} {self.tr(name)}", waves, cyl_cols)
-            else:
-                self._mini_scope(int(cx), int(cy), int(cw), int(ch),
-                                 f"{idx + 1} {self.tr(name)}",
-                                 self._stabilize(taps.get(name)))
+        vm = vmax or max((float(np.max(np.abs(a))) for a, _ in good), default=1e-6) or 1e-6
+        amp = (h * 0.40) if bipolar else (h - 22)
+        for a, col in good:
+            nn = len(a)
+            xs = x + np.arange(nn) / (nn - 1) * (w - 2) + 1
+            yv = base - (a / vm) * amp
+            pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
+            pygame.draw.lines(self.screen, col, False, pts, 1)
+
+    @staticmethod
+    def _valve_lift(ang, open_deg, dur):
+        """Raised-cosine valve-lift curve over [open, open+dur], wrapping the cycle
+        so an intake event spanning 720 -> 0 still draws (valve-overlap region)."""
+        res = np.zeros_like(ang)
+        for sh in (-720.0, 0.0, 720.0):
+            t = (ang + sh - open_deg) / dur
+            m = (t >= 0) & (t <= 1)
+            res = np.where(m, np.maximum(res, 0.5 * (1 - np.cos(2 * np.pi * t))), res)
+        return res
+
+    @staticmethod
+    def _cycle_pressure(ang, cyl, load, thr):
+        """Single-cylinder in-cylinder pressure (Pa) across one 720-deg cycle:
+        intake (manifold) -> adiabatic compression -> combustion peak + expansion
+        -> exhaust blowdown.  Power TDC at 360 deg."""
+        PATM, k = 101325.0, 1.33
+        Pman = PATM * (0.40 + 0.55 * thr)
+        Vmin = cyl.volume(0.0)
+        Vmax = cyl.volume(math.radians(180.0))
+        Vol = np.array([cyl.volume(math.radians(a % 360.0)) for a in ang])
+        P = np.full(len(ang), Pman)
+        comp = (ang >= 180) & (ang < 360)
+        P[comp] = Pman * (Vmax / Vol[comp]) ** k
+        Ppk = PATM * (6.0 + 60.0 * load)
+        powr = (ang >= 360) & (ang < 540)
+        P[powr] = Ppk * (Vmin / Vol[powr]) ** k
+        P540 = Ppk * (Vmin / Vmax) ** k
+        exh = ang >= 540
+        P[exh] = PATM + (P540 - PATM) * np.exp(-(ang[exh] - 540.0) / 35.0)
+        return P
+
+    def _draw_timing(self, x, y, w, h):
+        """Ignition + cam event timeline over the 720-deg cycle, with a live crank
+        cursor — spark advances with rpm; valve events mark the overlap."""
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
+        pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
+        self.screen.blit(self.font_small.render(
+            self.tr("Ignition & cam timing"), True, (150, 158, 172)), (x + 5, y + 3))
+        sim = self.sim
+        axy = y + h - 16
+        pygame.draw.line(self.screen, (60, 66, 78), (x + 6, axy), (x + w - 6, axy), 1)
+
+        def px(deg):
+            return int(x + 6 + (deg % 720) / 720.0 * (w - 12))
+        rpmf = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+        adv = 15.0 + 22.0 * rpmf
+        events = [("IGN", 360 - adv, (255, 90, 90)), ("EVO", 500, (120, 180, 255)),
+                  ("EVC", 10, (120, 180, 255)), ("IVO", 700, (110, 220, 130)),
+                  ("IVC", 220, (110, 220, 130))]
+        for j, (lab, deg, col) in enumerate(events):
+            xx = px(deg)
+            pygame.draw.line(self.screen, col, (xx, y + 30), (xx, axy), 1)
+            t = self.font_small.render(lab, True, col)
+            ly = y + 22 + (16 if j % 2 else 0)            # stagger so labels clear
+            self.screen.blit(t, (min(max(xx - t.get_width() // 2, x + 2),
+                                     x + w - t.get_width() - 2), ly))
+        cx = px(math.degrees(sim.crank_angle))
+        pygame.draw.line(self.screen, (255, 255, 255), (cx, y + 20), (cx, axy), 1)
+        self.screen.blit(self.font_small.render(f"spark adv {adv:.0f}°", True, ACCENT),
+                         (x + w - 92, axy + 2))
+
+    def _draw_exhaust_scopes(self, rect):
+        """Engine-analyzer overlay: final audio waveform on top, then per-cycle
+        physical signals (combustion pulses, exhaust pressure, valve lift, crank
+        torque, single-cylinder pressure, ignition/cam timing)."""
+        self._panel(rect)
+        sim, eng = self.sim, self.sim.engine
+        self.screen.blit(self.font.render(self.tr("ENGINE ANALYZER"), True, INK),
+                         (rect.x + 18, rect.y + 12))
+        self.screen.blit(self.font_small.render(
+            self.tr("Live engine signals  ·  E / click to close"), True, DIM),
+            (rect.x + 18, rect.y + 36))
+        PATM = 101325.0
+        pad, gap = 14, 12
+        x0, fullw = rect.x + pad, rect.width - 2 * pad
+        topy, toph = rect.y + 58, 116
+
+        # --- analytic per-cycle signals -----------------------------------------
+        W = 240
+        ang = np.linspace(0, 720, W, endpoint=False)
+        n = eng.num_cylinders
+        offs = getattr(sim, "_offset_deg", [0.0] * n)
+        shifts = [int(round((offs[i] % 720.0) / 720.0 * W)) for i in range(n)]
+        load = min(max((sim.blowdown_pressure() - PATM) / (0.9 * PATM), 0.25), 1.1)
+        thr = min(max(sim.throttle, 0.0), 1.0)
+        cyl = eng.cylinders[0]
+        Pcyl = self._cycle_pressure(ang, cyl, load, thr)
+        arm = cyl.piston_area * np.array(
+            [cyl.d_displacement_d_theta(math.radians(a % 360.0)) for a in ang])
+        g = (Pcyl - PATM) * arm
+        dC = ang - 360.0
+        cbase = np.where((dC >= -6) & (dC < 150),
+                         np.clip((dC + 6) / 8.0, 0, 1) * np.exp(-np.clip(dC, 0, None) / 45.0), 0.0)
+        dE = ang - 505.0
+        ebase = np.where((dE >= 0) & (dE < 140),
+                         np.clip(dE / 4.0, 0, 1) * np.exp(-dE / 22.0), 0.0)
+        torque = np.zeros(W); comb = np.zeros(W); exh = np.zeros(W)
+        for s in shifts:
+            torque += np.roll(g, -s)
+            comb += np.roll(cbase, -s)
+            exh += np.roll(ebase, -s)
+        comb *= (0.3 + 0.7 * load)
+        exh = self._smooth(exh * (0.3 + 0.7 * load), max(3, int(W * 0.05)))
+        ivl = self._valve_lift(ang, 700.0, 240.0)
+        evl = self._valve_lift(ang, 500.0, 230.0)
+        aud = getattr(self.synth, "last_wave", None) if self.synth else None
+
+        # --- top: final synthesized audio waveform ------------------------------
+        self._ascope(x0, topy, fullw, toph, "WAVEFORM — final audio output",
+                     [(aud, (120, 230, 150))], bipolar=True)
+        # --- two rows of three -------------------------------------------------
+        cw = (fullw - 2 * gap) / 3.0
+        rowy = topy + toph + gap
+        rh = (rect.bottom - pad - rowy - gap) / 2.0
+        cx = [x0, x0 + cw + gap, x0 + 2 * (cw + gap)]
+        self._ascope(cx[0], rowy, cw, rh, "Cylinder combustion pressure pulses",
+                     [(comb, (255, 150, 70))])
+        self._ascope(cx[1], rowy, cw, rh, "Exhaust system output pressure",
+                     [(exh, (120, 180, 255))])
+        self._ascope(cx[2], rowy, cw, rh, "Valve lift (intake / exhaust)",
+                     [(ivl, (110, 220, 130)), (evl, (240, 120, 120))])
+        rowy2 = rowy + rh + gap
+        self._ascope(cx[0], rowy2, cw, rh, "Crankshaft output torque",
+                     [(torque, (255, 200, 80))], bipolar=True)
+        self._ascope(cx[1], rowy2, cw, rh, "Single-cylinder pressure (4-stroke)",
+                     [(Pcyl - PATM, (255, 120, 160))])
+        self._draw_timing(cx[2], rowy2, cw, rh)
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
@@ -2200,10 +2306,10 @@ class App:
         y += 21
         # two short lines so the hint never runs off the panel's right edge
         self.screen.blit(self.font_small.render(
-            "↑↓ gas · ZX shift · A ign · S start", True, (96, 102, 116)),
+            "↑↓ gas · ZX shift · A ign · S start", True, ACCENT),
             (rect.x + 24, y))
         self.screen.blit(self.font_small.render(
-            "C mixer · E scope · M mute · Esc quit", True, (96, 102, 116)),
+            "C mixer · E scope · M mute · Esc quit", True, ACCENT),
             (rect.x + 24, y + 15))
 
     def _draw_wheel(self, cx, cy, R, ang, speed_kmh):
