@@ -1832,27 +1832,70 @@ class App:
         cap = self.font_small.render(f"x{n}", True, (130, 96, 54))
         self.screen.blit(cap, (x + w - cap.get_width() - 6, y + 3))
 
-    def _mini_scope(self, x, y, w, h, label, wave):
-        """One refresh-style waveform window: the WHOLE captured buffer is redrawn
-        across the width every frame (no horizontal scrolling history)."""
+    def _mini_scope(self, x, y, w, h, label, wave, unipolar=False, col=(90, 230, 130)):
+        """One waveform window redrawn across the width every frame.  ``unipolar``
+        draws an all-positive AIRFLOW trace rising from a low baseline; otherwise
+        a bipolar audio trace centred on the mid-line."""
         pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
         pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
-        mid = y + h * 0.5
-        pygame.draw.line(self.screen, (32, 36, 44), (x, mid), (x + w, mid), 1)
+        if unipolar:
+            base_y = y + h - 8
+            pygame.draw.line(self.screen, (32, 36, 44), (x, base_y), (x + w, base_y), 1)
+        else:
+            base_y = y + h * 0.5
+            pygame.draw.line(self.screen, (32, 36, 44), (x, base_y), (x + w, base_y), 1)
         if wave is not None and len(wave) > 1:
             n = len(wave)
             mx = float(np.max(np.abs(wave))) or 1e-6
             xs = x + np.arange(n) / (n - 1) * (w - 2) + 1
-            yv = mid - (wave / mx) * (h * 0.40)
+            if unipolar:
+                yv = base_y - (wave / mx) * (h - 18)
+            else:
+                yv = base_y - (wave / mx) * (h * 0.40)
             pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
-            pygame.draw.lines(self.screen, (90, 230, 130), False, pts, 1)
+            pygame.draw.lines(self.screen, col, False, pts, 1)
         self.screen.blit(self.font_small.render(self.tr(label), True, (150, 158, 172)),
                          (x + 5, y + 3))
 
+    def _airflow_base(self, w):
+        """Analytic EXHAUST AIRFLOW across a fixed-TIME window: the per-cylinder
+        blowdown pulse train.  More pulses pack in as rpm rises (pitch up) and the
+        whole pattern SCROLLS as the crank turns — the real mass-flow waveform,
+        not the audio.  Returns an all-positive array of length w."""
+        sim = self.sim
+        n = sim.engine.num_cylinders
+        if n < 1 or w < 2:
+            return np.zeros(max(w, 1))
+        offs = sim._offset_deg
+        crank_now = math.degrees(sim.crank_angle)
+        rpm = max(sim.rpm, 1.0)
+        # crank degrees spanned by the window: grows with rpm => pulses bunch up
+        # (pitch climbs) and the trace scrolls as crank_now advances each frame.
+        deg_visible = max(rpm * 6.0 * 0.16, 360.0)        # 6 deg/s per rpm, ~0.16 s
+        crank = crank_now - deg_visible * (1.0 - np.arange(w) / (w - 1))
+        load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
+                       0.30), 1.05)
+        flow = np.zeros(w)
+        for i in range(n):
+            phi = (crank + offs[i]) % 720.0
+            d = phi - 505.0                               # 0 at exhaust-valve open
+            flow += np.where((d >= 0) & (d < 210.0),
+                             np.clip(d / 4.0, 0.0, 1.0)
+                             * np.exp(-np.clip(d, 0, None) / 30.0), 0.0)
+        return flow * load
+
+    @staticmethod
+    def _smooth(arr, k):
+        """Moving-average smoothing — models a stage damping the flow pulsation."""
+        if k <= 1 or len(arr) < 2:
+            return arr
+        k = min(k, len(arr))
+        return np.convolve(arr, np.ones(k) / k, mode="same")
+
     def _draw_exhaust_scopes(self, rect):
-        """Overlay: a grid of per-stage waveform windows tracing one signal block
-        down the chain (refresh-style, not scroll).  Toggles between the EXHAUST
-        GAS path (flow) and the full LISTENER AUDIO chain."""
+        """Overlay: a grid of per-stage waveform windows.  FLOW mode shows the
+        physical EXHAUST AIRFLOW (rpm-pitched, scrolling) progressively damped down
+        the pipe; AUDIO mode shows the synth's listener-audio chain taps."""
         self._panel(rect)
         flow = self.scope_mode == "flow"
         title = (self.tr("EXHAUST FLOW — STAGE WAVEFORMS") if flow
@@ -1882,12 +1925,22 @@ class App:
         gw, gh = rect.width - 36, rect.height - 82
         cw = (gw - (cols - 1) * 12) / cols
         ch = (gh - (rows - 1) * 12) / rows
+        # FLOW: one shared rpm-pitched airflow trace, each window damped a bit more
+        # down the pipe (header sharp -> tailpipe smoothed).
+        base = self._airflow_base(int(cw) - 2) if flow else None
         for idx, name in enumerate(order):
             r, c = divmod(idx, cols)
             cx = gx + c * (cw + 12)
             cy = gy + r * (ch + 12)
-            self._mini_scope(int(cx), int(cy), int(cw), int(ch),
-                             f"{idx + 1} {self.tr(name)}", taps.get(name))
+            if flow:
+                k = max(1, int((int(cw) - 2) * (0.006 + idx * 0.012)))
+                wave = self._smooth(base, k)
+                self._mini_scope(int(cx), int(cy), int(cw), int(ch),
+                                 f"{idx + 1} {self.tr(name)}", wave,
+                                 unipolar=True, col=(236, 150, 60))
+            else:
+                self._mini_scope(int(cx), int(cy), int(cw), int(ch),
+                                 f"{idx + 1} {self.tr(name)}", taps.get(name))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
