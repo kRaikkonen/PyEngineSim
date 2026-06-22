@@ -2180,6 +2180,32 @@ class App:
             self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad, cols=cols, joint=True)
         self._collector_slug(collector, rad)
 
+    def _draw_exhaust_fork(self, ports, spine_x, handle_end, rad, cols=None):
+        """A 4-into-1 exhaust drawn as a right-angle FORK: each port runs straight
+        out to a vertical collector spine (the fork tines), the spine merges them,
+        and a single THICK handle Z-routes (right angles only, no diagonals) from
+        the merge down to the turbo."""
+        cols = cols or self._EXH_COLS
+        if not ports:
+            return
+        spine_x = int(spine_x)
+        ys = [int(p[1]) for p in ports]
+        jy = int(min(max(handle_end[1], min(ys)), max(ys)))   # merge point on spine
+        for px, py in ports:                            # tines (horizontal)
+            self._draw_ortho_pipe([(int(px), int(py)), (spine_x, int(py))], rad,
+                                  cols, joint=True)
+        self._draw_ortho_pipe([(spine_x, min(min(ys), jy)), (spine_x, max(max(ys), jy))],
+                              rad, cols)                 # the spine
+        hx, hy = int(handle_end[0]), int(handle_end[1])
+        pts = [(spine_x, jy)]
+        if abs(hx - spine_x) > 2:                        # Z: horizontal then vertical
+            pts.append((hx, jy))
+        if abs(hy - jy) > 2:
+            pts.append((hx, hy))
+        if len(pts) > 1:
+            self._draw_ortho_pipe(pts, rad + 2, cols)    # the THICK merged handle
+        self._collector_slug((spine_x, jy), rad + 1)
+
     def _draw_v_timing(self, cxx, mtop, dy, crank_cy, sim, eng):
         """The DOHC valvetrain DRIVE up the front of the V valley: a crank sprocket
         at the bottom, two overhead-cam sprockets at the top (one per bank for a
@@ -2267,16 +2293,15 @@ class App:
             # bank (never crossing the cylinders), then on to the outboard turbo if
             # there is one; intake is two valley arms (below).
             turbo = (eng.induction == "turbo")
-            for ports, sgn in ((Lout, -1), (Rout, 1)):
-                if not ports:
+            for ports_t, sgn in ((Lout, -1), (Rout, 1)):
+                if not ports_t:
                     continue
-                ex_x = (min if sgn < 0 else max)(p[0] for p in ports)
-                coll = (int(ex_x + sgn * 22), cyv)
-                self._draw_headers(eng, ports, coll, hrad, cols=self._EXH_COLS)
-                if turbo:
-                    tb = (bay.x + 48 if sgn < 0 else bay.right - 48, cyv)
-                    self._draw_header_tube(coll, tb, ((coll[0] + tb[0]) * 0.5, cyv + 8),
-                                           hrad + 1, cols=self._EXH_COLS)
+                pts = [(p[0], p[1]) for p in ports_t]
+                ex_x = (min if sgn < 0 else max)(p[0] for p in pts)
+                spine_x = int(ex_x + sgn * 16)
+                handle = ((bay.x + 48 if sgn < 0 else bay.right - 48), cyv) \
+                    if turbo else (spine_x, cyv)
+                self._draw_exhaust_fork(pts, spine_x, handle, hrad, self._EXH_COLS)
             # INTAKE: two arms following each bank's INNER edge (beside the crank,
             # never through it), meeting at a valley plenum at the top.
             inner = Lin + Rin
