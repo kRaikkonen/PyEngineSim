@@ -2405,25 +2405,25 @@ class App:
                 handle = ((bay.x + 48 if sgn < 0 else bay.right - 48), cyv) \
                     if turbo else (spine_x, cyv)
                 self._draw_exhaust_fork(pts, spine_x, handle, hrad, self._EXH_COLS)
-            # INTAKE: two arms following each bank's INNER edge (beside the crank,
-            # never through it), meeting at a valley plenum at the top.
+            # INTAKE: a valley plenum log at the top feeding N SEPARATE thin runners
+            # — one per cylinder — so the per-cylinder distribution reads clearly
+            # (the plenum stays high in the open part of the vee; runners are thin).
             inner = Lin + Rin
-            split = (int(cxx), int((min(p[1] for p in inner) if inner else mtop) - 12))
-            for ports in (Lin, Rin):
-                if not ports:
-                    continue
-                pts = sorted(((int(p[0]), int(p[1])) for p in ports), key=lambda p: p[1])
-                poly = [split] + pts
-                for i in range(len(poly) - 1):
-                    self._draw_header_tube(poly[i], poly[i + 1],
-                                           ((poly[i][0] + poly[i + 1][0]) * 0.5,
-                                            (poly[i][1] + poly[i + 1][1]) * 0.5),
-                                           irad, cols=self._INT_COLS)
-                for p in pts:
-                    self._draw_header_tube(p, p, p, irad, cols=self._INT_COLS, joint=True)
-            self._collector_slug(split, irad + 1)
-            self._draw_header_tube(split, (split[0], int(split[1] - dy * 0.5)),
-                                   (split[0], int(split[1] - dy * 0.25)), irad + 1,
+            brad = max(2, irad - 1)
+            ys = [int(p[1]) for p in inner]
+            ptop = (min(ys) if ys else mtop) - 12
+            xs_in = [int(p[0]) for p in inner]
+            plx0, plx1 = (min(xs_in) - 4 if xs_in else cxx), (max(xs_in) + 4 if xs_in else cxx)
+            self._draw_header_tube((plx0, ptop), (plx1, ptop),     # the plenum log
+                                   ((plx0 + plx1) * 0.5, ptop - 2), irad + 1,
+                                   cols=self._INT_COLS)
+            for px, py, a, side in inner:                          # one runner per cyl
+                self._draw_header_tube((px, py), (int(px), ptop),
+                                       (int(px) - 4 * side, (py + ptop) * 0.5), brad,
+                                       cols=self._INT_COLS, joint=True)
+            self._collector_slug((int(cxx), ptop), irad + 1)
+            self._draw_header_tube((int(cxx), ptop), (int(cxx), int(ptop - dy * 0.45)),
+                                   (int(cxx), int(ptop - dy * 0.22)), irad + 1,
                                    cols=self._INT_COLS)
         else:
             # HOT-V: exhaust from the INNER heads to the central valley turbos;
