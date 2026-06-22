@@ -1671,26 +1671,31 @@ class App:
         # plumbed to the turbo — TWIN-SCROLL engines split into two scrolls (the
         # firing pairs) in red + orange feeding the divided housing ---
         hrad = max(2, int(width * 0.16))
-        irad = max(3, int(width * 0.2))                 # I4 intake runs THICK
+        irad = max(3, int(width * 0.2))                 # thick intake PLENUM
+        brad = max(2, irad - 2)                          # thin individual RUNNERS
         cyv = (bay.y + bay.bottom) // 2
         heads = [(x_start + sw * (s + 0.5), crank_y - length * 0.82) for s in range(ns)]
         turbo = (bay.right - 50, cyv)
         sub = getattr(eng, "induction_subtype", "")
-        # INTAKE (green): a thick plenum log over the heads, runners down to each
-        # intake port, and a throttle inlet looping down the left.
-        plen_y = min(h[1] for h in heads) - 18
-        lx0 = heads[0][0] - width * 0.42
-        lx1 = heads[-1][0] - width * 0.42
-        self._draw_header_tube((lx0 - 4, plen_y), (lx1 + 4, plen_y),
-                               ((lx0 + lx1) * 0.5, plen_y - 3), irad + 3,
-                               cols=self._INT_COLS)
-        for jx, hy in heads:
-            ix = jx - width * 0.42
-            self._draw_header_tube((ix, plen_y), (ix, hy), (ix - 4, (plen_y + hy) * 0.5),
-                                   irad, cols=self._INT_COLS, joint=True)
-        self._draw_header_tube((lx0 - 4, plen_y), (bay.x + 34, bay.bottom - 58),
+        # INTAKE (green): a thick plenum log over the heads feeding FOUR separate
+        # THIN runners — one per cylinder — so the even 4-way distribution reads
+        # clearly; each runner bolts to its head through a short joint.
+        port_dx = width * 0.42
+        ports_i = [(jx - port_dx, hy) for jx, hy in heads]
+        plen_y = min(h[1] for h in heads) - 26
+        px0, px1 = ports_i[0][0] - 6, ports_i[-1][0] + 6
+        self._draw_header_tube((px0, plen_y), (px1, plen_y),
+                               ((px0 + px1) * 0.5, plen_y - 2), irad + 2,
+                               cols=self._INT_COLS)                   # the plenum
+        for ix, hy in ports_i:                                       # 4 thin runners
+            self._draw_header_tube((ix, hy), (ix, plen_y + irad),
+                                   (ix - 6, (plen_y + hy) * 0.5), brad,
+                                   cols=self._INT_COLS, joint=True)
+            pygame.draw.circle(self.screen, self._INT_COLS[1],
+                               (int(ix), int(plen_y + 2)), brad)      # runner-to-plenum boss
+        self._draw_header_tube((px0, plen_y), (bay.x + 34, bay.bottom - 58),
                                (bay.x + 18, plen_y + 30), irad + 1, cols=self._INT_COLS)
-        self._collector_slug((lx0 - 4, plen_y), irad + 1)
+        self._collector_slug((px0, plen_y), irad + 1)
         # EXHAUST: a right-angle FORK — risers UP from the cylinder tops to a
         # horizontal spine, then a thick handle to the turbo. Twin-scroll splits
         # into two stacked spines (the firing pairs) in red + orange.
@@ -2923,9 +2928,16 @@ class App:
                    (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 5)
         for cx in xs:                                           # drop to each unit
             self._pipe((cx, rail_y), (cx, y - 7), 2)
-        # exhaust after-treatment: a RED down-pipe from each turbo to the catalytic
         tps = getattr(self, "_turbo_pts", [])
         catx = next((xs[i] for i, (n, k) in enumerate(items) if k == "cat"), None)
+        icx = next((xs[i] for i, (n, k) in enumerate(items) if k == "ic"), None)
+        # charge pipe: GREEN, turbo compressor outlet -> intercooler
+        if icx is not None and tps:
+            tx, ty, tr = min(tps, key=lambda p: abs(p[0] - icx))
+            self._draw_ortho_pipe([(int(tx + tr * 0.6), int(ty - tr * 0.5)),
+                                   (int(tx + tr * 0.6), y - 26), (icx, y - 26),
+                                   (icx, y - 8)], 3, self._INT_COLS)
+        # exhaust after-treatment: a RED down-pipe from each turbo to the catalytic
         if catx is not None and tps:
             for tx, ty, tr in tps:
                 self._draw_ortho_pipe([(int(tx), int(ty + tr)), (int(tx), y - 12),
