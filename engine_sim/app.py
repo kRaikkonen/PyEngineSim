@@ -1821,7 +1821,12 @@ class App:
             lab, val, frac, danger = gauges[k]
             self._air_gauge(x0 + gap * (k + 0.5), cy, r, frac, lab, val, danger)
         if fi:
-            spin = self.sim.crank_angle * (6.0 if eng.induction == "turbo" else 3.5)
+            # Spin the wheel at the REAL shaft speed: the turbine turns
+            # (shaft_rpm / engine_rpm)x faster than the crank, so the blades
+            # blur as the turbo spools — a live turbo-speed tachometer.
+            fi_rpm = ez('fi_rpm', t.get('fi_rpm', 0.0), 0.18)
+            ratio = fi_rpm / max(self.sim.rpm, 1.0)
+            spin = self.sim.crank_angle * max(ratio, 0.4)
             load = (self.sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
             fcx, fcy = x0 + gap * 5.5, cy
             if eng.induction == "turbo":
@@ -1829,8 +1834,13 @@ class App:
             else:
                 self._draw_blower(fcx, fcy, r - 4, spin, load,
                                   centri=(eng.induction == "centrifugal"))
-            bt = self.font_small.render(f"{self.sim.boost:.2f}b", True, ACCENT)
-            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r * 0.4)))
+            # shaft-speed readout (the requested turbo-rpm display) + boost
+            bt = self.font_small.render(f"{self.sim.boost:.2f} bar", True, ACCENT)
+            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r * 0.42)))
+            rpm_txt = (f"{fi_rpm / 1000.0:.0f}k rpm" if fi_rpm >= 1000.0
+                       else "0 rpm")
+            rt = self.font_small.render(rpm_txt, True, GOOD)
+            self.screen.blit(rt, (int(fcx) - rt.get_width() // 2, int(fcy + r + 18)))
 
     def _draw_preset_bar(self, rect):
         """Selectable engine chips (wrap to more rows for cfg engines)."""

@@ -365,6 +365,27 @@ class Simulator:
         temp_k = 650.0 + 350.0 * load + 200.0 * rpm_frac
         return math.sqrt(GAMMA * 287.0 * temp_k)
 
+    def forced_induction_rpm(self) -> float:
+        """Estimated compressor/turbine SHAFT speed (rpm) for the boost gauge.
+
+        Turbos ride exhaust energy, so their shaft speed tracks BOOST (which
+        already spools with lag here) — idling at a freewheel and screaming to
+        ~180k at full boost.  Belt-driven blowers instead spin in fixed ratio
+        with the crank: a Roots pack at ~2.6x, a centrifugal at a big step-up."""
+        eng = self.engine
+        ind = eng.induction
+        if ind == "na" or eng.boost_bar <= 0.0:
+            return 0.0
+        rf = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
+        if ind == "roots":
+            return self.rpm * 2.6                       # lobe pack, belt-driven
+        if ind == "centrifugal":
+            return 60000.0 * rf                         # impeller step-up pulley
+        # turbo / e-turbo: tie to boost so the needle lags & spools realistically
+        frac = min(max(self.boost / max(eng.boost_bar, 0.05), 0.0), 1.1)
+        running = min(1.0, self.rpm / max(eng.idle_rpm * 0.5, 1.0))
+        return 185000.0 * (0.10 + 0.90 * math.sqrt(frac)) * running
+
     def telemetry(self) -> dict:
         """Live physical readouts (the gauges the original game shows)."""
         map_pa = self._manifold_pressure()
@@ -403,6 +424,7 @@ class Simulator:
             "o2_pct": o2_pct,
             "co2_pct": co2_pct,
             "scfm": scfm,
+            "fi_rpm": self.forced_induction_rpm(),
         }
 
     # ------------------------------------------------------------ helpers
