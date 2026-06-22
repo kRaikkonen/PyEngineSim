@@ -1573,24 +1573,33 @@ class App:
         self._blit_firing(eng, rect.x + 18, rect.bottom - 14, rect.width - 36)
 
     def _flash_surf(self, radius, glow):
-        """A layered combustion FLASH (white-hot core -> yellow -> orange -> red
-        halo, plus a few spark rays) instead of one flat yellow disc."""
+        """A SOFT combustion bloom — a smooth radial gradient (white-hot core ->
+        yellow -> orange -> red) with a gentle squared falloff, cached per size &
+        intensity.  No hard rings: a clean, glowing flash."""
         R = max(int(radius), 4)
-        g = min(max(glow, 0.0), 1.0)
-        pad = int(R * 1.7) + 4
-        gs = pygame.Surface((2 * pad, 2 * pad), pygame.SRCALPHA)
-        c = (pad, pad)
-        for rad, col, al in ((int(R * 1.5), (255, 64, 20), 30),
-                             (int(R * 1.15), (255, 110, 36), 70),
-                             (int(R * 0.80), (255, 168, 64), 140),
-                             (int(R * 0.48), (255, 224, 130), 205),
-                             (int(R * 0.24), (255, 252, 236), 255)):
-            pygame.draw.circle(gs, (col[0], col[1], col[2], int(al * g)), c, max(rad, 2))
-        for k in range(6):                         # spark rays (rotate with intensity)
-            ang = k * (math.pi / 3.0) + g * 1.6
-            ex, ey = c[0] + R * 1.45 * math.cos(ang), c[1] + R * 1.45 * math.sin(ang)
-            pygame.draw.line(gs, (255, 215, 130, int(110 * g)), c, (int(ex), int(ey)), 1)
-        return gs
+        gq = min(max(int(glow * 8), 0), 8)            # quantise intensity for caching
+        key = ('flash', R, gq)
+        s = self._grad_cache.get(key)
+        if s is None:
+            pad = int(R * 1.9) + 6
+            size = 2 * pad
+            yy, xx = np.mgrid[0:size, 0:size]
+            d = np.clip(np.sqrt((xx - pad) ** 2 + (yy - pad) ** 2) / (R * 1.75), 0.0, 1.0)
+            stops = [(0.0, (255, 255, 246)), (0.30, (255, 234, 162)),
+                     (0.55, (255, 182, 92)), (0.80, (255, 112, 46)), (1.0, (208, 58, 26))]
+            rgb = np.zeros((size, size, 3), dtype=np.float32)
+            for i in range(len(stops) - 1):
+                t0, c0 = stops[i]; t1, c1 = stops[i + 1]
+                m = (d >= t0) & (d <= t1)
+                fr = (d[m] - t0) / max(t1 - t0, 1e-6)
+                for ch in range(3):
+                    rgb[..., ch][m] = c0[ch] + (c1[ch] - c0[ch]) * fr
+            alpha = np.clip((1.0 - d) ** 2.0, 0.0, 1.0) * (gq / 8.0) * 235.0
+            arr = np.ascontiguousarray(
+                np.dstack([rgb, alpha]).astype(np.uint8))
+            s = pygame.image.frombuffer(arr.tobytes(), (size, size), "RGBA").convert_alpha()
+            self._grad_cache[key] = s
+        return s
 
     def _draw_cyl(self, jx, jy, a, length, width, frac, theta, glow):
         """Draw one cylinder + reciprocating piston + rod + crank journal along a
