@@ -29,10 +29,15 @@ a = Analysis(
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["scipy.signal"],
+    # tkinter is imported lazily inside a function (file dialogs) — name it
+    # explicitly so PyInstaller's static scan still bundles it.
+    hiddenimports=hiddenimports + ["scipy.signal", "tkinter",
+                                   "tkinter.filedialog"],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["matplotlib", "tkinter", "PyQt5", "PySide2", "IPython"],
+    # NOTE: tkinter MUST stay bundled — the Load/Save car & EQ buttons use
+    # tkinter.filedialog for the native file picker.  Excluding it kills them.
+    excludes=["matplotlib", "PyQt5", "PySide2", "IPython"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

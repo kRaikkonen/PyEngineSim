@@ -2752,6 +2752,45 @@ def rj_anderson_pro2() -> Engine:
                 gearbox_type="manual")
 
 
+def vw_bora_vr5() -> Engine:
+    """VW Bora VR5 — AQN 2.3 narrow-angle (15-deg) VR5 — the offbeat, fluttery five."""
+    return _vee("Volkswagen Bora VR5 AQN 2.3 VR5", 5, 81.0, 90.3, 164.0, 10.0, 7.5,
+                [1, 2, 4, 5, 3], flywheel_inertia=0.18, redline_rpm=6500, idle_rpm=800,
+                heat_release_k=3.3, ve_peak_frac=0.55, closed_map_fraction=0.15,
+                exhaust_tone=78.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.025, exhaust_channels=1, exhaust_openness=0.7,
+                muffler_volume_m3=0.0024, header_unequal_deg=14.0,
+                backpressure_coupling=0.78, gear_ratios=[3.30, 1.94, 1.31, 1.03, 0.84],
+                final_drive=3.65, vehicle_mass=1320.0, wheel_radius=0.30,
+                clutch_capacity=320.0, gearbox_type="manual")
+
+
+def vw_golf_gti_vr6_mk3() -> Engine:
+    """VW Golf VR6 (MK3) — AAA 2.8 narrow-angle (15-deg) VR6 — a warbly, compact six."""
+    return _vee("Volkswagen Golf VR6 (MK3) AAA 2.8 VR6", 6, 81.0, 90.3, 164.0, 10.0,
+                7.5, _FO_I6, flywheel_inertia=0.2, redline_rpm=6500, idle_rpm=780,
+                heat_release_k=3.3, ve_peak_frac=0.55, closed_map_fraction=0.15,
+                exhaust_tone=82.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.026, exhaust_channels=1, exhaust_openness=0.72,
+                muffler_volume_m3=0.0026, header_unequal_deg=12.0,
+                backpressure_coupling=0.75, gear_ratios=[3.78, 2.12, 1.46, 1.03, 0.84],
+                final_drive=3.39, vehicle_mass=1280.0, wheel_radius=0.31,
+                clutch_capacity=360.0, gearbox_type="manual")
+
+
+def vw_corrado_vr6() -> Engine:
+    """VW Corrado VR6 — ABV 2.9 narrow-angle VR6 — the smooth, deep, warbling six."""
+    return _vee("Volkswagen Corrado VR6 ABV 2.9 VR6", 6, 82.0, 90.3, 164.0, 10.0, 7.5,
+                _FO_I6, flywheel_inertia=0.2, redline_rpm=6400, idle_rpm=780,
+                heat_release_k=3.3, ve_peak_frac=0.55, closed_map_fraction=0.15,
+                exhaust_tone=80.0, exhaust_primary_m=0.5, exhaust_total_m=1.95,
+                exhaust_radius_m=0.026, exhaust_channels=1, exhaust_openness=0.74,
+                muffler_volume_m3=0.0024, header_unequal_deg=12.0,
+                backpressure_coupling=0.75, gear_ratios=[3.78, 2.12, 1.46, 1.03, 0.84],
+                final_drive=3.68, vehicle_mass=1230.0, wheel_radius=0.30,
+                clutch_capacity=340.0, gearbox_type="manual")
+
+
 def bentley_supersports_w12() -> Engine:
     """Bentley Continental Supersports — 6.0 twin-turbo W12 — vast, smooth, muffled torque."""
     e = bentley_continental_w12()
@@ -2892,8 +2931,50 @@ PRESETS = [
     ("t100", "Toyota T100 Baja V8", toyota_t100_baja),
     ("speed12", "TVR Cerbera Speed 12", tvr_cerbera_speed12),
     ("2", "EA888", vw_ea888_i4),
+    ("borav5", "Bora VR5", vw_bora_vr5),
+    ("golfvr6", "Golf VR6 (MK3)", vw_golf_gti_vr6_mk3),
+    ("corradovr6", "Corrado VR6", vw_corrado_vr6),
     ("ironknight", "Volvo Iron Knight diesel", volvo_iron_knight),
 ]
+
+# --- display-only annotations -------------------------------------------------
+# Variable-valve technology by registry key (only engines that truly have a
+# branded system; blank = none shown).  VTEC / VANOS / Valvetronic / VVT-i ...
+_VARIABLE_VALVE = {
+    "ek9": "VTEC", "ep3": "VTEC", "fk8": "VTEC", "nsx": "VTEC",
+    "e36m3": "VANOS", "e92m3": "double-VANOS", "m3gtr": "double-VANOS",
+    "0": "Valvetronic", "e60m5": "double-VANOS", "b48": "Valvetronic",
+    "9": "VVT-i", "5": "VVT-i", "4": "F1-Trac VVT", "488": "VVT",
+    "lafe": "VVT", "rs3": "AVS", "rs5": "AVS", "audiv8": "AVS",
+    "gt3": "VarioCam", "1": "VarioCam", "991rs": "VarioCam",
+    "fd370z": "CVTCS", "s15": "VVT",
+}
+# Honda transverse engines famously spin the "wrong" way (CCW from the pulley).
+_CCW_ROTATION = {"ek9", "ep3", "fk8", "nsx"}
+
+
+def _annotate(key, eng):
+    """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
+    if not eng.variable_valve and key in _VARIABLE_VALVE:
+        eng.variable_valve = _VARIABLE_VALVE[key]
+    if key in _CCW_ROTATION:
+        eng.rotation = "CCW"
+    return eng
+
+
+def _wrap(key, factory):
+    def build():
+        return _annotate(key, factory())
+    return build
+
+
+# Re-label every entry to its full rule-conforming engine name (车厂 车型 代号),
+# wrap factories with the annotator, and sort the registry alphabetically.
+_RAW_PRESETS = PRESETS
+PRESETS = sorted(
+    ((key, factory().name, _wrap(key, factory)) for key, _label, factory in _RAW_PRESETS),
+    key=lambda t: t[1].lower(),
+)
 
 ALL = {key: factory for key, _label, factory in PRESETS}
 LABELS = {key: label for key, label, _factory in PRESETS}

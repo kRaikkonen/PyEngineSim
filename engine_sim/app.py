@@ -347,27 +347,43 @@ class App:
         self._open_menu_for(items, anchor)
 
     def _open_menu_for(self, items, anchor_rect):
-        # Wrap a long list (e.g. all the demo cars) into as many COLUMNS as it
-        # takes to fit the window height, so nothing runs off the bottom.
+        # Row-major grid that always fits the 1100x680 canvas: pack as many
+        # COLUMNS as the width allows, then scroll vertically for the rest so a
+        # big list (128 demo cars) never overflows or crams off-screen.
         n = len(items)
-        ih = 26
-        col_w = max(self.font_small.size(lbl)[0] for lbl, _ in items) + 28
+        ih = 24
+        natural = max(self.font_small.size(lbl)[0] for lbl, _ in items) + 26
+        col_w = min(natural, WIDTH - 32)
         col_w = max(col_w, anchor_rect.width)
         top = anchor_rect.bottom + 3
-        max_rows = max(1, (HEIGHT - top - 10) // ih)
-        rows = min(n, max_rows)
-        cols = (n + rows - 1) // max(rows, 1)
-        w = cols * col_w + 8
-        h = rows * ih + 8
+        cols = max(1, min(n, (WIDTH - 24) // col_w))
+        rows_total = (n + cols - 1) // cols
+        vis_rows = max(4, min(rows_total, (HEIGHT - top - 12) // ih))
+        needs_scroll = rows_total > vis_rows
+        sb = 12 if needs_scroll else 0
+        w = cols * col_w + 8 + sb
+        h = vis_rows * ih + 8
         x = min(max(anchor_rect.x, 8), WIDTH - w - 8)
         y = min(max(top, 8), HEIGHT - h - 8)
         rect = pygame.Rect(x, y, w, h)
-        item_rects = []
-        for i in range(n):
-            c, r = divmod(i, rows)
-            item_rects.append(pygame.Rect(rect.x + 4 + c * col_w,
-                                          rect.y + 4 + r * ih, col_w - 6, ih - 2))
-        self._open_menu = {"items": items, "rect": rect, "item_rects": item_rects}
+        self._open_menu = {
+            "items": items, "rect": rect, "ih": ih, "col_w": col_w, "cols": cols,
+            "rows_total": rows_total, "vis_rows": vis_rows, "scroll": 0, "n": n,
+            "scrollbar": needs_scroll,
+        }
+
+    def _menu_max_scroll(self, m):
+        return max(0, m["rows_total"] - m["vis_rows"])
+
+    def _menu_item_rect(self, m, i):
+        """Screen rect for item i at the current scroll, or None if off-window."""
+        row, col = divmod(i, m["cols"])
+        vr = row - m["scroll"]
+        if vr < 0 or vr >= m["vis_rows"]:
+            return None
+        r = m["rect"]
+        return pygame.Rect(r.x + 4 + col * m["col_w"], r.y + 4 + vr * m["ih"],
+                           m["col_w"] - 6, m["ih"] - 2)
 
     # ----------------------------------------------------------- audio device
     def _make_synth(self, start=True, keep_engine_flags=True):
@@ -654,8 +670,9 @@ class App:
         if self._open_menu is not None:
             m = self._open_menu
             self._open_menu = None
-            for (lbl, cb), r in zip(m["items"], m["item_rects"]):
-                if r.collidepoint(mpos):
+            for i, (lbl, cb) in enumerate(m["items"]):
+                r = self._menu_item_rect(m, i)
+                if r is not None and r.collidepoint(mpos):
                     cb()
                     break
         elif self.mixer_open:
@@ -764,6 +781,10 @@ class App:
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 self._drag = None
                 self._pointer_up("mouse")
+            elif e.type == pygame.MOUSEWHEEL and self._open_menu is not None:
+                m = self._open_menu
+                m["scroll"] = max(0, min(self._menu_max_scroll(m),
+                                         m["scroll"] - e.y * 2))
             elif e.type == pygame.MOUSEMOTION and "mouse" in self._ptr:
                 self._pointer_move("mouse", self._map_mouse(e.pos))
             elif e.type == pygame.MOUSEMOTION and self._drag is not None:
@@ -1034,7 +1055,10 @@ class App:
         self.screen.blit(self._grad_surf(mr.w + 8, mr.h + 8, PANEL_TOP, PANEL_BOT, 8),
                          (mr.x - 4, mr.y - 4))
         pygame.draw.rect(self.screen, BEVEL_LO, mr.inflate(8, 8), width=1, border_radius=8)
-        for (lbl, _cb), r in zip(m["items"], m["item_rects"]):
+        for i, (lbl, _cb) in enumerate(m["items"]):
+            r = self._menu_item_rect(m, i)
+            if r is None:
+                continue
             if r.collidepoint(mouse):
                 self.screen.blit(self._grad_surf(r.w, r.h, BTN_ON_HI, BTN_ON_LO, 4,
                                                  gloss=True), r.topleft)
@@ -1042,6 +1066,20 @@ class App:
             else:
                 col = INK
             self.screen.blit(self.font_small.render(lbl, True, col), (r.x + 8, r.y + 4))
+        # scrollbar thumb on the right gutter
+        if m.get("scrollbar"):
+            maxs = self._menu_max_scroll(m)
+            track_x = mr.right - 9
+            track_y = mr.y + 4
+            track_h = mr.h - 8
+            pygame.draw.rect(self.screen, BEVEL_LO, (track_x, track_y, 5, track_h),
+                             border_radius=3)
+            frac = m["vis_rows"] / max(1, m["rows_total"])
+            thumb_h = max(18, int(track_h * frac))
+            prog = (m["scroll"] / maxs) if maxs else 0
+            thumb_y = track_y + int((track_h - thumb_h) * prog)
+            pygame.draw.rect(self.screen, BTN_ON_HI, (track_x, thumb_y, 5, thumb_h),
+                             border_radius=3)
 
     def _draw_mixer(self, rect):
         self._panel(rect)
@@ -1136,16 +1174,22 @@ class App:
 
         title = self.font.render(eng.name, True, INK)
         self.screen.blit(title, (rect.x + 18, ty))
+        # --- engineering line: displacement · bore×stroke · CR · crank ----------
+        cc = eng.total_displacement * 1.0e6
         disp_l = eng.total_displacement * 1000.0
-        dtxt = self.font_small.render(f"{disp_l:.1f} L  ·  {disp_l * 61.0237:.0f} CI",
-                                      True, DIM)
-        self.screen.blit(dtxt, (rect.right - 18 - dtxt.get_width(), ty + 5))
-        voice = self.tr(FIRING_VOICES[self.voice_idx][0])
-        cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
-        self.screen.blit(self.font_small.render(
-            f"{self.tr('firing voice:')} {voice}  (V){cab}",
-            True, ACCENT), (rect.x + 18, ty + 24))
-        # spec strip (right-aligned): exhaust material · header type · valvetrain
+        cyl0 = eng.cylinders[0]
+        bore_mm = cyl0.bore * 1000.0
+        stroke_mm = cyl0.stroke * 1000.0
+        cr = cyl0.compression_ratio
+        # Firing interval = 720° four-stroke cycle ÷ cylinders (the meaningful
+        # per-engine number — "720° crank" alone is universal to ALL 4-strokes,
+        # not a crankshaft type, so we show the pulse spacing instead).
+        fire = "" if eng.is_rotary else f"  ·  fires every {720.0 / n:.0f}°"
+        geo = (f"{cc:.0f} cc  ·  {disp_l:.1f} L  ·  {bore_mm:.1f} × "
+               f"{stroke_mm:.1f} mm  ·  {cr:.1f}:1{fire}")
+        gtxt = self.font_small.render(geo, True, DIM)
+        self.screen.blit(gtxt, (rect.x + 18, ty + 24))
+        # --- configuration line: layout/bank-angle · rotation · exhaust · valves -
         mat = getattr(eng, "wall_material", "steel")
         mat_lbl = {"titanium": "Ti", "stainless": "steel", "aluminium": "Alu",
                    "aluminum": "Alu", "iron": "iron"}.get(mat, "steel")
@@ -1157,11 +1201,33 @@ class App:
                       or eng.redline_rpm >= 8400)
                      and getattr(eng, "header_unequal_deg", 0.0) < 0.5)
         hdr = "equal-len" if equal_hdr else "uneven-len"
-        spec = f"{mat_lbl} exhaust  ·  {hdr} hdr  ·  {vt}"
+        maxang = max((abs(c.bank_angle_deg) for c in eng.cylinders), default=0.0)
+        if eng.is_rotary:
+            cfg = "rotary"
+        elif getattr(eng, "is_radial", False):
+            cfg = f"radial-{n}"
+        elif getattr(eng, "is_w", False):
+            cfg = f"W{n} {2 * maxang:.0f}°"
+        elif maxang < 0.5:
+            cfg = f"inline-{n}"
+        elif maxang > 80.0:
+            cfg = f"flat-{n}"
+        else:
+            cfg = f"V{n} {2 * maxang:.0f}°"
+        rot = "CCW" if getattr(eng, "rotation", "CW") == "CCW" else "CW"
+        vv = getattr(eng, "variable_valve", "")
+        vv_txt = f"  ·  {vv}" if vv else ""
+        spec = (f"{cfg}  ·  {rot}  ·  {mat_lbl} exh  ·  {hdr}  ·  "
+                f"{vt}{vv_txt}")
         stxt = self.font_small.render(spec, True, (138, 146, 162))
-        self.screen.blit(stxt, (rect.right - 18 - stxt.get_width(), ty + 24))
+        self.screen.blit(stxt, (rect.x + 18, ty + 44))
+        voice = self.tr(FIRING_VOICES[self.voice_idx][0])
+        cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
+        self.screen.blit(self.font_small.render(
+            f"{self.tr('firing voice:')} {voice}  (V){cab}",
+            True, ACCENT), (rect.x + 18, ty + 64))
 
-        self._draw_telemetry(rect, ty + 48)
+        self._draw_telemetry(rect, ty + 86)
 
         # Forza telemetry mode banner + transient save/load status
         by = ty + 178

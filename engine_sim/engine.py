@@ -157,6 +157,8 @@ class Engine:
     header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
     valvetrain: str = "dohc"         # dohc | sohc | ohv -> breathing + tick
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
+    variable_valve: str = ""         # "VTEC"/"VANOS"/"VVT-i"/... "" = none (display only)
+    rotation: str = "CW"             # crank rotation viewed from front: CW | CCW (display)
     is_rotary: bool = False          # Wankel rotary (no pistons; bright 'brap')
     is_w: bool = False               # W engine (two narrow-vee banks) -> draw 4 rows
     is_radial: bool = False          # aircraft radial -> draw cylinders in a star
