@@ -1691,20 +1691,23 @@ class App:
         self._draw_header_tube((lx0 - 4, plen_y), (bay.x + 34, bay.bottom - 58),
                                (bay.x + 18, plen_y + 30), irad, cols=self._INT_COLS)
         self._collector_slug((lx0 - 4, plen_y), irad)
-        # EXHAUST: twin-scroll SPLIT (two colours), else a single 4-into-1
-        ex_ports = [(jx + width * 0.42, hy, 0.0, 1.0) for jx, hy in heads]
+        # EXHAUST: a right-angle FORK — risers UP from the cylinder tops to a
+        # horizontal spine, then a thick handle to the turbo. Twin-scroll splits
+        # into two stacked spines (the firing pairs) in red + orange.
+        ex_ports = [(jx + width * 0.3, hy) for jx, hy in heads]
+        spine_y = min(h[1] for h in heads) - 14
         if sub == "twin_scroll" and ns >= 4:
             fo = eng.firing_order
             sA, sB = set(fo[0::2]), set(fo[1::2])
             pA = [p for s, p in enumerate(ex_ports) if (s + 1) in sA]
             pB = [p for s, p in enumerate(ex_ports) if (s + 1) in sB]
-            self._draw_headers(eng, pA, (turbo[0] - 16, turbo[1] - 9), hrad,
-                               cols=self._EXH_COLS)
-            self._draw_headers(eng, pB, (turbo[0] - 16, turbo[1] + 9), hrad,
-                               cols=self._EXH2_COLS)
+            self._draw_exhaust_fork(pA, spine_y - 9, (turbo[0] - 2, turbo[1] - 9),
+                                    hrad, self._EXH_COLS, axis="h")
+            self._draw_exhaust_fork(pB, spine_y + 5, (turbo[0] - 2, turbo[1] + 9),
+                                    hrad, self._EXH2_COLS, axis="h")
         else:
-            self._draw_headers(eng, ex_ports, (turbo[0] - 14, turbo[1]), hrad,
-                               cols=self._EXH_COLS)
+            self._draw_exhaust_fork(ex_ports, spine_y, (turbo[0], turbo[1]),
+                                    hrad, self._EXH_COLS, axis="h")
         for s, st in enumerate(stations):
             jx = x_start + sw * (s + 0.5)
             for i in st:
@@ -2140,16 +2143,27 @@ class App:
             pygame.draw.circle(sc, cols[2], (jx - 1, jy - 1), max(1, rad // 2))
 
     def _draw_ortho_pipe(self, pts, rad, cols=None, joint=False):
-        """A RIGHT-ANGLED manifold run (riser up from the port, then a 90-deg elbow
-        out to a horizontal rail) drawn as a polyline with filled elbows so the
-        corners read as solid bends — the blueprint 'up then square out' routing."""
+        """A RIGHT-ANGLED manifold run (riser, then a 90-deg elbow out to a rail).
+        Corners are softened with a small CHAMFER so the bends read as gently
+        rounded rather than robotically square (a slight 488-style curve)."""
         cols = cols or self._EXH_COLS
         sc = self.screen
-        ipts = [(int(x), int(y)) for x, y in pts]
+        raw = [(float(x), float(y)) for x, y in pts]
+        if len(raw) >= 3:                              # chamfer the interior corners
+            soft = [raw[0]]
+            cut = min(7.0, rad * 2.2)
+            for i in range(1, len(raw) - 1):
+                a, b, c = raw[i - 1], raw[i], raw[i + 1]
+                v1 = (b[0] - a[0], b[1] - a[1]); l1 = math.hypot(*v1) or 1.0
+                v2 = (c[0] - b[0], c[1] - b[1]); l2 = math.hypot(*v2) or 1.0
+                c1, c2 = min(cut, l1 * 0.45), min(cut, l2 * 0.45)
+                soft.append((b[0] - v1[0] / l1 * c1, b[1] - v1[1] / l1 * c1))
+                soft.append((b[0] + v2[0] / l2 * c2, b[1] + v2[1] / l2 * c2))
+            soft.append(raw[-1])
+            raw = soft
+        ipts = [(int(x), int(y)) for x, y in raw]
         pygame.draw.lines(sc, cols[0], False, ipts, rad * 2 + 2)
         pygame.draw.lines(sc, cols[1], False, ipts, max(2, rad * 2))
-        for x, y in ipts[1:-1]:                        # solid elbow at each corner
-            pygame.draw.circle(sc, cols[1], (x, y), rad)
         pygame.draw.lines(sc, cols[2], False, [(x - 1, y - 1) for x, y in ipts],
                           max(1, rad // 2))
         if joint:                                      # flange on a head boss
@@ -2180,31 +2194,48 @@ class App:
             self._draw_header_tube((px, py), (cxc, cyc), ctrl, rad, cols=cols, joint=True)
         self._collector_slug(collector, rad)
 
-    def _draw_exhaust_fork(self, ports, spine_x, handle_end, rad, cols=None):
-        """A 4-into-1 exhaust drawn as a right-angle FORK: each port runs straight
-        out to a vertical collector spine (the fork tines), the spine merges them,
-        and a single THICK handle Z-routes (right angles only, no diagonals) from
-        the merge down to the turbo."""
+    def _draw_exhaust_fork(self, ports, spine, handle_end, rad, cols=None, axis="v"):
+        """A 4-into-1 exhaust as a right-angle FORK.  axis='v': a vertical collector
+        spine at x=spine, tines run horizontally out to it (V banks).  axis='h': a
+        horizontal spine at y=spine, tines run vertically UP from the cylinder tops
+        (inline).  The merged tines feed a single THICK handle that Z-routes (right
+        angles only) to the turbo."""
         cols = cols or self._EXH_COLS
         if not ports:
             return
-        spine_x = int(spine_x)
-        ys = [int(p[1]) for p in ports]
-        jy = int(min(max(handle_end[1], min(ys)), max(ys)))   # merge point on spine
-        for px, py in ports:                            # tines (horizontal)
-            self._draw_ortho_pipe([(int(px), int(py)), (spine_x, int(py))], rad,
-                                  cols, joint=True)
-        self._draw_ortho_pipe([(spine_x, min(min(ys), jy)), (spine_x, max(max(ys), jy))],
-                              rad, cols)                 # the spine
+        spine = int(spine)
         hx, hy = int(handle_end[0]), int(handle_end[1])
-        pts = [(spine_x, jy)]
-        if abs(hx - spine_x) > 2:                        # Z: horizontal then vertical
-            pts.append((hx, jy))
-        if abs(hy - jy) > 2:
-            pts.append((hx, hy))
+        if axis == "v":
+            cs = [int(p[1]) for p in ports]
+            je = int(min(max(hy, min(cs)), max(cs)))
+            for px, py in ports:
+                self._draw_ortho_pipe([(int(px), int(py)), (spine, int(py))], rad,
+                                      cols, joint=True)
+            self._draw_ortho_pipe([(spine, min(min(cs), je)), (spine, max(max(cs), je))],
+                                  rad, cols)
+            junc = (spine, je)
+            pts = [junc]
+            if abs(hx - junc[0]) > 2:
+                pts.append((hx, junc[1]))
+            if abs(hy - pts[-1][1]) > 2:
+                pts.append((hx, hy))
+        else:
+            cs = [int(p[0]) for p in ports]
+            je = int(min(max(hx, min(cs)), max(cs)))
+            for px, py in ports:
+                self._draw_ortho_pipe([(int(px), int(py)), (int(px), spine)], rad,
+                                      cols, joint=True)
+            self._draw_ortho_pipe([(min(min(cs), je), spine), (max(max(cs), je), spine)],
+                                  rad, cols)
+            junc = (je, spine)
+            pts = [junc]
+            if abs(hy - junc[1]) > 2:
+                pts.append((junc[0], hy))
+            if abs(hx - pts[-1][0]) > 2:
+                pts.append((hx, hy))
         if len(pts) > 1:
             self._draw_ortho_pipe(pts, rad + 2, cols)    # the THICK merged handle
-        self._collector_slug((spine_x, jy), rad + 1)
+        self._collector_slug(junc, rad + 1)
 
     def _draw_v_timing(self, cxx, mtop, dy, crank_cy, sim, eng):
         """The DOHC valvetrain DRIVE up the front of the V valley: a crank sprocket
@@ -2228,44 +2259,55 @@ class App:
         vvt = bool(getattr(eng, "variable_valve", ""))
         adv = vvt * (min(sim.rpm / max(eng.redline_rpm, 1.0), 1.0)) * 0.5  # phaser swing
 
-        def chain(a, b, ra, rb):                       # a dark linked band between sprockets
+        def chain(a, b, ra, rb):                       # a BRONZE linked timing chain
             dx, dy2 = b[0] - a[0], b[1] - a[1]
             d = math.hypot(dx, dy2) or 1.0
-            nx, ny = -dy2 / d, dx / d                  # normal, for the two strands
+            ux, uy = dx / d, dy2 / d
+            nx, ny = -uy, ux                           # normal, for the two strands
             for s in (1, -1):
                 p0 = (a[0] + nx * ra * s, a[1] + ny * ra * s)
                 p1 = (b[0] + nx * rb * s, b[1] + ny * rb * s)
-                pygame.draw.line(sc, (32, 35, 44), p0, p1, 3)
-                pygame.draw.line(sc, (96, 102, 116), p0, p1, 1)
+                pygame.draw.line(sc, (74, 54, 22), p0, p1, 4)      # dark bronze casing
+                pygame.draw.line(sc, (198, 158, 86), p0, p1, 2)    # bronze body
+                k = 0                                              # link rollers
+                while k < d:
+                    pygame.draw.circle(sc, (120, 92, 40),
+                                       (int(p0[0] + ux * k), int(p0[1] + uy * k)), 1)
+                    k += 4
 
         for c in cams:                                 # chain: crank -> each cam
             chain(cs, c, cr_r, cam_r)
         if len(cams) == 2:
             chain(cams[0], cams[1], cam_r, cam_r)
 
-        def sprocket(c, r, teeth, spin):
-            pygame.draw.circle(sc, (60, 65, 78), c, r)
-            for k in range(teeth):
+        def sprocket(c, r, teeth, spin, ring=None):
+            pygame.draw.circle(sc, (44, 48, 60), c, r + 2)
+            for k in range(teeth):                     # real radial GEAR TEETH
                 t = spin + k * 2 * math.pi / teeth
-                pygame.draw.circle(sc, (120, 126, 140),
-                                   (int(c[0] + math.cos(t) * r), int(c[1] + math.sin(t) * r)), 1)
-            pygame.draw.circle(sc, (30, 33, 42), c, r, 1)
+                pygame.draw.line(sc, (158, 164, 180),
+                                 (int(c[0] + math.cos(t) * (r - 1)), int(c[1] + math.sin(t) * (r - 1))),
+                                 (int(c[0] + math.cos(t) * (r + 2)), int(c[1] + math.sin(t) * (r + 2))), 2)
+            sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
+                                    gloss=True), (c[0] - r, c[1] - r))
+            if ring:
+                pygame.draw.circle(sc, ring, c, int(r * 0.7), 2)
+            pygame.draw.circle(sc, (40, 44, 54), c, max(2, int(r * 0.28)))
 
         sprocket(cs, cr_r, 12, ang)
-        for c in cams:
-            sprocket(c, cam_r, 16, cam_ang)
+        for c in cams:                                 # cam sprockets: amber-ringed
+            sprocket(c, cam_r, 16, cam_ang, ring=(236, 176, 72))
             if vvt:                                    # VVT cam phaser: blue vane that swings
-                pygame.draw.circle(sc, (44, 96, 150), c, int(cam_r * 0.62))
-                pygame.draw.circle(sc, (120, 196, 255), c, int(cam_r * 0.62), 1)
+                pygame.draw.circle(sc, (44, 96, 150), c, int(cam_r * 0.55))
+                pygame.draw.circle(sc, (120, 196, 255), c, int(cam_r * 0.55), 1)
                 va = cam_ang + adv * math.pi
                 pygame.draw.line(sc, (150, 210, 255), c,
-                                 (int(c[0] + math.cos(va) * cam_r * 0.55),
-                                  int(c[1] + math.sin(va) * cam_r * 0.55)), 2)
-            else:
-                pygame.draw.circle(sc, (110, 116, 130), c, int(cam_r * 0.4))
-        if vvt and cams:                               # tiny VVT tag
-            tag = self.font_small.render("VVT", True, (120, 196, 255))
-            sc.blit(tag, (cams[-1][0] + cam_r + 2, cams[-1][1] - 6))
+                                 (int(c[0] + math.cos(va) * cam_r * 0.5),
+                                  int(c[1] + math.sin(va) * cam_r * 0.5)), 2)
+        camlab = "VVT" if vvt else ("CAM" if cams else "")
+        if camlab and cams:
+            tag = self.font_small.render(camlab, True,
+                                         (120, 196, 255) if vvt else (236, 176, 72))
+            sc.blit(tag, (cams[-1][0] + cam_r + 3, cams[-1][1] - 6))
 
     def _draw_v_manifolds(self, eng, stations, cxx, mtop, dy, bank, length, width, bay):
         """V-engine manifolds on top of the banks, per the cold-V reference: smooth
