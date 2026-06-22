@@ -289,11 +289,16 @@ class Simulator:
         self._update_boost(dt)
 
         # Sub-step so the crank never advances more than ~3 deg per integration
-        # step; this keeps the sharp combustion torque pulse well resolved.
-        max_step = 3.0 * DEG
+        # step; this keeps the sharp combustion torque pulse well resolved.  At high
+        # rpm the flywheel smooths the pulses, so we let the step grow coarser there
+        # and HARD-CAP the count: ~300 pure-Python sub-steps/frame at the redline was
+        # holding the GIL long enough (3-5 ms) to starve the audio callback ->
+        # 'tearing' at high revs.  ~80 keeps the rpm dynamics accurate and the step
+        # well under the audio block budget.
         speed = max(abs(self.omega), 1.0)
+        max_step = (3.0 + 11.0 * min(speed / 1500.0, 1.0)) * DEG
         n = int(dt * speed / max_step) + 1
-        n = min(n, 4000)
+        n = min(n, 80)
         h = dt / n
 
         for _ in range(n):
