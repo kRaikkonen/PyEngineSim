@@ -1794,13 +1794,34 @@ class App:
                 pygame.draw.circle(self.screen, col, (int(px) - o, int(py) - o),
                                    max(1, int(sr)))
             pygame.draw.circle(self.screen, (22, 24, 30), (int(px), int(py)), int(rad), 1)
-        # counterweight web, then the main journal, both shaded steel
-        cwx, cwy = jx - cr * 0.5 * math.sin(theta), jy - cr * 0.5 * math.cos(theta)
-        metal_disc(cwx, cwy, cr * 1.3, (58, 63, 76))
-        metal_disc(jx, jy, cr * 0.78, (96, 102, 118))
-        # rod big-end pin
-        pygame.draw.circle(self.screen, (150, 158, 174), (int(jrn[0]), int(jrn[1])), 4)
-        pygame.draw.circle(self.screen, ACCENT, (int(jrn[0]), int(jrn[1])), 3)
+        # --- crank throw: a heavy counterweight FAN opposite the rod journal,
+        # the web that carries it, then the main + rod journals (forged steel) ---
+        jdx, jdy = math.sin(theta), math.cos(theta)        # unit toward rod journal
+        opp = math.atan2(-jdy, -jdx)                       # counterweight points away
+        cwr = cr * 1.85
+        fan = [(jx, jy)]
+        for tt in range(-6, 7):
+            aa = opp + math.radians(tt * 11.5)
+            fan.append((jx + cwr * math.cos(aa), jy + cwr * math.sin(aa)))
+        pygame.draw.polygon(self.screen, (52, 56, 68), fan)            # counterweight
+        inner = [(jx - 1.5, jy - 2)]
+        for tt in range(-6, 7):
+            aa = opp + math.radians(tt * 11.5)
+            inner.append((jx + cwr * 0.78 * math.cos(aa) - 1.5,
+                          jy + cwr * 0.78 * math.sin(aa) - 2))
+        pygame.draw.polygon(self.screen, (78, 84, 98), inner)         # lit sheen
+        pygame.draw.polygon(self.screen, (24, 26, 32), fan, 1)
+        # web carrying the rod journal
+        webw = cr * 0.5
+        ox, oy = -jdy, jdx
+        pygame.draw.polygon(self.screen, (60, 65, 78), [
+            (jx + ox * webw, jy + oy * webw), (jrn[0] + ox * webw * 0.8, jrn[1] + oy * webw * 0.8),
+            (jrn[0] - ox * webw * 0.8, jrn[1] - oy * webw * 0.8), (jx - ox * webw, jy - oy * webw)])
+        metal_disc(jx, jy, cr * 0.7, (98, 104, 120))                  # main journal
+        # rod big-end pin (steel, no marker dot)
+        pygame.draw.circle(self.screen, (44, 48, 58), (int(jrn[0]), int(jrn[1])), 4)
+        pygame.draw.circle(self.screen, (150, 158, 174), (int(jrn[0]), int(jrn[1])), 4, 1)
+        pygame.draw.circle(self.screen, (96, 102, 116), (int(jrn[0]), int(jrn[1])), 2)
 
     def _reuleaux(self, verts, samples=10):
         """Polygon points for a Reuleaux triangle through three apexes: each side
@@ -1915,7 +1936,7 @@ class App:
             self._draw_cyl(cx, cy, a, length, width, frac, theta, glow)
         # hub on top of all the rod big-ends
         pygame.draw.circle(self.screen, (70, 75, 88), (cx, cy), int(Rc * 0.18))
-        pygame.draw.circle(self.screen, ACCENT, (cx, cy), 4)
+        pygame.draw.circle(self.screen, (180, 186, 200), (cx, cy), 4)
 
     def _draw_rotary(self, rect, top, bottom):
         """Wankel-rotor visualiser: a 2-lobe epitrochoid housing with a Reuleaux
@@ -1991,7 +2012,7 @@ class App:
                 px, py = -uy / ln * 4, ux / ln * 4
                 pygame.draw.line(self.screen, (220, 226, 238),
                                  (v[0] + px, v[1] + py), (v[0] - px, v[1] - py), 3)
-                pygame.draw.circle(self.screen, ACCENT, (int(v[0]), int(v[1])), 2)
+                pygame.draw.circle(self.screen, (216, 222, 234), (int(v[0]), int(v[1])), 2)
             # --- eccentric shaft: fixed centre gear + orbiting journal ---
             pygame.draw.circle(self.screen, (54, 58, 68), (int(cx), int(cy)), int(R * 0.16))
             pygame.draw.circle(self.screen, (90, 96, 110), (int(cx), int(cy)), int(R * 0.16), 1)
@@ -2892,7 +2913,7 @@ class App:
             col = WARN if over else (214, 219, 228) if major else (110, 116, 128)
             pygame.draw.line(self.screen, col, pt(r0, a), pt(r - 3, a),
                              3 if major else 1)
-            if major and k > 0:                      # skip "0" — the speed window sits there
+            if major:                                # tach numbers incl. 0 (lower-left)
                 num = self.font.render(str(k // 1000), True, col)
                 nx, ny = pt(r - 36, a)
                 self.screen.blit(num, (nx - num.get_width() // 2,
@@ -2920,10 +2941,10 @@ class App:
                                          11, gloss=True), (cx - 11, cy - 11))
         pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), 11, 1)
 
-        # digital SPEED window — NARROW and centred in the lower waist so it
-        # clears the corner numbers (the "0" at the very bottom is not drawn)
+        # digital SPEED window — narrow, in the lower waist (the bottom-centre gap
+        # between the "0" at lower-left and "8" at lower-right is empty)
         sval, sunit = self._speed_disp(speed_kmh)
-        win = pygame.Rect(cx - 37, cy + int(r * 0.46), 74, 22)
+        win = pygame.Rect(cx - 33, cy + int(r * 0.40), 66, 20)
         self._recess(win, 5)
         txt = self.font_small.render(f"{int(sval)} {sunit}", True, ACCENT)
         if txt.get_width() > win.w - 8:
@@ -2931,6 +2952,8 @@ class App:
                 txt, (win.w - 8, int(txt.get_height() * (win.w - 8) / txt.get_width())))
         self.screen.blit(txt, (win.centerx - txt.get_width() // 2,
                                win.centery - txt.get_height() // 2))
+        cap = self.font_small.render(self.tr("x1000 rpm"), True, DIM)
+        self.screen.blit(cap, (cx - cap.get_width() // 2, win.bottom + 2))
 
     def _status_dot(self, x, y, label, on, on_col, off_col):
         col = on_col if on else off_col
