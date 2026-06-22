@@ -1756,6 +1756,32 @@ def _flat4(name, bore_mm, stroke_mm, rod_mm, cr, **kw):
     return Engine(name=name, cylinders=cyls, **kw)
 
 
+def _inline(name, n, bore_mm, stroke_mm, rod_mm, cr, firing, **kw):
+    """Helper: a generic inline-N engine with the given firing order + Engine kwargs."""
+    offsets = _even_offsets(n, firing_order=firing)
+    cyls = [Cylinder(bore=mm(bore_mm), stroke=mm(stroke_mm), rod_length=mm(rod_mm),
+                     compression_ratio=cr, cycle_offset_deg=offsets[i]) for i in range(n)]
+    return Engine(name=name, cylinders=cyls, **kw)
+
+
+def _vee(name, n, bore_mm, stroke_mm, rod_mm, cr, bank, firing, **kw):
+    """Helper: a generic V-N engine (banks 1..n/2 left at -bank, rest right)."""
+    offsets = _even_offsets(n, firing_order=firing)
+    cyls = [Cylinder(bore=mm(bore_mm), stroke=mm(stroke_mm), rod_length=mm(rod_mm),
+                     compression_ratio=cr, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=(-bank if i < n // 2 else bank)) for i in range(n)]
+    return Engine(name=name, cylinders=cyls, **kw)
+
+
+# firing orders reused below
+_FO_V8_FLAT = [1, 8, 3, 6, 4, 5, 2, 7]      # flat-plane (clean L-R alternation)
+_FO_V8_X = [1, 5, 4, 8, 6, 3, 7, 2]         # cross-plane (the burble)
+_FO_V6 = [1, 6, 3, 4, 2, 5]
+_FO_V10 = [1, 6, 5, 10, 2, 7, 3, 8, 4, 9]
+_FO_V12 = [1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9]
+_FO_I6 = [1, 5, 3, 6, 2, 4]
+
+
 def mazda_savanna_rx7_fc() -> Engine:
     """Mazda Savanna RX-7 FC3S — 13B-T single-turbo two-rotor Wankel."""
     offsets = _even_offsets(4)
@@ -1936,6 +1962,167 @@ def subaru_wrx_sti_vt15r() -> Engine:
         gearbox_type="manual")
 
 
+def aston_martin_db11_v12() -> Engine:
+    """Aston DB11 AE31 5.2 twin-turbo V12 — smooth, deep, refined GT thunder."""
+    return _vee("Aston Martin DB11 AE31 5.2TT V12", 12, 89.0, 69.7, 154.0, 9.3,
+                30.0, _FO_V12, flywheel_inertia=0.4, redline_rpm=7000, idle_rpm=600,
+                heat_release_k=2.4, ve_width_frac=0.78, closed_map_fraction=0.18,
+                exhaust_tone=58.0, exhaust_primary_m=0.6, exhaust_total_m=2.4,
+                exhaust_radius_m=0.029, exhaust_channels=2, exhaust_openness=0.74,
+                muffler_volume_m3=0.004, induction="turbo", boost_bar=1.0,
+                turbo_lag=0.4, gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.0, 0.84, 0.67],
+                final_drive=2.7, vehicle_mass=1875.0, wheel_radius=0.34,
+                clutch_capacity=900.0, gearbox_type="at")
+
+
+def alfa_giulia_quadrifoglio() -> Engine:
+    """Alfa Giulia QV 690T 2.9 twin-turbo V6 — hot, raspy, Ferrari-derived bite."""
+    return _vee("Alfa Romeo Giulia QV 690T 2.9TT V6", 6, 86.5, 82.0, 145.0, 9.3,
+                45.0, _FO_V6, flywheel_inertia=0.18, redline_rpm=7200, idle_rpm=800,
+                heat_release_k=3.0, ve_width_frac=0.66, closed_map_fraction=0.16,
+                exhaust_tone=104.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.024, exhaust_channels=2, exhaust_openness=0.84,
+                muffler_volume_m3=0.0018, induction="turbo", boost_bar=1.3,
+                turbo_lag=0.3, wall_material="titanium", gear_grain=0.3,
+                backpressure_coupling=0.7, gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.0, 0.84, 0.67],
+                final_drive=3.09, vehicle_mass=1620.0, wheel_radius=0.33,
+                clutch_capacity=650.0, gearbox_type="at")
+
+
+def jaguar_ftype_r_v8() -> Engine:
+    """Jaguar F-Type R AJ133 5.0 supercharged V8 — loud, crackly, bangs on lift."""
+    return _vee("Jaguar F-Type R AJ133 5.0 SC V8", 8, 92.5, 93.0, 152.0, 9.5,
+                45.0, _FO_V8_X, flywheel_inertia=0.3, redline_rpm=6800, idle_rpm=700,
+                heat_release_k=3.4, ve_width_frac=0.7, closed_map_fraction=0.12,
+                exhaust_tone=82.0, exhaust_primary_m=0.55, exhaust_total_m=2.0,
+                exhaust_radius_m=0.028, exhaust_channels=2, exhaust_openness=0.88,
+                muffler_volume_m3=0.0022, induction="roots", boost_bar=0.8,
+                blower_ratio=9.0, anti_lag=True, gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.0, 0.84, 0.67],
+                final_drive=3.31, vehicle_mass=1730.0, wheel_radius=0.34,
+                clutch_capacity=750.0, gearbox_type="at")
+
+
+def maserati_granturismo_s() -> Engine:
+    """Maserati GranTurismo S F136 4.7 flat-plane V8 — the howling crescendo."""
+    return _vee("Maserati GranTurismo S F136 4.7 V8", 8, 94.0, 84.5, 141.0, 11.3,
+                45.0, _FO_V8_FLAT, flywheel_inertia=0.24, redline_rpm=7500, idle_rpm=850,
+                heat_release_k=3.6, ve_peak_frac=0.7, ve_width_frac=0.62,
+                closed_map_fraction=0.12, exhaust_tone=108.0, exhaust_primary_m=0.55,
+                exhaust_total_m=2.0, exhaust_radius_m=0.024, exhaust_channels=2,
+                exhaust_openness=0.88, muffler_volume_m3=0.0016, wall_material="titanium",
+                gear_grain=0.25, gear_ratios=[4.06, 2.4, 1.61, 1.16, 0.86, 0.69],
+                final_drive=3.73, vehicle_mass=1880.0, wheel_radius=0.34,
+                clutch_capacity=620.0, gearbox_type="single")
+
+
+def jaguar_xj220_v6() -> Engine:
+    """Jaguar XJ220 3.5 twin-turbo V6 — a raw, boosty, 90s supercar V6."""
+    return _vee("Jaguar XJ220 JRV-6 3.5TT V6", 6, 94.0, 84.0, 152.0, 8.3,
+                30.0, _FO_V6, flywheel_inertia=0.2, redline_rpm=7200, idle_rpm=850,
+                heat_release_k=3.4, ve_width_frac=0.62, closed_map_fraction=0.17,
+                exhaust_tone=98.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
+                exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.82,
+                muffler_volume_m3=0.0015, induction="turbo", boost_bar=1.2,
+                turbo_lag=0.5, turbo_spool_frac=0.18, bov_flutter=True,
+                gear_ratios=[2.3, 1.61, 1.21, 0.94, 0.76], final_drive=3.31,
+                vehicle_mass=1470.0, wheel_radius=0.34, clutch_capacity=620.0,
+                gearbox_type="manual")
+
+
+def donkervoort_d8_gto() -> Engine:
+    """Donkervoort D8 GTO — Audi EA855 2.5 TFSI I5: the raw, light, 5-cyl warble."""
+    return _inline("Donkervoort D8 GTO EA855 2.5TT I5", 5, 82.5, 92.8, 145.0, 10.0,
+                   [1, 2, 4, 5, 3], flywheel_inertia=0.13, redline_rpm=7000,
+                   idle_rpm=850, heat_release_k=3.4, ve_width_frac=0.66,
+                   closed_map_fraction=0.16, exhaust_tone=96.0, exhaust_primary_m=0.5,
+                   exhaust_total_m=1.7, exhaust_radius_m=0.025, exhaust_channels=1,
+                   exhaust_openness=0.86, muffler_volume_m3=0.0012, induction="turbo",
+                   boost_bar=1.1, turbo_lag=0.3, has_cat=False,
+                   gear_ratios=[3.5, 2.16, 1.59, 1.26, 1.03], final_drive=3.64,
+                   vehicle_mass=695.0, wheel_radius=0.31, clutch_capacity=420.0,
+                   gearbox_type="manual")
+
+
+def tvr_cerbera_speed12() -> Engine:
+    """TVR Cerbera Speed 12 — AJP 7.7 V12 (two Speed Six I6s): brutal, raw, race."""
+    return _vee("TVR Cerbera Speed 12 AJP 7.7 V12", 12, 93.0, 77.0, 148.0, 11.0,
+                30.0, _FO_V12, flywheel_inertia=0.28, redline_rpm=7500, idle_rpm=900,
+                heat_release_k=3.8, ve_peak_frac=0.72, ve_width_frac=0.6,
+                closed_map_fraction=0.11, exhaust_tone=120.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.7, exhaust_radius_m=0.021, exhaust_channels=2,
+                exhaust_openness=0.96, muffler_volume_m3=0.001, has_cat=False,
+                straight_cut=True, wall_material="titanium", gear_grain=0.3,
+                gear_ratios=[2.9, 2.1, 1.6, 1.3, 1.05, 0.85], final_drive=3.6,
+                vehicle_mass=1100.0, wheel_radius=0.33, clutch_capacity=750.0,
+                gearbox_type="manual")
+
+
+def bmw_m3_e36() -> Engine:
+    """BMW M3 E36 S50B30 3.0 I6 — the smooth, linear, high-revving straight-six."""
+    return _inline("BMW M3 E36 S50B30 3.0 I6", 6, 86.0, 85.8, 135.0, 10.8, _FO_I6,
+                   flywheel_inertia=0.22, redline_rpm=7200, idle_rpm=780,
+                   heat_release_k=3.3, ve_peak_frac=0.62, ve_width_frac=0.62,
+                   closed_map_fraction=0.14, exhaust_tone=86.0, exhaust_primary_m=0.55,
+                   exhaust_total_m=2.0, exhaust_radius_m=0.026, exhaust_channels=1,
+                   exhaust_openness=0.78, muffler_volume_m3=0.0026,
+                   gear_ratios=[4.2, 2.49, 1.66, 1.24, 1.0], final_drive=3.23,
+                   vehicle_mass=1440.0, wheel_radius=0.32, clutch_capacity=420.0,
+                   gearbox_type="manual")
+
+
+def bmw_m5_e60_v10() -> Engine:
+    """BMW M5 E60 S85 5.0 V10 — the F1-derived, 8250-rpm screaming road V10."""
+    return _vee("BMW M5 E60 S85 5.0 V10", 10, 92.0, 75.2, 139.0, 12.0, 45.0, _FO_V10,
+                flywheel_inertia=0.2, redline_rpm=8250, idle_rpm=900,
+                heat_release_k=3.6, ve_peak_frac=0.78, ve_width_frac=0.6,
+                closed_map_fraction=0.12, exhaust_tone=120.0, exhaust_primary_m=0.5,
+                exhaust_total_m=1.95, exhaust_radius_m=0.021, exhaust_channels=2,
+                exhaust_openness=0.9, muffler_volume_m3=0.0016, wall_material="titanium",
+                gear_grain=0.3, gear_ratios=[4.06, 2.4, 1.58, 1.19, 1.0, 0.87, 0.74],
+                final_drive=3.62, vehicle_mass=1830.0, wheel_radius=0.34,
+                clutch_capacity=680.0, gearbox_type="single")
+
+
+def mercedes_e63_amg_m157() -> Engine:
+    """Mercedes E63 AMG M157 5.5 biturbo V8 — deep, muscular, muffled hot-V rumble."""
+    return _vee("Mercedes-Benz E63 AMG M157 5.5TT V8", 8, 98.0, 90.5, 154.0, 10.0,
+                45.0, _FO_V8_X, flywheel_inertia=0.32, redline_rpm=6500, idle_rpm=620,
+                heat_release_k=2.8, ve_width_frac=0.74, closed_map_fraction=0.18,
+                exhaust_tone=64.0, exhaust_primary_m=0.62, exhaust_total_m=2.3,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.62,
+                muffler_volume_m3=0.004, induction="turbo", boost_bar=1.0,
+                turbo_lag=0.4, gear_ratios=[4.38, 2.86, 1.92, 1.37, 1.0, 0.82, 0.73],
+                final_drive=2.82, vehicle_mass=1880.0, wheel_radius=0.34,
+                clutch_capacity=900.0, gearbox_type="at")
+
+
+def mercedes_c63_black_m156() -> Engine:
+    """Mercedes C63 AMG Black Series M156 6.2 NA V8 — thunderous cross-plane burble."""
+    return _vee("Mercedes-Benz C63 AMG BS M156 6.2 V8", 8, 102.2, 94.6, 155.0, 11.3,
+                45.0, _FO_V8_X, flywheel_inertia=0.3, redline_rpm=7200, idle_rpm=650,
+                heat_release_k=3.4, ve_peak_frac=0.62, ve_width_frac=0.66,
+                closed_map_fraction=0.12, exhaust_tone=66.0, exhaust_primary_m=0.6,
+                exhaust_total_m=2.1, exhaust_radius_m=0.029, exhaust_channels=2,
+                exhaust_openness=0.84, muffler_volume_m3=0.0018,
+                gear_ratios=[4.38, 2.86, 1.92, 1.37, 1.0, 0.82, 0.73], final_drive=3.07,
+                vehicle_mass=1720.0, wheel_radius=0.34, clutch_capacity=720.0,
+                gearbox_type="at")
+
+
+def cadillac_ct5v_blackwing() -> Engine:
+    """Cadillac CT5-V Blackwing LT4 6.2 supercharged V8 — blown American thunder."""
+    return _vee("Cadillac CT5-V Blackwing LT4 6.2 SC V8", 8, 103.25, 92.0, 154.0, 10.0,
+                45.0, _FO_V8_X, flywheel_inertia=0.34, redline_rpm=6500, idle_rpm=620,
+                heat_release_k=3.2, ve_width_frac=0.72, closed_map_fraction=0.16,
+                exhaust_tone=62.0, exhaust_primary_m=0.6, exhaust_total_m=2.1,
+                exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.72,
+                muffler_volume_m3=0.0028, induction="roots", boost_bar=0.7,
+                blower_ratio=8.5, valvetrain="ohv", valves_per_cyl=2,
+                gear_ratios=[2.97, 2.07, 1.43, 1.0, 0.71, 0.57], final_drive=3.27,
+                vehicle_mass=1840.0, wheel_radius=0.34, clutch_capacity=850.0,
+                gearbox_type="manual")
+
+
 # ----------------------------------------------------------------- registry
 # Ordered (key, label, factory).  Add a line here and the engine appears in the
 # selector and on its number key — nothing else to wire up.
@@ -2007,6 +2194,18 @@ PRESETS = [
     ("gdb", "Impreza WRX STi GDB EJ207", subaru_wrx_sti_gdb),
     ("gv", "WRX STi GV EJ257", subaru_wrx_sti_gv),
     ("vt15r", "WRX STi VT15R rally", subaru_wrx_sti_vt15r),
+    ("db11", "Aston DB11 V12", aston_martin_db11_v12),
+    ("giulia", "Giulia QV 690T V6", alfa_giulia_quadrifoglio),
+    ("ftype", "F-Type R 5.0 SC V8", jaguar_ftype_r_v8),
+    ("gts", "GranTurismo S F136 V8", maserati_granturismo_s),
+    ("xj220", "Jaguar XJ220 V6", jaguar_xj220_v6),
+    ("d8gto", "Donkervoort D8 GTO I5", donkervoort_d8_gto),
+    ("speed12", "TVR Cerbera Speed 12", tvr_cerbera_speed12),
+    ("e36m3", "BMW M3 E36 S50 I6", bmw_m3_e36),
+    ("e60m5", "BMW M5 E60 S85 V10", bmw_m5_e60_v10),
+    ("e63", "E63 AMG M157 V8", mercedes_e63_amg_m157),
+    ("c63bs", "C63 AMG BS M156 V8", mercedes_c63_black_m156),
+    ("ct5v", "CT5-V Blackwing LT4 V8", cadillac_ct5v_blackwing),
 ]
 
 ALL = {key: factory for key, _label, factory in PRESETS}
