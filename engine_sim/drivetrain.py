@@ -31,6 +31,7 @@ class Drivetrain:
             self.mass = engine.vehicle_mass
             self.clutch_capacity = engine.clutch_capacity
             self.gearbox_type = engine.gearbox_type
+            self.upshift_rpm = getattr(engine, "upshift_rpm", 0.0)
         else:
             self.ratios = [3.45, 2.10, 1.42, 1.03, 0.82]
             self.final_drive = 3.9
@@ -38,6 +39,7 @@ class Drivetrain:
             self.mass = 1250.0
             self.clutch_capacity = 340.0
             self.gearbox_type = "dct"
+            self.upshift_rpm = 0.0
 
         self.gear = 0                     # 0 = neutral, 1..len(ratios)
         self.clutch = 1.0                 # engagement, 0 (in) .. 1 (out/engaged)
@@ -192,15 +194,23 @@ class Drivetrain:
             if self._shift_phase == 1:
                 self.gear = self._pending_gear     # pre-engaged 2nd clutch -> instant
                 self._pending_gear = None
-                self._shift_phase = 3
-            if self._shift_elapsed < 0.06:
-                self._ease_clutch(0.55, dt, 16.0)  # brief slip = the handover
-            else:
-                self._ease_clutch(1.0, dt, 6.5)    # firm close -> clutch rev-matches
-            if self.clutch > 0.95 or self._shift_elapsed > 0.5:
-                self._shifting = False
-                self._shift_phase = 0
-                self._shift_lock = 0.30
+                self._shift_phase = 2              # fuel-cut handover (rev-match)
+            if self._shift_phase == 2:
+                # phase < 3 => combustion (and the hybrid motor) are cut, so the
+                # slipping clutch drags the engine to the NEW gear's speed (down on
+                # an upshift, up on a downshift) WITHOUT the engine flaring back to
+                # the limiter.  Hold the cut until it's actually rev-matched.
+                self._ease_clutch(0.6, dt, 16.0)
+                tgt = self.shift_target_omega() * 9.5492966   # rpm of the new gear
+                if abs(rpm - tgt) < max(400.0, 0.035 * redline) \
+                        or self._shift_elapsed > 0.35:
+                    self._shift_phase = 3
+            else:                                  # phase 3: re-fire + firm close
+                self._ease_clutch(1.0, dt, 7.0)
+                if self.clutch > 0.93 or self._shift_elapsed > 0.5:
+                    self._shifting = False
+                    self._shift_phase = 0
+                    self._shift_lock = 0.18
             return
 
         # --- TORQUE-CONVERTER AUTO: a fluid coupling never fully decouples, so an
@@ -268,10 +278,12 @@ class Drivetrain:
         if self._shift_lock > 0.0:
             self._shift_lock -= dt
 
-        up = 0.93 * redline
+        # F1 power units short-shift well below the redline (peak power / fuel /
+        # reliability), so each car can override the auto upshift point.
+        up = self.upshift_rpm if self.upshift_rpm > 0.0 else 0.93 * redline
         down = 0.50 * redline
         launching = self.v < 6.0          # still slipping the clutch off the line
-        locked = self.clutch > 0.9
+        locked = self.clutch > 0.7         # tolerate a little slip under big torque
 
         if throttle < 0.04 and self.v < 0.5:
             # stopped, off throttle: decouple (idle, no stall, no creep)
@@ -283,18 +295,21 @@ class Drivetrain:
         if self.gear == 0 and throttle > 0.04:
             self.gear = 1
 
-        # Only start a shift once the clutch is LOCKED, the car is rolling, and
-        # we are not in the brief post-shift lockout (which stops hunting).
-        # Decisions use the *wheel-matched* rpm, not the raw engine rpm, so a
-        # still-slipping launch can't trigger a bogus upshift.
-        if locked and not launching and self._shift_lock <= 0.0:
-            cur = self._matched_rpm(self.gear)
-            if (cur > up and self.gear < self.num_gears
+        # Only start a shift once the clutch is engaged, the car is rolling, and
+        # we are not in the brief post-shift lockout (which stops hunting).  The
+        # UPSHIFT triggers on the ENGINE rpm hitting the shift point (so a
+        # powerful engine that out-revs the road-matched rpm under clutch slip
+        # still short-shifts on time, instead of pinning the limiter); the
+        # next-gear sanity check still uses the wheel-matched rpm.
+        if not launching and self._shift_lock <= 0.0:
+            # UPSHIFT on engine rpm — even if the clutch is still slipping under a
+            # very torquey engine (so it never just pins the limiter).
+            if (rpm > up and self.gear < self.num_gears
                     and self._matched_rpm(self.gear + 1) > down * 1.1):
                 self._begin_shift(self.gear + 1)
                 self._run_shift(rpm, redline, dt)
                 return
-            elif cur < down and self.gear > 1:
+            elif locked and self._matched_rpm(self.gear) < down and self.gear > 1:
                 self._begin_shift(self.gear - 1)
                 self._run_shift(rpm, redline, dt)
                 return

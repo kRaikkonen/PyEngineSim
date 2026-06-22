@@ -130,8 +130,8 @@ class Simulator:
         eng = self.engine
         if eng.hybrid_kw <= 0.0 or not self.hybrid_on:
             return 0.0
-        if self.rpm >= eng.redline_rpm:        # don't drive past the rev limiter
-            return 0.0
+        if self.rpm >= eng.redline_rpm or self._shift_cut:
+            return 0.0                          # no drive past the limiter / mid-shift
         thr = min(max(self.throttle, 0.0), 1.0)
         if thr <= 0.0:
             return 0.0
