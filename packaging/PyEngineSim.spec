@@ -15,6 +15,9 @@ from PyInstaller.utils.hooks import collect_all
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
 datas, binaries, hiddenimports = [], [], []
+# Bundle the embedded UI fonts (BankGothic-style face) so the app looks right
+# even on machines where the font isn't installed.
+datas += [(os.path.join(ROOT, "engine_sim", "assets"), "engine_sim/assets")]
 # Pull in everything these packages need (DLLs, data, submodules) so the bundle
 # is self-contained — scipy/numpy/sounddevice especially carry native libs.
 for pkg in ("numpy", "scipy", "sounddevice", "pygame", "soundfile"):

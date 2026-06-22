@@ -14,6 +14,7 @@ Controls (mirroring the original Engine Simulator where it makes sense):
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 import pygame
@@ -136,7 +137,7 @@ TR_ZH = {
     "Scope": "波形",
     "ENGINE ANALYZER": "发动机分析仪",
     "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
-    "WAVEFORM — final audio output": "波形 — 最终合成音频输出",
+    "WAVEFORM · final audio output": "波形 · 最终合成音频输出",
     "Cylinder combustion pressure pulses": "气缸燃烧压力脉冲",
     "Exhaust system output pressure": "排气系统输出压力",
     "Valve lift (intake / exhaust)": "气门升程 (进气 / 排气)",
@@ -236,6 +237,7 @@ class App:
         self._touch_starter = False
         self.clock = pygame.time.Clock()
         self.lang = "en"          # "en" | "zh"
+        self._bundled_fonts = self._find_bundled_fonts()
         self._init_fonts()
 
         # load any user engine .json configs as extra presets
@@ -340,7 +342,7 @@ class App:
         self._buttons = []
         y = panel.y + 12
         for ri in sorted(rows):
-            x = panel.x + 14
+            x = panel.x + 26                  # clear the top-left corner screw
             for label, cb, active, color in rows[ri]:
                 w = self.font_small.size(label)[0] + 20
                 self._buttons.append({"label": label, "cb": cb, "active": active,
@@ -522,7 +524,7 @@ class App:
             return
         self.telemetry_mode = True
         self.sim.ignition_on = True
-        self._flash(f"Telemetry ON — Forza Data Out -> this PC :{FORZA_PORT}")
+        self._flash(f"Telemetry ON · Forza Data Out -> this PC :{FORZA_PORT}")
 
     def _flash(self, msg):
         self._status = msg
@@ -578,18 +580,55 @@ class App:
         self._tele_smooth.clear()             # don't carry needle state across cars
 
     # ----------------------------------------------------------------- input
+    @staticmethod
+    def _find_bundled_fonts():
+        """Any .ttf/.otf shipped in engine_sim/assets/fonts (so a BankGothic-style
+        face can be EMBEDDED and used even when the user hasn't installed it —
+        PyInstaller bundles the folder)."""
+        d = os.path.join(os.path.dirname(__file__), "assets", "fonts")
+        out = []
+        try:
+            for fn in sorted(os.listdir(d)):
+                if fn.lower().endswith((".ttf", ".otf")):
+                    out.append(os.path.join(d, fn))
+        except Exception:
+            pass
+        return out
+
+    def _eng_font(self, size, bold=False):
+        """English face: prefer a bundled BankGothic-style .ttf, then a matching
+        installed industrial/gothic face, finally Consolas."""
+        for path in getattr(self, "_bundled_fonts", []):
+            try:
+                f = pygame.font.Font(path, size)
+                f.set_bold(bold)
+                return f
+            except Exception:
+                pass
+        name = pygame.font.match_font(
+            "bankgothicmdbt,bankgothic,bankgothicproregular,bahnschrift,"
+            "eurostile,microgramma,squarish,agencyfb,oswald")
+        if name:
+            try:
+                f = pygame.font.Font(name, size)
+                f.set_bold(bold)
+                return f
+            except Exception:
+                pass
+        return pygame.font.SysFont("consolas", size, bold=bold)
+
     def _init_fonts(self):
         """(Re)build fonts for the current language — a CJK-capable face for
-        Chinese, crisp Consolas for English."""
+        Chinese, a bundled BankGothic-style face for English."""
         if self.lang == "zh":
             fam = "microsoftyahei,microsoftyaheui,simhei,simsun"
             self.font = pygame.font.SysFont(fam, 17)
             self.font_big = pygame.font.SysFont(fam, 40, bold=True)
             self.font_small = pygame.font.SysFont(fam, 14)
         else:
-            self.font = pygame.font.SysFont("consolas", 18)
-            self.font_big = pygame.font.SysFont("consolas", 44, bold=True)
-            self.font_small = pygame.font.SysFont("consolas", 14)
+            self.font = self._eng_font(18)
+            self.font_big = self._eng_font(42, bold=True)
+            self.font_small = self._eng_font(14)
 
     def tr(self, s):
         """Translate a UI string for the current language."""
@@ -948,6 +987,10 @@ class App:
     def draw(self):
         self._update_hud_signals()
         self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
+        self.screen.blit(self._brushed(WIDTH, HEIGHT, 0), (0, 0))   # brushed backplate
+        for sx, sy in ((13, 13), (WIDTH - 13, 13), (13, HEIGHT - 13),
+                       (WIDTH - 13, HEIGHT - 13)):                  # backplate screws
+            self._screw(sx, sy, 6)
         left = pygame.Rect(24, 24, 620, 632)
         if self.mixer_open:
             self._draw_mixer(left)
@@ -1043,13 +1086,58 @@ class App:
         pygame.draw.polygon(self.screen, (110, 116, 128), beam, 1)
         pygame.draw.line(self.screen, (180, 186, 198), small, big, 1)   # web highlight
 
-    def _panel(self, rect, radius=14):
-        """A glossy beveled panel slab (gradient + light top edge + dark base)."""
+    def _brushed(self, w, h, radius):
+        """A cached translucent BRUSHED-METAL overlay: fine horizontal grain (long
+        light/dark streaks) for a real machined-aluminium feel over the slab."""
+        w, h = int(w), int(h)
+        key = ('brush', w, h, radius)
+        s = self._grad_cache.get(key)
+        if s is None:
+            rng = np.random.default_rng(7)
+            streak = np.cumsum(rng.standard_normal((h, w)).astype(np.float32), axis=1)
+            streak -= streak.mean(axis=1, keepdims=True)
+            streak = np.clip(streak * 0.10, -16.0, 16.0)
+            rgb = np.repeat(np.where(streak[:, :, None] >= 0, 255, 0).astype(np.uint8),
+                            3, axis=2)
+            alpha = np.clip(np.abs(streak) * 2.2, 0, 24).astype(np.uint8)[:, :, None]
+            arr = np.ascontiguousarray(np.dstack([rgb, alpha]))
+            s = pygame.image.frombuffer(arr.tobytes(), (w, h), "RGBA").convert_alpha()
+            if radius > 0:
+                mask = pygame.Surface((w, h), pygame.SRCALPHA)
+                pygame.draw.rect(mask, (255, 255, 255, 255), (0, 0, w, h),
+                                 border_radius=radius)
+                s.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+            self._grad_cache[key] = s
+        return s
+
+    def _screw(self, cx, cy, r=5):
+        """A skeuomorphic countersunk screw head (iOS 6): recess shadow, brushed
+        head lit from the top-left, and a slotted notch with shadow + highlight."""
+        cx, cy = int(cx), int(cy)
+        pygame.draw.circle(self.screen, (18, 20, 24), (cx, cy + 1), r + 1)   # recess
+        pygame.draw.circle(self.screen, (96, 102, 114), (cx, cy), r)        # head
+        pygame.draw.circle(self.screen, (150, 158, 172), (cx - 1, cy - 1), max(1, r - 2))
+        pygame.draw.circle(self.screen, (58, 62, 72), (cx, cy), r, 1)
+        a = 0.7
+        dx, dy = math.cos(a) * (r - 1), math.sin(a) * (r - 1)
+        pygame.draw.line(self.screen, (34, 37, 44),
+                         (cx - dx, cy - dy + 1), (cx + dx, cy + dy + 1), 2)
+        pygame.draw.line(self.screen, (188, 194, 206),
+                         (cx - dx, cy - dy), (cx + dx, cy + dy), 1)
+
+    def _panel(self, rect, radius=14, screws=True):
+        """A glossy beveled brushed-metal panel slab with iOS-6 corner screws."""
         self.screen.blit(self._grad_surf(rect.w, rect.h, PANEL_TOP, PANEL_BOT,
                                           radius), rect.topleft)
+        self.screen.blit(self._brushed(rect.w, rect.h, radius), rect.topleft)
         pygame.draw.rect(self.screen, BEVEL_LO, rect, width=1, border_radius=radius)
         pygame.draw.line(self.screen, BEVEL_HI, (rect.x + radius, rect.y + 1),
                          (rect.right - radius, rect.y + 1))
+        if screws:
+            d = radius
+            for sx, sy in ((rect.x + d, rect.y + d), (rect.right - d, rect.y + d),
+                           (rect.x + d, rect.bottom - d), (rect.right - d, rect.bottom - d)):
+                self._screw(sx, sy)
 
     def _draw_button(self, b, mouse):
         r = b["rect"]
@@ -1066,9 +1154,20 @@ class App:
             c1, c2, txt = BTN_HI, BTN_LO, INK
         self.screen.blit(self._grad_surf(r.w, r.h, c1, c2, 6, gloss=True), r.topleft)
         pygame.draw.rect(self.screen, BEVEL_LO, r, width=1, border_radius=6)
-        lbl = self.font_small.render(b["label"], True, txt)
-        self.screen.blit(lbl, (r.centerx - lbl.get_width() // 2,
-                               r.centery - lbl.get_height() // 2))
+        # a dropdown caret is DRAWN (the ▾ glyph is absent from the gothic font)
+        text = b["label"]
+        caret = text.endswith("▾") or text.endswith("▼")
+        if caret:
+            text = text[:-1].rstrip()
+        lbl = self.font_small.render(text, True, txt)
+        lw = lbl.get_width()
+        block = lw + (12 if caret else 0)
+        lx = r.centerx - block // 2
+        self.screen.blit(lbl, (lx, r.centery - lbl.get_height() // 2))
+        if caret:
+            tx, ty = lx + lw + 6, r.centery
+            pygame.draw.polygon(self.screen, txt,
+                                [(tx - 4, ty - 2), (tx + 4, ty - 2), (tx, ty + 3)])
 
     def _draw_toolbar(self):
         mouse = self.canvas_mouse()
@@ -1109,7 +1208,7 @@ class App:
                              border_radius=3)
 
     def _draw_mixer(self, rect):
-        self._panel(rect)
+        self._panel(rect, screws=False)
         self.screen.blit(self.font.render(self.tr("AUDIO MIXER"), True, INK),
                          (rect.x + 18, rect.y + 18))
         self.screen.blit(self.font_small.render(
@@ -1730,7 +1829,7 @@ class App:
         val = self.font_small.render(value, True, INK)
         self.screen.blit(val, (cx - val.get_width() // 2, cy + r * 0.4))
 
-    def _draw_turbo(self, cx, cy, r, spin, load):
+    def _draw_turbo(self, cx, cy, r, spin, load, label=True):
         """A turbocharger: scroll/volute housing with a spinning turbine wheel,
         glowing hotter as it makes boost."""
         cx, cy = int(cx), int(cy)
@@ -1752,10 +1851,11 @@ class App:
                                (r, r), int(r * 0.5))
             self.screen.blit(gs, (cx - r, cy - r))
         pygame.draw.circle(self.screen, (90, 96, 108), (cx, cy), hub)
-        lab = self.font_small.render(self.tr("TURBO"), True, DIM)
-        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+        if label:
+            lab = self.font_small.render(self.tr("TURBO"), True, DIM)
+            self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
-    def _draw_blower(self, cx, cy, r, spin, load, centri=False):
+    def _draw_blower(self, cx, cy, r, spin, load, centri=False, label=True):
         """A supercharger: a centrifugal impeller, or two counter-rotating Roots
         lobes, spinning with the engine."""
         cx, cy = int(cx), int(cy)
@@ -1783,8 +1883,9 @@ class App:
             pygame.draw.circle(gs, (90, 170, 255, int(120 * min(load, 1.0))),
                                (int(1.5 * r), r), int(r * 0.7))
             self.screen.blit(gs, (cx - int(1.5 * r), cy - r))
-        lab = self.font_small.render(self.tr(txt), True, DIM)
-        self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+        if label:
+            lab = self.font_small.render(self.tr(txt), True, DIM)
+            self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
 
     def _exhaust_db(self):
         """A rough exhaust-loudness readout from the synth's last output RMS."""
@@ -2083,7 +2184,7 @@ class App:
         """Engine-analyzer overlay: final audio waveform on top, then per-cycle
         physical signals (combustion pulses, exhaust pressure, valve lift, crank
         torque, single-cylinder pressure, ignition/cam timing)."""
-        self._panel(rect)
+        self._panel(rect, screws=False)
         sim, eng = self.sim, self.sim.engine
         self.screen.blit(self.font.render(self.tr("ENGINE ANALYZER"), True, INK),
                          (rect.x + 18, rect.y + 12))
@@ -2126,7 +2227,7 @@ class App:
         aud = getattr(self.synth, "last_wave", None) if self.synth else None
 
         # --- top: final synthesized audio waveform ------------------------------
-        self._ascope(x0, topy, fullw, toph, "WAVEFORM — final audio output",
+        self._ascope(x0, topy, fullw, toph, "WAVEFORM · final audio output",
                      [(aud, (120, 230, 150))], bipolar=True)
         # --- two rows of three -------------------------------------------------
         cw = (fullw - 2 * gap) / 3.0
@@ -2192,18 +2293,18 @@ class App:
             spin = self.sim.crank_angle * max(ratio, 0.4)
             load = (self.sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
             fcx, fcy = x0 + gap * 5.5, cy
+            # no inline label — the rpm/boost readouts go below, clear of the wheel
             if eng.induction == "turbo":
-                self._draw_turbo(fcx, fcy, r - 2, spin, load)
+                self._draw_turbo(fcx, fcy, r - 2, spin, load, label=False)
             else:
                 self._draw_blower(fcx, fcy, r - 4, spin, load,
-                                  centri=(eng.induction == "centrifugal"))
-            # shaft-speed readout (the requested turbo-rpm display) + boost
-            bt = self.font_small.render(f"{self.sim.boost:.2f} bar", True, ACCENT)
-            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r * 0.42)))
-            rpm_txt = (f"{fi_rpm / 1000.0:.0f}k rpm" if fi_rpm >= 1000.0
-                       else "0 rpm")
+                                  centri=(eng.induction == "centrifugal"), label=False)
+            # shaft-speed + boost, stacked BELOW the wheel so nothing overlaps it
+            rpm_txt = (f"{fi_rpm / 1000.0:.0f}k rpm" if fi_rpm >= 1000.0 else "0 rpm")
             rt = self.font_small.render(rpm_txt, True, GOOD)
-            self.screen.blit(rt, (int(fcx) - rt.get_width() // 2, int(fcy + r + 18)))
+            self.screen.blit(rt, (int(fcx) - rt.get_width() // 2, int(fcy + r + 4)))
+            bt = self.font_small.render(f"{self.sim.boost:.2f} bar", True, ACCENT)
+            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r + 17)))
 
     def _draw_preset_bar(self, rect):
         """Selectable engine chips (wrap to more rows for cfg engines)."""
@@ -2306,7 +2407,7 @@ class App:
         y += 21
         # two short lines so the hint never runs off the panel's right edge
         self.screen.blit(self.font_small.render(
-            "↑↓ gas · ZX shift · A ign · S start", True, ACCENT),
+            "Up/Dn gas · ZX shift · A ign · S start", True, ACCENT),
             (rect.x + 24, y))
         self.screen.blit(self.font_small.render(
             "C mixer · E scope · M mute · Esc quit", True, ACCENT),
