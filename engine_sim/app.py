@@ -1983,7 +1983,7 @@ class App:
         mtop = top if top is not None else rect.y + 32
         mbot = bottom if bottom is not None else rect.bottom - 12
         unit_name = f"VR{len(left)}"
-        exhL, exhR, intk = [], [], []                 # manifold ports (drawn on top)
+        headsL, headsR = [], []                       # head tops per VR unit
         wwidth = 13.0
         for ui, grp in enumerate((left, right)):
             ux = rect.x + int(rect.width * (0.40 if ui == 0 else 0.60))  # closer columns
@@ -2032,12 +2032,9 @@ class App:
                             else 0.0)
                     a = sgn * tilt
                     self._draw_cyl(ux, jy, a, length, width, frac, theta, glow, phi)
-                    hx = ux + math.sin(a) * length     # head; ports to each side
+                    hx = ux + math.sin(a) * length     # head top
                     hy = jy - math.cos(a) * length
-                    osign = -1.0 if ui == 0 else 1.0   # exhaust toward the unit's outer
-                    (exhL if ui == 0 else exhR).append(
-                        (hx + osign * width * 0.5, hy))
-                    intk.append((hx - osign * width * 0.5, hy))
+                    (headsL if ui == 0 else headsR).append((hx, hy))
                     lx = ux + math.sin(a) * (length + 14)
                     ly = jy - math.cos(a) * (length + 14)
                     lab = self.font_small.render(f"{i + 1}", True, DIM)
@@ -2045,24 +2042,42 @@ class App:
             ulab = self.font_small.render(unit_name, True, (150, 158, 172))
             self.screen.blit(ulab, (ux - ulab.get_width() // 2, mbot + 6))
             wwidth = width
-        # manifolds ON TOP: red exhaust squares out to each side, green intake up
+        # manifolds ON TOP, routed only through EMPTY space (above heads / outside
+        # the units) so nothing crosses the pistons: a green intake plenum bar over
+        # each VR unit with short down-runners, and the exhaust taken up-and-over to
+        # the two turbos on that unit's OUTER side (left VR8 -> left turbos, etc.).
         cyv = int((mtop + mbot) * 0.5)
         hrad = max(2, int(wwidth * 0.16)); irad = max(2, int(wwidth * 0.13))
-        for ports, rail_x, tgt in ((exhL, rect.x + 30, (rect.x + 46, cyv)),
-                                   (exhR, rect.right - 30, (rect.right - 46, cyv))):
-            if not ports:
+        ctop = int(min((min(h[1] for h in headsL) if headsL else mtop),
+                       (min(h[1] for h in headsR) if headsR else mtop)) - 22)
+        for heads, outer in ((headsL, -1), (headsR, 1)):
+            if not heads:
                 continue
-            ports.sort(key=lambda p: p[1])
-            for px, py in ports:
-                self._draw_ortho_pipe([(px, py), (rail_x, py)], hrad,
-                                      self._EXH_COLS, joint=True)
-            self._draw_ortho_pipe([(rail_x, ports[0][1]), (rail_x, tgt[1]), tgt],
-                                  hrad + 1, self._EXH_COLS)
-        plen_y = mtop - 6
-        for px, py in intk:
-            self._draw_ortho_pipe([(px, py), (px, plen_y), (rect.centerx, plen_y)],
-                                  irad, self._INT_COLS, joint=True)
-        self._collector_slug((rect.centerx, plen_y), irad)
+            xs = [h[0] for h in heads]
+            topy = int(min(h[1] for h in heads))
+            bar_y, band_y = topy - 12, topy - 26
+            # INTAKE: plenum bar over the unit + short down-runners to each head top
+            self._draw_ortho_pipe([(int(min(xs) - 6), bar_y), (int(max(xs) + 6), bar_y)],
+                                  irad + 1, self._INT_COLS)
+            for hx, hy in heads:
+                self._draw_ortho_pipe([(int(hx), bar_y), (int(hx), int(hy))], irad,
+                                      self._INT_COLS, joint=True)
+            inner_x = int(max(xs) + 6) if outer < 0 else int(min(xs) - 6)
+            self._draw_ortho_pipe([(inner_x, bar_y), (rect.centerx, ctop)], irad,
+                                  self._INT_COLS)
+            # EXHAUST: each head up to a band above, out to a side rail, down to the
+            # two turbos on this side
+            rail_x = rect.x + 64 if outer < 0 else rect.right - 64
+            for hx, hy in heads:
+                ex = int(hx + outer * wwidth * 0.5)
+                self._draw_ortho_pipe([(ex, int(hy)), (ex, band_y), (rail_x, band_y)],
+                                      hrad, self._EXH_COLS, joint=True)
+            turbo_x = rect.x + 46 if outer < 0 else rect.right - 46
+            self._draw_ortho_pipe([(rail_x, band_y), (rail_x, cyv + 34),
+                                   (turbo_x, cyv + 34)], hrad + 1, self._EXH_COLS)
+            self._draw_ortho_pipe([(rail_x, cyv - 34), (turbo_x, cyv - 34)], hrad,
+                                  self._EXH_COLS)
+        self._collector_slug((rect.centerx, ctop), irad + 1)
 
     def _draw_radial(self, rect, top, bottom):
         """Aircraft radial: cylinders arranged in a STAR around a central crank,
