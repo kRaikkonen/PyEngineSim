@@ -1916,21 +1916,39 @@ class App:
         self.screen.blit(self.font_small.render(self.tr(label), True, (150, 158, 172)),
                          (x + 5, y + 3))
 
-    def _airflow_base(self, w):
-        """Analytic EXHAUST AIRFLOW over ONE fixed 720-deg cycle (refresh-style,
-        not scrolling): every cylinder's blowdown pulse sits at a FIXED position
-        and lights up / swells live as that cylinder actually fires.  You see the
-        firing-pattern shape, steady, not a trace sliding with rpm.  All-positive,
-        length w."""
+    def _mini_scope_multi(self, x, y, w, h, label, waves, colors):
+        """A flow window with ONE coloured trace per cylinder, overlaid (all share
+        the same baseline + vertical scale) so each cylinder's pulse is legible by
+        colour rather than merged into a single lump."""
+        pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
+        pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
+        base_y = y + h - 8
+        pygame.draw.line(self.screen, (32, 36, 44), (x, base_y), (x + w, base_y), 1)
+        if waves:
+            mx = max((float(np.max(np.abs(wv))) for wv in waves), default=1e-6) or 1e-6
+            n = len(waves[0])
+            xs = x + np.arange(n) / (n - 1) * (w - 2) + 1
+            for wv, col in zip(waves, colors):
+                yv = base_y - (wv / mx) * (h - 18)
+                pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
+                pygame.draw.lines(self.screen, col, False, pts, 1)
+        self.screen.blit(self.font_small.render(self.tr(label), True, (150, 158, 172)),
+                         (x + 5, y + 3))
+
+    def _airflow_cyl(self, w):
+        """PER-CYLINDER exhaust airflow over ONE fixed 720-deg cycle (refresh-
+        style): a separate blowdown-pulse trace for each cylinder, sitting at its
+        own fixed firing position and swelling live as it fires.  Returns a list
+        of n all-positive arrays (drawn overlaid, one colour each)."""
         sim = self.sim
         n = sim.engine.num_cylinders
         if n < 1 or w < 2:
-            return np.zeros(max(w, 1))
+            return []
         offs = sim._offset_deg
         load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
                        0.30), 1.05)
         ang = np.arange(w) / (w - 1) * 720.0              # FIXED one-cycle axis
-        flow = np.zeros(w)
+        waves = []
         for i in range(n):
             phi = (ang + offs[i]) % 720.0
             d = phi - 505.0                               # 0 at exhaust-valve open
@@ -1938,8 +1956,18 @@ class App:
                            np.clip(d / 4.0, 0.0, 1.0)
                            * np.exp(-np.clip(d, 0, None) / 30.0), 0.0)
             flash = self._ign_flash.get(i, 0.0)           # live per-cylinder firing
-            flow += env * (0.45 + 0.55 * flash)
-        return flow * load
+            waves.append(env * (0.45 + 0.55 * flash) * load)
+        return waves
+
+    @staticmethod
+    def _cyl_colors(n):
+        """A distinct hue per cylinder so overlaid traces are easy to tell apart."""
+        cols = []
+        for i in range(max(n, 1)):
+            c = pygame.Color(0, 0, 0)
+            c.hsva = (int(360 * i / max(n, 1)), 82, 100, 100)
+            cols.append((c.r, c.g, c.b))
+        return cols
 
     @staticmethod
     def _smooth(arr, k):
@@ -1992,19 +2020,19 @@ class App:
         gw, gh = rect.width - 36, rect.height - 82
         cw = (gw - (cols - 1) * 12) / cols
         ch = (gh - (rows - 1) * 12) / rows
-        # FLOW: one shared rpm-pitched airflow trace, each window damped a bit more
-        # down the pipe (header sharp -> tailpipe smoothed).
-        base = self._airflow_base(int(cw) - 2) if flow else None
+        # FLOW: one coloured trace PER CYLINDER, each window damped a bit more down
+        # the pipe (header sharp -> tailpipe smoothed).
+        base_waves = self._airflow_cyl(int(cw) - 2) if flow else None
+        cyl_cols = self._cyl_colors(len(base_waves)) if flow else None
         for idx, name in enumerate(order):
             r, c = divmod(idx, cols)
             cx = gx + c * (cw + 12)
             cy = gy + r * (ch + 12)
             if flow:
                 k = max(1, int((int(cw) - 2) * (0.006 + idx * 0.012)))
-                wave = self._smooth(base, k)
-                self._mini_scope(int(cx), int(cy), int(cw), int(ch),
-                                 f"{idx + 1} {self.tr(name)}", wave,
-                                 unipolar=True, col=(236, 150, 60))
+                waves = [self._smooth(wv, k) for wv in base_waves]
+                self._mini_scope_multi(int(cx), int(cy), int(cw), int(ch),
+                                       f"{idx + 1} {self.tr(name)}", waves, cyl_cols)
             else:
                 self._mini_scope(int(cx), int(cy), int(cw), int(ch),
                                  f"{idx + 1} {self.tr(name)}",
