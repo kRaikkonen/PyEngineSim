@@ -699,6 +699,12 @@ class Synthesizer:
             bore = min(max((0.028 - r) / 0.011, 0.0), 1.0)
             self._whine_amt = min(rev * (0.55 + 0.30 * bore
                                          + 0.25 * eng.exhaust_openness), 1.1)
+            # HOT-V: turbos sit in the valley right off short, equal-length, merged
+            # runners -> they swallow the header rasp / standing-wave whine and
+            # deepen + smooth the note (the AMG/BMW twin-turbo woofle).
+            self._hot_v = bool(getattr(eng, "hot_v", False))
+            if self._hot_v:
+                self._whine_amt *= 0.42
             fqw0 = 540.0 / (4.0 * L_tot)                     # quarter-wave, nominal c
             self._whine_orders = []
             for target in (3500.0, 5000.0, 6500.0):

@@ -121,6 +121,12 @@ class Engine:
     exhaust_total_m: float = 1.6     # full system length (m) -> low resonance
     exhaust_radius_m: float = 0.022  # pipe inner radius (open-end correction/loss)
     exhaust_channels: int = 1        # 1 = merged; 2 = separate banks (cross-plane V8)
+    hot_v: bool = False              # "hot vee": exhaust + turbos INSIDE the V valley
+                                     #   -> short, equal-length, centrally-merged
+                                     #   pulses straight into the turbo -> a deeper,
+                                     #   more uniform, turbo-muffled note (AMG/BMW
+                                     #   M-TT, Ferrari F154 ...).  audio: merge banks,
+                                     #   damp the header rasp / standing-wave whine.
     exhaust_openness: float = 0.85   # 0 packed muffler .. 1 open header (sets g & loop fc)
     muffler_volume_m3: float = 0.003 # Helmholtz chamber volume (m^3)
     muffler_neck_area_m2: float = 0.0020

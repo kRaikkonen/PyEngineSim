@@ -2975,6 +2975,9 @@ _VARIABLE_VALVE = {
 }
 # Honda transverse engines famously spin the "wrong" way (CCW from the pulley).
 _CCW_ROTATION = {"ek9", "ep3", "fk8", "nsx"}
+# "hot vee" — exhaust + turbos inside the V valley (AMG M157/M177/M178, BMW
+# S63, Ferrari F154, Audi EA839, McLaren M838T/M840 ...).
+_HOT_V = {"e63", "amggt", "valhalla", "488", "pista", "rs5", "senna", "p1"}
 
 
 def _annotate(key, eng):
@@ -2983,6 +2986,8 @@ def _annotate(key, eng):
         eng.variable_valve = _VARIABLE_VALVE[key]
     if key in _CCW_ROTATION:
         eng.rotation = "CCW"
+    if key in _HOT_V:
+        eng.hot_v = True
     return eng
 
 

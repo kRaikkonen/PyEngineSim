@@ -1473,6 +1473,8 @@ class App:
             cfg = f"flat-{n}"
         else:
             cfg = f"V{n} {2 * maxang:.0f}°{plane}"
+            if getattr(eng, "hot_v", False):
+                cfg += " hot-V"
         rot = "CCW" if getattr(eng, "rotation", "CW") == "CCW" else "CW"
         vv = getattr(eng, "variable_valve", "")
         vv_txt = f" · {vv}" if vv else ""
@@ -2712,10 +2714,10 @@ class App:
             pygame.draw.circle(sc, (18, 20, 26),
                                (int(cx + R * 0.46 * math.cos(da)),
                                 int(cy + R * 0.46 * math.sin(da))), 1)
-        # five twin (forked) carbon spokes
+        # five twin (forked) carbon spokes (spin at the SAME rate as the tyre logo)
         rr = R * 0.78
         for k in range(5):
-            a = ang * 0.5 + k * (2 * math.pi / 5.0)
+            a = ang + k * (2 * math.pi / 5.0)
             ca, sa = math.cos(a), math.sin(a)
             pa, ps = -sa, ca
             hub = (cx + R * 0.18 * ca, cy + R * 0.18 * sa)
