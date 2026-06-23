@@ -253,7 +253,19 @@ class App:
         # The whole UI is drawn onto a fixed-size canvas, then scaled to fit a
         # freely resizable OS window — so you can drag the window to any size
         # (or maximise it) and everything scales cleanly, keeping its layout.
-        self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
+        self._scaled = False
+        if ON_ANDROID:
+            # SDL2 logical-size scaling: render the fixed 1100x680 canvas, then let
+            # the GPU scale it to FILL the phone screen (fixes the "tiny in the
+            # corner" bug and drops the costly per-frame CPU smoothscale).
+            try:
+                self.window = pygame.display.set_mode(
+                    (WIDTH, HEIGHT), pygame.SCALED | pygame.FULLSCREEN)
+                self._scaled = True
+            except Exception:
+                self.window = pygame.display.set_mode((WIDTH, HEIGHT))
+        else:
+            self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         self.screen = pygame.Surface((WIDTH, HEIGHT))
         self._win_size = (WIDTH, HEIGHT)
         self._draw_offset = (0, 0)
@@ -294,7 +306,7 @@ class App:
         # Forza telemetry mode: drive the sound from a real game's broadcast rpm
         self.telemetry = None
         self.telemetry_mode = False
-        self.low_quality = False  # simplified bay render (solid, lighter cylinders)
+        self.low_quality = ON_ANDROID  # phones default to the lighter render
         self.forza_ultra = False  # draw NOTHING (just audio) — max perf for Forza play
         self.g_spatial = False    # drift the spatial dot from Forza G-force
         self.slow_mo = 1.0        # 1.0 normal .. 0.001 = 1000x slow motion
@@ -1263,6 +1275,12 @@ class App:
         # Fit the native 1100x680 canvas into the window, PRESERVING ASPECT RATIO
         # (letter-boxed) — so it fills a phone screen or a maximised desktop window
         # cleanly instead of sitting tiny in the corner.  scale==1 => crisp 1:1.
+        if self._scaled:                      # SDL2 SCALED: the GPU scales for us
+            self._draw_scale = 1.0
+            self._draw_offset = (0, 0)
+            self.window.blit(self.screen, (0, 0))
+            pygame.display.flip()
+            return
         ww, wh = self._win_size
         scale = min(ww / WIDTH, wh / HEIGHT)
         sw, sh = int(WIDTH * scale), int(HEIGHT * scale)
