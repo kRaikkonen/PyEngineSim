@@ -26,6 +26,12 @@ from . import presets
 from . import config
 from .units import nm_to_lbft, nm_to_hp_at, rpm_to_rads
 
+# python-for-android sets these in the app's environment; use them to detect that
+# we're running on a phone so the UI can default to the finger-control overlay.
+ON_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
+                  or os.environ.get("ANDROID_APP_PATH")
+                  or os.environ.get("ANDROID_PRIVATE"))
+
 SAMPLE_RATES = [44100, 48000]
 
 
@@ -78,6 +84,27 @@ BTN_ON_LO = (28, 108, 224)
 # --- localisation (English / 简体中文) ---------------------------------------
 # Keyed by the English string; tr() returns the current language's version.
 TR_ZH = {
+    # control-key hint functions (【key】function)
+    "Gas": "油门", "Clutch": "离合", "Upshift": "升挡", "Downshift": "降挡",
+    "Auto/Manual": "自动/手动", "Ign": "点火", "Start": "起动",
+    "Mixer": "混音", "Mute": "静音", "Exit": "退出",
+    # engine-off prompt
+    "Engine off — start it:": "发动机未启动，请起动：", "Ignition": "点火",
+    # trip readouts
+    "Oil": "机油", "RESET": "清零",
+    # engine-bay components (shown under the bay drawing)
+    "Air Filter": "空气滤芯", "Radiator": "散热器", "Throttle Body": "节气门体",
+    "Catalytic": "三元催化", "Resonator": "中段消音", "Muffler": "尾段消音",
+    "Tailpipe": "排气尾管", "Intercooler": "中冷器", "Wastegate": "废气阀",
+    "Blow-off": "泄压阀", "Megaphone": "喇叭口", "Supercharger": "机械增压",
+    "Centrifugal SC": "离心增压", "Single Turbo": "单涡轮", "Quad-turbo": "四涡轮",
+    "Prop Reduction": "桨减速器", "HV Battery": "高压电池",
+    "Twin-scroll Single Turbo": "双涡管单涡轮", "Parallel Twin-turbo": "并列双涡轮",
+    "Twincharge": "双增压", "DOC": "氧化催化", "DPF": "颗粒捕集", "DEF": "尿素",
+    # touch toggle / states
+    "ON": "开", "OFF": "关", "Odo Reset": "里程清零",
+    # gearbox type tag in the GEAR readout
+    "single-clutch": "单离合", "AT": "自动变速", "manual": "手动挡", "DCT": "双离合",
     # toolbar
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
@@ -135,8 +162,8 @@ TR_ZH = {
     "IN AFR": "进气空燃比", "EX O2": "排气含氧", "FUEL": "油耗",
     "USED": "已耗", "TOTAL EXHAUST FLOW": "总排气流量", "REV LIMIT": "断油保护",
     "Scope": "波形",
-    "ENGINE BAY": "发动机舱",
-    "flat-plane crank": "平面曲轴", "cross-plane crank": "十字曲轴",
+    "Engine Bay": "发动机舱",
+    "Flat-plane Crank": "平面曲轴", "Cross-plane Crank": "十字曲轴",
     "ENGINE ANALYZER": "发动机分析仪",
     "Live engine signals  ·  E / click to close": "实时发动机信号  ·  按 E 或点击关闭",
     "WAVEFORM · master audio output": "WAVEFORM · 主音频输出波形",
@@ -156,7 +183,7 @@ FPS = 60
 
 # Friendly transmission labels for the HUD (sets the auto-shift feel).
 _GBX_LABEL = {"dct": "DCT", "single": "single-clutch", "at": "AT", "manual": "manual",
-              "aircraft": "prop reduction"}
+              "aircraft": "Prop Reduction"}
 
 # Audio-mixer sliders: (param key, label, min, max).  These bind to
 # Synthesizer.params and are dragged live in the in-app console (press C).
@@ -189,7 +216,7 @@ SLIDER_DEFS = [
     ("road_noise", "Road / tyre rumble", 0.0, 0.6),
     ("whine", "Exhaust whine/scream", 0.0, 2.0),
     ("valve_open", "Active valve open", 0.0, 1.5),
-    ("muffler", "Muffler reflections", 0.0, 1.5),
+    ("Muffler", "Muffler reflections", 0.0, 1.5),
     ("shear", "Tailpipe air-shear", 0.0, 0.5),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
@@ -213,9 +240,11 @@ FIRING_VOICES = [
 
 
 class App:
-    def __init__(self, preset_key="2"):
+    def __init__(self, preset_key="aven"):
         pygame.init()
-        pygame.display.set_caption("Engine Simulator — Python Edition")
+        from . import __version__
+        pygame.display.set_caption(
+            f"Engine Simulator — Python Edition  v{__version__}")
         # The whole UI is drawn onto a fixed-size canvas, then scaled to fit a
         # freely resizable OS window — so you can drag the window to any size
         # (or maximise it) and everything scales cleanly, keeping its layout.
@@ -229,11 +258,14 @@ class App:
         self._cyl_flow_hist = []  # per-cylinder exhaust-flow scope ring buffers
         self._fuel_total_l = 0.0  # integrated fuel burned (L)
         self._odo_km = 0.0        # total distance travelled (km)
+        self._oil_total_l = 0.0   # integrated oil consumed (L)
         self._fuel_lph = 0.0      # smoothed instantaneous fuel rate (L/h)
+        self._trip_reset_rect = None   # clickable RESET button for the trip stats
+        self._touch_toggle_rect = None # big top-right Touch on/off toggle
         self._ign_flash = {}      # per-cylinder ignition-light fade
         self._wheel_ang = 0.0     # spinning road-wheel angle (rad)
         # --- touch controls (on-screen pedals/paddles for phones & tablets) ---
-        self.touch_mode = False   # show the finger control overlay
+        self.touch_mode = ON_ANDROID   # finger-control overlay on by default on phones
         self._ptr = {}            # active pointer id -> control name
         self._ptr_val = {}        # pointer id -> analog value (pedals)
         self._touch_throttle = 0.0
@@ -278,6 +310,7 @@ class App:
         self.scope_mode = "flow"  # "flow" (exhaust gas) | "audio" (listener chain)
         self._scope_toggle_rect = None
         self._drag = None         # slider currently being dragged
+        self._menu_drag = None    # touch tap/scroll state for the open dropdown
         self._buttons = []        # toolbar buttons (rebuilt each frame)
         self._open_menu = None    # active dropdown {items, rect, item_rects}
         self._build_mixer()
@@ -324,8 +357,7 @@ class App:
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
             (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
              else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
-            (T("Touch"), lambda: setattr(self, "touch_mode", not self.touch_mode),
-             lambda: self.touch_mode, 2),
+            # Touch moved out to the big top-right toggle (_draw_touch_toggle)
             (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
              lambda: self.scope_open, 2),
         ]
@@ -586,6 +618,15 @@ class App:
         self._make_synth(start=True, keep_engine_flags=False)   # GPF/Cat per new car
         self._disp_torque = 0.0
         self._tele_smooth.clear()             # don't carry needle state across cars
+        self._reset_trip()                    # fresh odometer / fuel / oil per car
+
+    def _reset_trip(self):
+        """Zero the trip readouts (odometer, fuel & oil used) — the RESET button,
+        and run automatically whenever the engine is swapped."""
+        self._fuel_total_l = 0.0
+        self._odo_km = 0.0
+        self._oil_total_l = 0.0
+        self._fuel_lph = 0.0
 
     # ----------------------------------------------------------------- input
     @staticmethod
@@ -657,10 +698,12 @@ class App:
             self.font = self._cjk_font(17)
             self.font_big = self._cjk_font(38, bold=True)
             self.font_small = self._cjk_font(14)
+            self.font_hint = self._cjk_font(9)    # shrunk so 【键】释义 never overlaps
         else:
             self.font = self._eng_font(18)
             self.font_big = self._eng_font(42, bold=True)
             self.font_small = self._eng_font(14)
+            self.font_hint = self._eng_font(13)
 
     def _speed_disp(self, kmh):
         """(value, unit-label) for the current speed unit (km/h or mph)."""
@@ -707,6 +750,7 @@ class App:
             "ign":   pygame.Rect(WIDTH - 182, 592, 90, 52),
             "auto":  pygame.Rect(WIDTH - 182, 286, 90, 42),
             "close": pygame.Rect(WIDTH - 182, 240, 90, 40),   # turn touch mode off
+            "odoreset": pygame.Rect(WIDTH - 182, 194, 90, 40),  # zero the trip stats
         }
 
     def _pointer_down(self, pid, pos):
@@ -726,6 +770,8 @@ class App:
                     self.sim.ignition_on = not self.sim.ignition_on
                 elif name == "auto":
                     self.sim.drivetrain.auto = not self.sim.drivetrain.auto
+                elif name == "odoreset":
+                    self._reset_trip()
                 elif name == "close":
                     self.touch_mode = False
                     self._ptr.clear()
@@ -761,14 +807,25 @@ class App:
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
         if self.scope_open:                  # modal overlay: any click dismisses it
             self.scope_open = False
-        elif self._open_menu is not None:
+            return
+        # the trip RESET button lives in the always-visible right panel, so check
+        # it before the left-panel overlays (menu / mixer) get a shot
+        rr = self._trip_reset_rect
+        if rr is not None and rr.collidepoint(mpos):
+            self._reset_trip()
+            return
+        tt = self._touch_toggle_rect
+        if (tt is not None and not self.mixer_open and self._open_menu is None
+                and tt.collidepoint(mpos)):
+            self.touch_mode = not self.touch_mode
+            return
+        if self._open_menu is not None:
+            # Defer the choice to release so a touchscreen can DRAG to scroll the
+            # list (a tap still selects).  Mouse-drag scrolls too, as a bonus.
             m = self._open_menu
-            self._open_menu = None
-            for i, (lbl, cb) in enumerate(m["items"]):
-                r = self._menu_item_rect(m, i)
-                if r is not None and r.collidepoint(mpos):
-                    cb()
-                    break
+            self._menu_drag = {"y0": mpos[1], "scroll0": m["scroll"],
+                               "moved": False}
+            self._drag = "menu"
         elif self.mixer_open:
             if getattr(self, "_mixer_close_rect", None) and \
                     self._mixer_close_rect.collidepoint(mpos):
@@ -792,12 +849,37 @@ class App:
                     break
 
     def _handle_drag(self, mpos):
-        if self._drag == "pad":
+        if self._drag == "menu":
+            m, md = self._open_menu, self._menu_drag
+            if m is None or md is None:
+                return
+            if abs(mpos[1] - md["y0"]) > 6:
+                md["moved"] = True
+            rows = (md["y0"] - mpos[1]) / float(m["ih"])   # finger up -> reveal lower
+            m["scroll"] = max(0, min(self._menu_max_scroll(m),
+                                     int(round(md["scroll0"] + rows))))
+        elif self._drag == "pad":
             self._set_pad(mpos)
         elif self._drag == "firepad":
             self._set_fire_pad(mpos)
         elif self._drag is not None:
             self._set_slider(self._drag, mpos[0])
+
+    def _handle_menu_release(self, pos):
+        """Finish a tap/drag on the open dropdown: a tap (no real movement) picks
+        the item under the finger and closes the menu; a tap on empty space just
+        dismisses it; a scroll-drag leaves the menu open."""
+        m, md = self._open_menu, self._menu_drag
+        self._menu_drag = None
+        if m is None or md is None or md["moved"]:
+            return
+        self._open_menu = None                     # a tap always dismisses
+        if pos is not None:
+            for i, (lbl, cb) in enumerate(m["items"]):
+                r = self._menu_item_rect(m, i)
+                if r is not None and r.collidepoint(pos):
+                    cb()
+                    break
 
     def _draw_touch_overlay(self):
         """Porsche-dash finger controls: carbon-fibre plastic buttons with backlit
@@ -874,6 +956,7 @@ class App:
         btn("start", "START", self.sim.starter_engaged, (255, 184, 84))
         btn("ign", "IGN", self.sim.ignition_on, (96, 204, 255))
         btn("auto", "AUTO", self.sim.drivetrain.auto, (120, 224, 144))
+        btn("odoreset", "Odo Reset", accent=(120, 200, 255))
         btn("close", "Touch OFF", accent=(240, 112, 100))
 
     def handle_events(self):
@@ -901,6 +984,8 @@ class App:
                     self._handle_drag(pos)
             elif e.type == pygame.FINGERUP:
                 self._pointer_up(("f", e.finger_id))
+                if self._drag == "menu":
+                    self._handle_menu_release(self._map_finger(e))
                 self._drag = None
             elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                 if getattr(e, "touch", False):
@@ -909,6 +994,8 @@ class App:
                 if not (self.touch_mode and self._pointer_down("mouse", mpos)):
                     self._handle_press(mpos)
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                if self._drag == "menu":
+                    self._handle_menu_release(self._map_mouse(e.pos))
                 self._drag = None
                 self._pointer_up("mouse")
             elif e.type == pygame.MOUSEWHEEL and self._open_menu is not None:
@@ -1057,6 +1144,31 @@ class App:
             self._disp_torque = 0.0
         self.sim.crank_angle += self.sim.omega * dt
 
+    def _draw_engine_off_prompt(self):
+        """Engine not running: a red prompt in the (otherwise blank) top-centre of
+        the engine bay telling the player to switch on the ignition and crank it."""
+        bay = getattr(self, "_bay_rect", None)
+        if bay is None or self.sim.rpm >= 200.0:
+            return
+        bay = bay.inflate(-40, -40)                 # back to the real bay rect
+        zh = self.lang == "zh"
+        lbk, rbk = ("【", "】") if zh else ("[", "]")
+        s1 = self.font.render(self.tr("Engine off — start it:"), True, (255, 90, 80))
+        s2 = self.font.render(
+            f"{lbk}A{rbk}{self.tr('Ignition')}     {lbk}S{rbk}{self.tr('Start')}",
+            True, (255, 210, 70))
+        pw = max(s1.get_width(), s2.get_width()) + 28
+        ph = s1.get_height() + s2.get_height() + 18
+        bx = bay.centerx - pw // 2
+        by = bay.y + 18
+        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        panel.fill((10, 10, 12, 185))
+        pygame.draw.rect(panel, (255, 90, 80), panel.get_rect(), 2, border_radius=8)
+        self.screen.blit(panel, (bx, by))
+        self.screen.blit(s1, (bay.centerx - s1.get_width() // 2, by + 7))
+        self.screen.blit(s2, (bay.centerx - s2.get_width() // 2,
+                              by + 9 + s1.get_height()))
+
     # ----------------------------------------------------------- draw: parts
     def draw(self):
         self._update_hud_signals()
@@ -1067,9 +1179,11 @@ class App:
             self._screw(sx, sy, 6)
         left = pygame.Rect(24, 24, 620, 632)
         if self.mixer_open:
+            self._touch_toggle_rect = None   # toggle is hidden behind the mixer
             self._draw_mixer(left)
         else:
             self._draw_engine_panel(left)
+            self._draw_engine_off_prompt()
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         # the exhaust-path stage scopes only sample audio while the overlay is up
         if self.synth is not None:
@@ -1292,6 +1406,31 @@ class App:
         for b in self._buttons:
             self._draw_button(b, mouse)
 
+    def _ios_button(self, r, c1, c2, radius=6):
+        """Draw the project's iOS-glass button face (glossy gradient + bevel) so
+        ad-hoc buttons match the toolbar."""
+        self.screen.blit(self._grad_surf(r.w, r.h, c1, c2, radius, gloss=True),
+                         r.topleft)
+        pygame.draw.rect(self.screen, BEVEL_LO, r, width=1, border_radius=radius)
+
+    def _draw_touch_toggle(self, rect):
+        """The big Touch on/off toggle in the empty top-right of the engine panel,
+        in the same iOS-glass style as the toolbar — GREEN glass when on, ORANGE
+        glass when off."""
+        on = self.touch_mode
+        h = max(54, self._toolbar_bottom - rect.y - 22)
+        r = pygame.Rect(rect.right - 102, rect.y + 14, 86, h)
+        self._touch_toggle_rect = r
+        c1, c2 = ((104, 200, 126), (30, 138, 66)) if on \
+            else ((244, 186, 86), (196, 120, 26))
+        self._ios_button(r, c1, c2, radius=8)
+        t1 = self.font.render(self.tr("Touch"), True, (255, 255, 255))
+        self.screen.blit(t1, (r.centerx - t1.get_width() // 2, r.y + 8))
+        s2 = self.font.render(self.tr("ON") if on else self.tr("OFF"),
+                              True, (255, 255, 255))
+        self.screen.blit(s2, (r.centerx - s2.get_width() // 2,
+                              r.bottom - s2.get_height() - 7))
+
     def _draw_menu(self):
         m = self._open_menu
         mouse = self.canvas_mouse()
@@ -1414,6 +1553,7 @@ class App:
         # toolbar of buttons (engine/EQ load, device, modes) at the top
         self._rebuild_toolbar(rect)
         self._draw_toolbar()
+        self._draw_touch_toggle(rect)
         ty = self._toolbar_bottom + 4
 
         title = self.font.render(eng.name, True, INK)
@@ -1428,7 +1568,12 @@ class App:
         # Firing interval = 720° four-stroke cycle ÷ cylinders (the meaningful
         # per-engine number — "720° crank" alone is universal to ALL 4-strokes,
         # not a crankshaft type, so we show the pulse spacing instead).
-        fire = "" if eng.is_rotary else f"  ·  fires every {720.0 / n:.0f}°"
+        if eng.is_rotary:
+            fire = ""
+        elif self.lang == "zh":
+            fire = f"  ·  每 {720.0 / n:.0f}° 点火"
+        else:
+            fire = f"  ·  fires every {720.0 / n:.0f}°"
         geo = (f"{cc:.0f} cc  ·  {disp_l:.1f} L  ·  {bore_mm:.1f} × "
                f"{stroke_mm:.1f} mm  ·  {cr:.1f}:1{fire}")
         gtxt = self.font_small.render(geo, True, DIM)
@@ -1496,11 +1641,23 @@ class App:
         self._blit_firing(eng, rect.x + 286, ty + 64, rect.right - 18 - (rect.x + 286))
         # control-key hints — tucked into the empty top-right of the engine panel,
         # right-aligned so they clear the (left-aligned) title / spec lines
-        hint = ["Up/Dn gas · Shift clutch", "ZX shift · A ign · S start",
-                "C mixer · E scope · M mute · Esc"]
-        for li, line in enumerate(hint):
-            ht = self.font_small.render(line, True, ACCENT)
-            self.screen.blit(ht, (rect.right - 14 - ht.get_width(), ty + li * 21))
+        # Control-key hints in【key】function form, yellow, upshift/downshift on
+        # the first line.  A dedicated smaller font (smaller still in Chinese) keeps
+        # the three lines clear of the title / spec / firing-order text on the left,
+        # and short of the firing-order row at ty+64.
+        zh = self.lang == "zh"
+        lb, rb = ("【", "】") if zh else ("[", "]")
+        hint_rows = [
+            [("X", "Upshift"), ("Z", "Downshift"), ("T", "Auto/Manual")],
+            [("Up/Dn", "Gas"), ("Shift", "Clutch"), ("A", "Ign"), ("S", "Start")],
+            [("C", "Mixer"), ("E", "Scope"), ("M", "Mute"), ("Esc", "Exit")],
+        ]
+        hf = self.font_hint
+        lh = hf.get_height() + 3
+        for li, row in enumerate(hint_rows):
+            line = "  ".join(f"{lb}{k}{rb}{self.tr(fn)}" for k, fn in row)
+            ht = hf.render(line, True, (255, 200, 60))
+            self.screen.blit(ht, (rect.right - 14 - ht.get_width(), ty + li * lh))
 
         self._draw_telemetry(rect, ty + 86)
 
@@ -1537,7 +1694,7 @@ class App:
         # VarioCam Plus / Ti-VCT / CVVT / D-VVT ...) switch to the aggressive cam
         # profile high up — shown as the high-lift cam engaging.
         self._vtec_on = bool(vv) and sim.rpm > 0.74 * eng.redline_rpm
-        self.screen.blit(self.font_small.render(self.tr("ENGINE BAY"), True,
+        self.screen.blit(self.font_small.render(self.tr("Engine Bay"), True,
                                                 (84, 90, 104)), (bay.x + 12, bay.y + 6))
         cp = getattr(eng, "crank_plane", "")
         if cp in ("flat", "cross"):                   # end-on crankshaft phase diagram
@@ -2185,6 +2342,58 @@ class App:
                                   self._EXH_COLS)
         self._collector_slug((rect.centerx, ctop), irad + 1)
         self._end_pipe_layers()
+        # W engines were missing the front timing GEARS + accessory BELT the V
+        # layout draws in its valley — add them at the front-centre of the block.
+        self._draw_w_front_drive(rect, sim, eng, mtop, mbot)
+
+    def _draw_w_front_drive(self, rect, sim, eng, mtop, mbot):
+        """Front-of-engine accessory drive for a W: a meshing timing-GEAR cluster
+        (crank gear driving two cam gears) plus a serpentine BELT around the crank
+        pulley and two accessory pulleys.  Drawn on top, at the bottom centre."""
+        sc = self.screen
+        ang = sim.crank_angle
+        cx = rect.centerx
+        by = int(mbot - 16)                              # front/bottom baseline
+
+        def gear(c, r, teeth, spin, ring=None):
+            c = (int(c[0]), int(c[1]))
+            pygame.draw.circle(sc, (44, 48, 60), c, r + 2)
+            for k in range(teeth):                       # radial gear teeth
+                t = spin + k * 2 * math.pi / teeth
+                pygame.draw.line(sc, (158, 164, 180),
+                                 (int(c[0] + math.cos(t) * (r - 1)),
+                                  int(c[1] + math.sin(t) * (r - 1))),
+                                 (int(c[0] + math.cos(t) * (r + 2)),
+                                  int(c[1] + math.sin(t) * (r + 2))), 2)
+            sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
+                                    gloss=True), (c[0] - r, c[1] - r))
+            if ring:
+                pygame.draw.circle(sc, ring, c, int(r * 0.7), 2)
+            pygame.draw.circle(sc, (40, 44, 54), c, max(2, int(r * 0.28)))
+
+        # --- timing GEAR train: a central crank gear meshing two cam gears -------
+        gy = by - 34
+        camL, camR = (cx - 17, gy - 14), (cx + 17, gy - 14)
+        gear(camL, 12, 16, -ang * 0.5, ring=(236, 176, 72))
+        gear(camR, 12, 16, ang * 0.5, ring=(236, 176, 72))
+        gear((cx, gy), 10, 12, ang)                      # crank gear (drives them)
+
+        # --- serpentine BELT around the crank pulley + two accessory pulleys -----
+        pulls = [(cx, by, 9), (cx - 34, by + 3, 6), (cx + 34, by + 1, 6)]
+        loop = pygame.Rect(cx - 46, by - 12, 92, 30)
+        pygame.draw.ellipse(sc, (26, 26, 30), loop, 6)   # rubber belt
+        pygame.draw.ellipse(sc, (62, 62, 70), loop, 1)
+        for px, py, pr in pulls:                         # pulleys with hubs
+            spin = ang if pr > 7 else -ang * 1.7
+            sc.blit(self._grad_surf(2 * pr, 2 * pr, (150, 156, 170), (64, 70, 84),
+                                    pr, gloss=True), (px - pr, py - pr))
+            pygame.draw.circle(sc, (90, 96, 110), (px, py), pr, 1)
+            pygame.draw.circle(sc, (40, 44, 54), (px, py),
+                               max(2, int(pr * 0.4)))
+            # a spinning index nick so the pulleys visibly turn
+            pygame.draw.line(sc, (210, 214, 224), (px, py),
+                             (int(px + math.cos(spin) * (pr - 1)),
+                              int(py + math.sin(spin) * (pr - 1))), 1)
 
     def _draw_radial(self, rect, top, bottom):
         """Aircraft radial: cylinders arranged in a STAR around a central crank,
@@ -2239,7 +2448,7 @@ class App:
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), hub_r, 1)
         pygame.draw.circle(sc, (190, 196, 210), (cx, cy), 4)   # prop shaft boss
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 4, 1)
-        pl = self.font_small.render(self.tr("prop reduction"), True, (150, 158, 174))
+        pl = self.font_small.render(self.tr("Prop Reduction"), True, (150, 158, 174))
         sc.blit(pl, (cx - pl.get_width() // 2, cy + hub_r + 3))
 
     # manifold pipe colour sets — (dark casing, lit body, top sheen)
@@ -2635,7 +2844,7 @@ class App:
         pygame.draw.circle(sc, (172, 180, 196), (cx, cy), max(3, int(r * 0.28)))
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), max(3, int(r * 0.28)), 1)
         pygame.draw.circle(sc, (245, 248, 255), (cx - 1, cy - 1), 1)
-        lab = self.tr("flat-plane crank" if plane == "flat" else "cross-plane crank")
+        lab = self.tr("Flat-plane Crank" if plane == "flat" else "Cross-plane Crank")
         t = self.font_small.render(lab, True, (150, 158, 174))
         sc.blit(t, (int(cx - r), cy + r + 7))      # left-aligned: stays inside the bay
 
@@ -2657,8 +2866,10 @@ class App:
             return (cx + (R * math.cos(a) + e * math.cos(3 * a)) * sx,
                     cy + R * math.sin(a) + e * math.sin(3 * a))
 
+        xs = []                                        # rotor-housing centres
         for i in range(n):
             cx = rect.x + col_w * (i + 0.5)
+            xs.append(cx)
             shaft = shaft0 + i * (2.0 * math.pi / n)
             # --- epitrochoid housing (2-lobe peanut), recessed chamber ---
             hull = [troch(cx, cy, 2.0 * math.pi * k / 120.0) for k in range(120)]
@@ -2752,6 +2963,31 @@ class App:
             pygame.draw.circle(self.screen, (40, 43, 50), (int(rcx), int(rcy)), 4, 1)
             lbl = self.font_small.render(f"R{i + 1}", True, DIM)
             self.screen.blit(lbl, (int(cx) - lbl.get_width() // 2, int(cy + R * 1.1)))
+
+        # Per-rotor INTAKE trumpets + EXHAUST headers so the rotary reads as a
+        # complete induction/exhaust system — the NA 4-rotor 787B used to show bare
+        # housings; now it gets four trumpets + a 4-into-1 collector like the RX-7.
+        if xs:
+            self._begin_pipe_layers()
+            irad = max(2, int(R * 0.20)); hrad = max(2, int(R * 0.22))
+            plen_y = int(cy - R * 1.95)
+            rail_y = int(cy + R * 1.85)
+            x0, x1 = int(min(xs) - 8), int(max(xs) + 8)
+            # INTAKE: a plenum log over the rotors with a trumpet down to each
+            self._draw_ortho_pipe([(x0, plen_y), (x1, plen_y)], irad + 1, self._INT_COLS)
+            for cxi in xs:
+                self._draw_ortho_pipe([(int(cxi), plen_y), (int(cxi), int(cy - R))],
+                                      irad, self._INT_COLS, joint=True)
+            # EXHAUST: a peripheral header (offset off centre) down to a 4-1 rail
+            for cxi in xs:
+                ex = int(cxi + R * 0.5)
+                self._draw_ortho_pipe([(ex, int(cy + R * 0.9)), (ex, rail_y)],
+                                      hrad, self._EXH_COLS, joint=True)
+            self._draw_ortho_pipe([(x0, rail_y), (x1, rail_y)], hrad + 1, self._EXH_COLS)
+            self._collector_slug((x1, rail_y), hrad + 1)
+            if eng.induction == "na":     # NA: hand the outlet to the cat/muffler chain
+                self._exh_exit = (x1, rail_y)
+            self._end_pipe_layers()
 
     def _air_gauge(self, cx, cy, r, frac, label, value, danger=False):
         """An old-school round aircraft instrument: metal bezel, black face, tick
@@ -3144,27 +3380,27 @@ class App:
                     or getattr(eng, "gearbox_type", "") == "aircraft")
         diesel = eng.cylinders[0].compression_ratio >= 14.5 and not aircraft
         if aircraft:                                     # piston aircraft: NO civilian cat
-            items = [("throttle body", "tb"), ("intercooler", "ic")]
+            items = [("Throttle Body", "tb"), ("Intercooler", "ic")]
             if eng.induction != "na":
-                items += [("wastegate", "wg"), ("blow-off", "bov")]
+                items += [("Wastegate", "wg"), ("Blow-off", "bov")]
         elif eng.induction == "na":                      # NA road: full exhaust line
-            items = [("throttle body", "tb")]
+            items = [("Throttle Body", "tb")]
             if eng.has_cat:
-                items += [("catalytic", "cat"), ("resonator", "res"),
-                          ("muffler", "muf"), ("tailpipe", "tail")]
+                items += [("Catalytic", "cat"), ("Resonator", "res"),
+                          ("Muffler", "muf"), ("Tailpipe", "tail")]
             else:
-                items.append(("megaphone", "muf"))       # open race exhaust
+                items.append(("Megaphone", "muf"))       # open race exhaust
         elif diesel:                                     # diesel after-treatment train
-            items = [("intercooler", "ic"), ("DOC", "cat"), ("DPF", "dpf"),
-                     ("SCR", "scr"), ("DEF", "def"), ("wastegate", "wg")]
+            items = [("Intercooler", "ic"), ("DOC", "cat"), ("DPF", "dpf"),
+                     ("SCR", "scr"), ("DEF", "def"), ("Wastegate", "wg")]
         else:
-            items = [("throttle body", "tb"), ("intercooler", "ic")]
+            items = [("Throttle Body", "tb"), ("Intercooler", "ic")]
             if eng.has_cat:
-                items.append(("catalytic", "cat"))
+                items.append(("Catalytic", "cat"))
             if getattr(eng, "has_gpf", False):
                 items.append(("GPF", "cat"))
-            items.append(("wastegate", "wg"))
-            items.append(("blow-off", "bov"))
+            items.append(("Wastegate", "wg"))
+            items.append(("Blow-off", "bov"))
         y = bay.bottom - 50                              # lifted off the bottom edge
         x0, span = bay.x + 30, bay.width - 60
         step = span / max(len(items), 1)
@@ -3222,7 +3458,7 @@ class App:
             self._draw_battery(bay.right - 42, bay.y + 28, int(ccx),
                                int(ccy + self._crank_h + 16))
         elif getattr(eng, "hybrid_kw", 0.0) > 0.0:   # road hybrid: e-motor + HV battery
-            self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 13, "E-MOTOR")
+            self._draw_mgu(int(ccx), int(ccy + self._crank_h + 16), 13, "E-Motor")
             self._draw_battery(bay.right - 42, bay.y + 28, int(ccx),
                                int(ccy + self._crank_h + 16))
 
@@ -3236,7 +3472,7 @@ class App:
             pygame.draw.line(sc, (40, 60, 48), (fx, b.y + 2), (fx, b.bottom - 2), 1)
         pygame.draw.rect(sc, (120, 180, 140), b, 1, border_radius=3)
         pygame.draw.line(sc, (210, 150, 40), (b.x + 4, b.y - 3), (b.x + 12, b.y - 3), 2)  # +HV
-        t = self.font_small.render("HV battery", True, (130, 190, 150))
+        t = self.font_small.render("HV Battery", True, (130, 190, 150))
         sc.blit(t, (b.centerx - t.get_width() // 2, b.bottom + 1))
         # orange HV cable from the battery to the motor
         self._draw_ortho_pipe([(b.left, b.centery), (mx + 30, b.centery),
@@ -3259,7 +3495,7 @@ class App:
             self._draw_ortho_pipe([(rad.right, hy), (rad.right + 14, hy),
                                    (rad.right + 14, int(cy))], 2,
                                   ((16, 44, 54), (40, 120, 140), (120, 200, 220)))
-        t = self.font_small.render(self.tr("radiator"), True, (110, 170, 190))
+        t = self.font_small.render(self.tr("Radiator"), True, (110, 170, 190))
         sc.blit(t, (rad.x - 2, rad.bottom + 2))
 
     def _draw_mgu(self, cx, cy, r, label, ring_only=False):
@@ -3308,7 +3544,7 @@ class App:
         for fx in range(af.x + 3, af.right - 2, 3):
             pygame.draw.line(sc, (60, 66, 80), (fx, af.y + 2), (fx, af.bottom - 2), 1)
         pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
-        lab = self.font_small.render(self.tr("air filter"), True, (120, 168, 196))
+        lab = self.font_small.render(self.tr("Air Filter"), True, (120, 168, 196))
         sc.blit(lab, (af.centerx - lab.get_width() // 2, af.bottom))
         # cool-air ducts from the filter down to each turbo's compressor inlet,
         # drawn onto a temp layer at ~35% opacity (semi-transparent blue)
@@ -3365,21 +3601,21 @@ class App:
         if ind in ("roots", "centrifugal"):           # supercharger sits on top
             self._bay_blower(bay.centerx, bay.y + 50, 26, spin, load,
                              centri=(ind == "centrifugal"))
-            lab("supercharger" if ind == "roots" else "centrifugal SC",
+            lab("Supercharger" if ind == "roots" else "Centrifugal SC",
                 bay.centerx, bay.y + 6)
             self._bay_ancillaries(bay, eng, thr)
             return
         hot = getattr(eng, "hot_v", False)
         etb = getattr(eng, "electric_turbo", False)
         sub = getattr(eng, "induction_subtype", "")
-        if sub == "twincharge":                       # supercharger + turbo compound
+        if sub == "Twincharge":                       # supercharger + turbo compound
             self._bay_blower(bay.centerx, bay.y + 48, 22, spin, load)
             if has_banks:
                 for x in (bay.x + 52, bay.right - 52):
                     self._bay_turbo(x, cyv + 8, 17, spin, load)
             else:
                 self._bay_turbo(bay.right - 50, cyv + 8, 20, spin, load)
-            lab("twincharge · supercharger + turbo", bay.centerx, bay.y + 6)
+            lab("Twincharge · Supercharger + Turbo", bay.centerx, bay.y + 6)
             self._bay_ancillaries(bay, eng, thr)
             return
         if sub == "sequential":                       # small (primary) + big (secondary)
@@ -3389,21 +3625,21 @@ class App:
                 pts = ((bay.right - 52, cyv - 24, 15), (bay.right - 46, cyv + 22, 24))
             for x, y, rr in pts:
                 self._bay_turbo(x, y, rr, spin, load, electric=etb)
-            lab("sequential twin-turbo · small + big", bay.centerx, bay.y + 26)
+            lab("Sequential Twin-turbo · Small + Big", bay.centerx, bay.y + 26)
             self._bay_ancillaries(bay, eng, thr)
             return
         if sub == "twin_scroll":                      # divided-housing single turbo
             tx = bay.centerx if hot else bay.right - 50
             self._bay_turbo(tx, cyv, 24, spin, load, electric=etb, twin_scroll=True,
                             inlet_dir=(-math.pi / 2 if hot else math.pi))
-            lab("twin-scroll single turbo", tx, cyv + 32)
+            lab("Twin-scroll Single Turbo", tx, cyv + 32)
             self._bay_ancillaries(bay, eng, thr)
             return
         if getattr(eng, "is_w", False):               # quad-turbo (Veyron W16)
             for x, y in ((bay.x + 46, cyv - 34), (bay.x + 46, cyv + 34),
                          (bay.right - 46, cyv - 34), (bay.right - 46, cyv + 34)):
                 self._bay_turbo(x, y, 18, spin, load)
-            lab("quad-turbo", bay.centerx, bay.y + 26)
+            lab("Quad-turbo", bay.centerx, bay.y + 26)
         elif has_banks:
             r = 22
             if hot:
@@ -3421,23 +3657,23 @@ class App:
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
                 self._bay_turbo(bay.centerx - 12, cyv + 6, r, spin, load,
                                 electric=etb, inlet_dir=-math.pi / 2)
-                lab("hot-V twin-turbo · in the valley", bay.centerx, bay.y + 22)
+                lab("Hot-V Twin-turbo · In the Valley", bay.centerx, bay.y + 22)
             else:                                      # outside the banks
                 self._bay_turbo(bay.x + 48, cyv, r, spin, load, electric=etb,
                                 inlet_dir=0.0)
                 self._bay_turbo(bay.right - 48, cyv, r, spin, load, electric=etb,
                                 inlet_dir=math.pi)
-                lab("twin-turbo · outboard (cold-V)", bay.centerx, bay.y + 26)
+                lab("Twin-turbo · Outboard (Cold-V)", bay.centerx, bay.y + 26)
         elif sub == "twin":                            # inline parallel twin-turbo
             self._bay_turbo(bay.right - 78, cyv - 13, 18, spin, load, electric=etb,
                             inlet_dir=math.pi)
             self._bay_turbo(bay.right - 44, cyv + 14, 20, spin, load, electric=etb,
                             inlet_dir=math.pi)
-            lab("parallel twin-turbo", bay.right - 60, cyv + 36)
+            lab("Parallel Twin-turbo", bay.right - 60, cyv + 36)
         else:                                          # inline: single turbo, side
             self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb,
                             inlet_dir=math.pi)
-            lab("single turbo", bay.right - 50, cyv + 30)
+            lab("Single Turbo", bay.right - 50, cyv + 30)
         self._bay_ancillaries(bay, eng, thr)
 
     def _exhaust_db(self):
@@ -3460,6 +3696,12 @@ class App:
             fuel_ls = 0.0
         self._fuel_lph += (fuel_ls * 3600.0 - self._fuel_lph) * 0.12
         self._fuel_total_l += fuel_ls / FPS
+        # oil consumption: a little oil burns past the rings / valve guides /
+        # turbo seals every revolution — scales with engine speed (and a bit with
+        # load), so it climbs faster when you're on it.
+        if sim.rpm > 1.0:
+            load = 0.5 + 0.5 * min(max(getattr(sim, "throttle", 0.0), 0.0), 1.0)
+            self._oil_total_l += (sim.rpm / 60.0) / FPS * 2.2e-7 * load
         # odometer: integrate road/air speed -> total distance (km)
         self._odo_km += getattr(sim.drivetrain, "v", 0.0) / FPS / 1000.0
         # spin the road wheel at the real wheel rate (v / wheel_radius)
@@ -3964,7 +4206,8 @@ class App:
             ("POWER", f"{hp:.0f} hp", INK),
             ("THROTTLE", f"{sim.throttle*100:.0f} %", INK),
             ("GEAR", f"{dt.gear_name} {mode}"
-                     f"  [{_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type).upper()}]", GOOD),
+                     f"  [{self.tr(_GBX_LABEL.get(dt.gearbox_type, dt.gearbox_type)).upper()}]",
+             GOOD),
             ("SPEED", f"{self._speed_disp(dt.speed_kmh)[0]:.0f} "
                       f"{self._speed_disp(dt.speed_kmh)[1]}", INK),
         ]
@@ -3999,9 +4242,28 @@ class App:
         y += 3 * 18 + 2
         odo = self._odo_km * (0.621371 if self.speed_mph else 1.0)
         odo_u = "mi" if self.speed_mph else "km"
-        used = (f"{T('USED')} {self._fuel_total_l:.3f} L  ·  "
-                f"${self._fuel_total_l * 1.5:.2f}  ·  {odo:.2f} {odo_u}")
-        self.screen.blit(self.font_small.render(used, True, ACCENT), (rect.x + 24, y))
+        dist_km, fuel_l = self._odo_km, self._fuel_total_l
+        # line 1: fuel used · cost · distance, with a RESET button at the far right
+        line1 = (f"{T('USED')} {fuel_l:.3f} L · "
+                 f"${fuel_l * 1.5:.2f} · {odo:.2f} {odo_u}")
+        self.screen.blit(self.font_small.render(line1, True, ACCENT), (rect.x + 24, y))
+        rsurf = self.font_small.render(T("RESET"), True, (255, 255, 255))
+        rrect = pygame.Rect(rect.right - 26 - (rsurf.get_width() + 18), y - 3,
+                            rsurf.get_width() + 18, 20)
+        self._trip_reset_rect = rrect
+        self._ios_button(rrect, (198, 96, 92), (150, 50, 48), radius=6)  # red glass
+        self.screen.blit(rsurf, (rrect.centerx - rsurf.get_width() // 2,
+                                 rrect.centery - rsurf.get_height() // 2))
+        y += 19
+        # line 2: fuel economy (mpg + L/100km) and oil consumed
+        if dist_km > 1e-3 and fuel_l > 1e-6:
+            mpg = (dist_km * 0.621371) / (fuel_l * 0.264172)
+            l100 = fuel_l / dist_km * 100.0
+            econ = f"{mpg:.1f} mpg · {l100:.1f} L/100km"
+        else:
+            econ = "-- mpg · -- L/100km"
+        line2 = f"{econ} · {T('Oil')} {self._oil_total_l * 1000.0:.0f} mL"
+        self.screen.blit(self.font_small.render(line2, True, ACCENT), (rect.x + 24, y))
         y += 19
 
         # Status rows below the exhaust-flow scope, each column CENTRED under its
@@ -4019,11 +4281,12 @@ class App:
                 ("IN GEAR", dt.gear > 0, GOOD, DIM),
                 ("AUDIO", self.synth.enabled and self.synth.volume > 0, GOOD, DIM)]
 
+        # FIXED column starts so row 2 lines up directly under row 1
+        col_x = [int(chart_x + 4 + j * chart_w / 3.0) for j in range(3)]
+
         def status_row(items, yy):
             for j, (lab, on, c1, c2) in enumerate(items):
-                center = chart_x + (j + 0.5) * chart_w / 3.0
-                lw = self.font_small.size(T(lab))[0]
-                self._status_dot(int(center - (22 + lw) / 2), yy, T(lab), on, c1, c2)
+                self._status_dot(col_x[j], yy, T(lab), on, c1, c2)
         status_row(row1, status_y1)
         status_row(row2, status_y2)
 

@@ -26,4 +26,26 @@ Thumbs.db
 # PyInstaller build artifacts
 build/
 dist/
+build_onedir/
+build_onefile/
+dist_onedir/
+dist_onefile/
 *.spec.bak
+
+# packaged outputs
+*.zip
+*.apk
+*.exe
+*.log
+
+# Buildozer / Android
+.buildozer/
+bin/
+
+# local WSL/Android build helper + diagnostic scripts (machine-specific paths)
+android_*.sh
+ndk_*.sh
+apk_*.sh
+_wslcheck.sh
+build_log.txt
+_srcstage/

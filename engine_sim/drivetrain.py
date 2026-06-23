@@ -177,8 +177,10 @@ class Drivetrain:
     #   AT   : ease off the converter, full match, slow soft feed   -> slushy
     _SHIFT_PROFILES = {
         "dct":    (11.0, 0.018, 0.40, 3.4, 0.55),
-        "single": (16.0, 0.075, 0.18, 30.0, 0.45),
-        "manual": (16.0, 0.075, 0.18, 30.0, 0.45),
+        # single/manual: snap open, barely match (lots of residual slip), then
+        # SLAM the clutch shut almost in one frame -> a hard driveline KICK.
+        "single": (20.0, 0.075, 0.13, 85.0, 0.42),
+        "manual": (20.0, 0.075, 0.13, 85.0, 0.42),
         "at":     (5.5,  0.030, 0.45, 1.9, 0.70),
     }
 
@@ -239,11 +241,13 @@ class Drivetrain:
                 self.gear = self._pending_gear
                 self._pending_gear = None
                 self._shift_phase = 3
-            if self._shift_elapsed < 0.14:
-                self._ease_clutch(0.42, dt, 7.0)   # converter slips through the swap
+            if self._shift_elapsed < 0.10:
+                self._ease_clutch(0.40, dt, 8.0)   # converter slips through the swap
             else:
-                self._ease_clutch(0.92, dt, 2.3)   # slow, soft, slushy feed-in
-            if self.clutch > 0.90 or self._shift_elapsed > 0.75:
+                # firmer, quicker feed-in so the shift has a definite "tug" and
+                # locks up instead of slurring forever (was a mushy rate of 2.3)
+                self._ease_clutch(0.96, dt, 4.2)
+            if self.clutch > 0.90 or self._shift_elapsed > 0.55:
                 self._shifting = False
                 self._shift_phase = 0
                 self._shift_lock = 0.55

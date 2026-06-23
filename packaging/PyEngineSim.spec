@@ -45,8 +45,13 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# ONEDIR build: the .exe stays small and the libs sit beside it in the output
+# folder, so there is NO per-launch unpack of the ~94 MB bundle to a temp dir —
+# the app starts in ~1 s instead of several.  Distribute the whole dist/PyEngineSim
+# folder (zip it).  EXE therefore EXCLUDES the binaries/datas; COLLECT gathers them.
 exe = EXE(
-    pyz, a.scripts, a.binaries, a.datas, [],
+    pyz, a.scripts, [],
+    exclude_binaries=True,
     name="PyEngineSim",
     debug=False,
     strip=False,
@@ -55,10 +60,18 @@ exe = EXE(
     icon=None,                # drop an .ico (win) / .icns (mac) path here
 )
 
+coll = COLLECT(
+    exe, a.binaries, a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="PyEngineSim",       # -> dist/PyEngineSim/PyEngineSim.exe + libs
+)
+
 # On macOS, wrap the binary in a proper .app bundle.
 if sys.platform == "darwin":
     app = BUNDLE(
-        exe,
+        coll,
         name="PyEngineSim.app",
         icon=None,
         bundle_identifier="com.pyenginesim.app",

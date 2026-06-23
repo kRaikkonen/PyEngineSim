@@ -39,6 +39,12 @@ try:
 except Exception:                       # pragma: no cover
     _HAVE_SD = False
 
+# On Android there is no PortAudio (so no sounddevice); play through pygame's
+# SDL2 mixer instead.  Detect the phone via python-for-android's env markers.
+ON_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
+                  or os.environ.get("ANDROID_APP_PATH")
+                  or os.environ.get("ANDROID_PRIVATE"))
+
 try:
     from scipy.signal import lfilter, butter
     _HAVE_SCIPY = True
@@ -373,7 +379,7 @@ class Synthesizer:
     def __init__(self, simulator, sample_rate: int = None, device=None):
         self.sim = simulator
         self.volume = 1.0   # mute switch (M): 1.0 on, 0.0 muted
-        self.enabled = _HAVE_SD
+        self.enabled = _HAVE_SD or ON_ANDROID
 
         if device is not None:
             self._device = device
@@ -513,6 +519,8 @@ class Synthesizer:
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._lock = threading.Lock()
         self._stream = None
+        self._pg_run = False          # pygame.mixer feeder thread (Android backend)
+        self._pg_thread = None
         self.latency_ms = 0.0
         self.mode = "off"
         self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
@@ -1549,6 +1557,8 @@ class Synthesizer:
     def start(self):
         if not self.enabled:
             return False
+        if ON_ANDROID or not _HAVE_SD:           # no PortAudio -> use pygame's mixer
+            return self._start_pygame()
         attempts = []
         if self.prefer_exclusive and self._device is not None:
             try:
@@ -1588,7 +1598,74 @@ class Synthesizer:
         self.enabled = False
         return False
 
+    # --- Android / no-PortAudio backend: stream blocks through pygame.mixer -----
+    def _start_pygame(self):
+        """Play rendered blocks via pygame's SDL2 mixer (the Android path, and a
+        desktop fallback when sounddevice/PortAudio is missing).  A daemon feeder
+        thread keeps a Channel topped up with freshly rendered audio."""
+        try:
+            import pygame
+        except Exception:
+            print("[audio] disabled: pygame mixer unavailable")
+            self.enabled = False
+            return False
+        sr = int(self.sample_rate or SAMPLE_RATE)
+        try:
+            if pygame.mixer.get_init():
+                pygame.mixer.quit()
+            pygame.mixer.init(frequency=sr, size=-16, channels=2, buffer=1024)
+        except Exception as exc:
+            print("[audio] disabled: pygame.mixer.init failed (%s)" % exc)
+            self.enabled = False
+            return False
+        self._rebuild_for_rate(sr)
+        self.sample_rate = sr
+        self._pg_chan = pygame.mixer.Channel(0)
+        self._pg_cur = self._pg_prev = None      # keep queued Sounds alive vs GC
+        self._pg_run = True
+        self._pg_thread = threading.Thread(target=self._pygame_feed, daemon=True)
+        self._pg_thread.start()
+        self.mode = "pygame"
+        self.latency_ms = round(2 * 1024 / sr * 1000.0, 1)
+        return True
+
+    def _pygame_feed(self):
+        import time
+        import pygame
+        CH = 1024                                # frames per queued chunk
+        while self._pg_run:
+            try:
+                if self._pg_chan.get_queue() is not None:   # already one ahead
+                    time.sleep(0.004)
+                    continue
+                mono = self._render_block(CH)
+                ang = self.params["spatial_x"] * (math.pi * 0.5)
+                stereo = np.empty((CH, 2), dtype=np.int16)
+                stereo[:, 0] = (np.clip(mono * math.cos(ang), -1.0, 1.0)
+                                * 32767.0).astype(np.int16)
+                stereo[:, 1] = (np.clip(mono * math.sin(ang), -1.0, 1.0)
+                                * 32767.0).astype(np.int16)
+                snd = pygame.sndarray.make_sound(stereo)
+                if self._pg_chan.get_busy():
+                    self._pg_chan.queue(snd)
+                else:
+                    self._pg_chan.play(snd)
+                self._pg_prev, self._pg_cur = self._pg_cur, snd
+            except Exception:
+                time.sleep(0.01)
+        try:
+            self._pg_chan.stop()
+        except Exception:
+            pass
+
     def stop(self):
+        self._pg_run = False
+        if self._pg_thread is not None:
+            try:
+                self._pg_thread.join(timeout=0.3)
+            except Exception:
+                pass
+            self._pg_thread = None
         if self._stream is not None:
             try:
                 self._stream.stop()
