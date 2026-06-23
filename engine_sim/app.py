@@ -2028,11 +2028,7 @@ class App:
             quad(length - 1, length + 5, hw + 3, (70, 76, 90))  # head band
             quad(-2, length + 4, hw + 3, (28, 30, 38), 2)     # outline
             quad(1, length, hw - 2, (24, 26, 32))             # bore interior
-            if glow > 0.02:                                   # combustion flash
-                gx, gy = bx + ux * (length - 7), by + uy * (length - 7)
-                gs = self._flash_surf(width * 0.6, glow)
-                self.screen.blit(gs, (int(gx) - gs.get_width() // 2,
-                                      int(gy) - gs.get_height() // 2))
+            # (low-Q: no combustion flash)
             plen = 15.0
             travel = max(length - plen - 14, 6.0)
             ppos = 8.0 + (1.0 - frac) * travel                # TDC high, BDC low
@@ -2582,6 +2578,11 @@ class App:
             u = 1.0 - t
             pts.append((u * u * p0[0] + 2 * u * t * ctrl[0] + t * t * p1[0],
                         u * u * p0[1] + 2 * u * t * ctrl[1] + t * t * p1[1]))
+        if self.low_quality:                               # flat single-colour runner
+            pygame.draw.lines(sc, cols[1], False, pts, max(2, rad * 2))
+            if joint:
+                pygame.draw.circle(sc, cols[1], (int(p0[0]), int(p0[1])), rad + 1)
+            return
         pygame.draw.lines(sc, cols[0], False, pts, rad * 2 + 2)
         pygame.draw.lines(sc, cols[1], False, pts, max(2, rad * 2))
         hi = [(x - rad * 0.35, y - rad * 0.5) for x, y in pts]
@@ -2726,6 +2727,9 @@ class App:
             for s in (1, -1):
                 p0 = (a[0] + nx * ra * s, a[1] + ny * ra * s)
                 p1 = (b[0] + nx * rb * s, b[1] + ny * rb * s)
+                if self.low_quality:                           # flat single-colour belt
+                    pygame.draw.line(sc, (198, 158, 86), p0, p1, 3)
+                    continue
                 pygame.draw.line(sc, (74, 54, 22), p0, p1, 4)      # dark bronze casing
                 pygame.draw.line(sc, (198, 158, 86), p0, p1, 2)    # bronze body
                 k = 0                                              # link rollers
@@ -2960,7 +2964,7 @@ class App:
             press = max(sim.cylinder_pressure[2 * i], sim.cylinder_pressure[j])
             glow = (min(max(press - 101325.0, 0.0) / (5.0 * 101325.0), 1.0)
                     if sim.ignition_on and not sim._fuel_cut else 0.0)
-            if glow > 0.03:
+            if glow > 0.03 and not self.low_quality:      # low-Q: no combustion flash
                 gs = self._flash_surf(R * 0.55, glow)
                 self.screen.blit(gs, (int(cx) - gs.get_width() // 2,
                                       int(cy - R * 0.5) - gs.get_height() // 2))
@@ -3449,6 +3453,9 @@ class App:
         """A short straight metallic pipe (dark casing, steel body, upper-left
         sheen) used to plumb the ancillaries together."""
         sc = self.screen
+        if self.low_quality:                          # flat single-colour pipe
+            pygame.draw.line(sc, (116, 122, 136), p0, p1, max(2, rad * 2))
+            return
         pygame.draw.line(sc, (24, 26, 34), p0, p1, rad * 2 + 2)
         pygame.draw.line(sc, (116, 122, 136), p0, p1, max(2, rad * 2))
         pygame.draw.line(sc, (176, 182, 196), (p0[0] - 1, p0[1] - 1),
@@ -3652,10 +3659,15 @@ class App:
                                                (afx + 6, afy - 7), (afx - 6, afy - 7)], 1)
         # air-filter element (ribbed cylinder)
         af = pygame.Rect(afx - 17, afy - 7, 34, 15)
-        sc.blit(self._grad_surf(af.w, af.h, (150, 156, 170), (70, 76, 90), 7), af.topleft)
-        for fx in range(af.x + 3, af.right - 2, 3):
-            pygame.draw.line(sc, (60, 66, 80), (fx, af.y + 2), (fx, af.bottom - 2), 1)
-        pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
+        if self.low_quality:                          # flat single colour
+            pygame.draw.rect(sc, (120, 126, 140), af, 0, border_radius=7)
+            pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
+        else:
+            sc.blit(self._grad_surf(af.w, af.h, (150, 156, 170), (70, 76, 90), 7),
+                    af.topleft)
+            for fx in range(af.x + 3, af.right - 2, 3):
+                pygame.draw.line(sc, (60, 66, 80), (fx, af.y + 2), (fx, af.bottom - 2), 1)
+            pygame.draw.rect(sc, (40, 44, 54), af, 1, border_radius=7)
         lab = self.font_small.render(self.tr("Air Filter"), True, (120, 168, 196))
         sc.blit(lab, (af.centerx - lab.get_width() // 2, af.bottom))
         # cool-air ducts from the filter down to each turbo's compressor inlet,
