@@ -108,6 +108,7 @@ TR_ZH = {
     "Twincharge": "双增压", "DOC": "氧化催化", "DPF": "颗粒捕集", "DEF": "尿素",
     # touch toggle / states
     "ON": "开", "OFF": "关", "Odo Reset": "里程清零", "Low Q": "低画质",
+    "Forza Ultra": "极速模式", "FORZA ULTRA — display off (audio only)": "极速模式 — 关闭画面（仅音频）",
     # gearbox type tag in the GEAR readout
     "single-clutch": "单离合", "AT": "自动变速", "manual": "手动挡", "DCT": "双离合",
     # toolbar
@@ -295,6 +296,7 @@ class App:
         self.telemetry = None
         self.telemetry_mode = False
         self.low_quality = False  # simplified bay render (solid, lighter cylinders)
+        self.forza_ultra = False  # draw NOTHING (just audio) — max perf for Forza play
         self.g_spatial = False    # drift the spatial dot from Forza G-force
         self.slow_mo = 1.0        # 1.0 normal .. 0.001 = 1000x slow motion
 
@@ -331,6 +333,13 @@ class App:
         sy = self.synth
         T = self.tr
         arr = "▼" if self.lang == "zh" else "▾"   # YaHei lacks U+25BE
+        if self.forza_ultra:                      # display-off mode: just these two
+            return [
+                (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
+                (T("Forza Ultra"),
+                 lambda: setattr(self, "forza_ultra", False), lambda: True, 0,
+                 ((110, 60, 40), (210, 110, 50))),
+            ]
         return [
             # row 0 — car + sound toggles (part 1)
             (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
@@ -366,6 +375,8 @@ class App:
             # Touch moved out to the big top-right toggle (_draw_touch_toggle)
             (T("Low Q"), lambda: setattr(self, "low_quality", not self.low_quality),
              lambda: self.low_quality, 2),
+            (T("Forza Ultra"), self._enter_forza_ultra, lambda: self.forza_ultra, 2,
+             ((110, 60, 40), (210, 110, 50))),
             (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
              lambda: self.scope_open, 2),
         ]
@@ -1183,8 +1194,31 @@ class App:
                               by + 9 + s1.get_height()))
 
     # ----------------------------------------------------------- draw: parts
+    def _enter_forza_ultra(self):
+        """Display-off mode for playing Forza: connect the UDP telemetry feed (so
+        the engine follows the game) and stop drawing everything but two buttons."""
+        if not self.telemetry_mode:
+            self.toggle_telemetry()            # hook up the Forza UDP listener
+        self.forza_ultra = True
+
     def draw(self):
         self._update_hud_signals()
+        if self.forza_ultra:
+            # DISPLAY OFF: plain background + just the (minimal) toolbar + any menu.
+            self._touch_toggle_rect = None        # owning panels aren't drawn here
+            self._trip_reset_rect = None
+            self.screen.fill((12, 13, 16))
+            self._draw_toolbar()
+            udp = (self.telemetry_mode and self.telemetry is not None)
+            msg = self.tr("FORZA ULTRA — display off (audio only)")
+            if not udp:
+                msg += "   [UDP: --]"
+            m = self.font.render(msg, True, (96, 102, 116))
+            self.screen.blit(m, (WIDTH // 2 - m.get_width() // 2, HEIGHT // 2 - 10))
+            if self._open_menu is not None:
+                self._draw_menu()
+            self._present()
+            return
         self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
         self.screen.blit(self._brushed(WIDTH, HEIGHT, 0), (0, 0))   # brushed backplate
         for sx, sy in ((13, 13), (WIDTH - 13, 13), (13, HEIGHT - 13),
@@ -1209,6 +1243,9 @@ class App:
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
+        self._present()
+
+    def _present(self):
         # Fit the native 1100x680 canvas into the window, PRESERVING ASPECT RATIO
         # (letter-boxed) — so it fills a phone screen or a maximised desktop window
         # cleanly instead of sitting tiny in the corner.  scale==1 => crisp 1:1.
@@ -2393,7 +2430,7 @@ class App:
         (crank gear driving two cam gears) plus a serpentine BELT around the crank
         pulley and two accessory pulleys.  Drawn on top, at the bottom centre."""
         sc = self.screen
-        ang = sim.crank_angle
+        ang = 0.0 if self.telemetry_mode else sim.crank_angle   # Forza: frozen drive
         cx = rect.centerx
         by = int(mbot - 16)                              # front/bottom baseline
 
@@ -2713,7 +2750,7 @@ class App:
             cams = [(cxx, cam_y)]
         else:                                          # DOHC: one cam each bank
             cams = [(cxx - 20, cam_y), (cxx + 20, cam_y)]
-        ang = sim.crank_angle
+        ang = 0.0 if self.telemetry_mode else sim.crank_angle   # Forza: frozen drive
         cam_ang = -ang * 0.5                            # cams turn at half crank speed
         cr_r, cam_r = 8, 11
         vvt = bool(getattr(eng, "variable_valve", ""))
@@ -3067,6 +3104,19 @@ class App:
         marks, a swept needle (270 deg) and a digital readout."""
         cx, cy = int(cx), int(cy)
         frac = min(max(frac, 0.0), 1.0)
+        if self.low_quality:                          # flat dial: face + needle only
+            pygame.draw.circle(self.screen, (40, 44, 52), (cx, cy), r + 3)
+            pygame.draw.circle(self.screen, (18, 19, 23), (cx, cy), r)
+            a = math.radians(135 + frac * 270)
+            pygame.draw.line(self.screen, (235, 92, 80) if danger else (240, 206, 96),
+                             (cx, cy), (cx + (r - 6) * math.cos(a),
+                                        cy + (r - 6) * math.sin(a)), 2)
+            pygame.draw.circle(self.screen, (120, 126, 140), (cx, cy), 3)
+            lab = self.font_small.render(label, True, DIM)
+            self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+            val = self.font_small.render(value, True, INK)
+            self.screen.blit(val, (cx - val.get_width() // 2, int(cy + r * 0.4)))
+            return
         # recessed seat: a dark shadow ring (sunk into the brushed slab) with a
         # bottom-right catch-light, so the instrument reads as INSET, not stuck on
         pygame.draw.circle(self.screen, (22, 24, 28), (cx, cy), r + 7)
@@ -3697,7 +3747,9 @@ class App:
         """(spin, load) for the forced-induction hardware — shaft spin scaled by
         the turbo/blower drive ratio, boost fraction as load."""
         rpm = max(sim.rpm, 1.0)
-        spin = sim.crank_angle * max(sim.forced_induction_rpm() / rpm, 1.0)
+        # Forza: freeze the spinning hardware (keep only pistons + dashboard moving)
+        spin = 0.0 if self.telemetry_mode else \
+            sim.crank_angle * max(sim.forced_induction_rpm() / rpm, 1.0)
         load = (sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
         return spin, load
 
@@ -3834,9 +3886,10 @@ class App:
         dt = sim.drivetrain
         self._wheel_ang += (dt.v / max(dt.wheel_radius, 0.1)) / FPS
 
-    def _draw_ignition_bank(self, x, y, w):
+    def _draw_ignition_bank(self, x, y, w, lights=True):
         """One light per cylinder, flashing as that cylinder fires (power stroke) —
-        the original game's IGNITION column.  Returns the y below the bank."""
+        the original game's IGNITION column.  Returns the y below the bank.
+        ``lights=False`` (Forza) keeps the label + layout but skips the live lamps."""
         sim, eng = self.sim, self.sim.engine
         n = eng.num_cylinders
         lab = self.font_small.render(self.tr("IGNITION"), True, DIM)
@@ -3864,6 +3917,8 @@ class App:
         r = 6 if pitch >= 17 else (5 if pitch >= 12 else 4)
         fade = self._ign_flash
         for rr, rw in enumerate(rows_list):
+            if not lights:                        # Forza: skip the live lamps
+                break
             for cc, i in enumerate(rw):
                 cxp = int(x + 8 + dx * (cc + 0.5))
                 cyp = int(top0 + rr * pitch)
@@ -4318,7 +4373,8 @@ class App:
         self._draw_pedal_bars(rect.right - 64, rect.y + 52, 96)
 
         # --- per-cylinder ignition bank (original-game IGNITION lights) ---
-        yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48)
+        yb = self._draw_ignition_bank(rect.x + 24, rect.y + 220, rect.width - 48,
+                                      lights=not self.telemetry_mode)
 
         # --- digital readouts ---
         tq = self._disp_torque
@@ -4399,7 +4455,11 @@ class App:
         status_y1 = status_y2 - 22
         scope_h = max(34, min(74, int(status_y1 - 10 - y)))
         chart_x, chart_w = rect.x + 24, rect.width - 48
-        self._draw_scope(chart_x, y, chart_w, scope_h, "TOTAL EXHAUST FLOW")
+        if self.telemetry_mode:                  # Forza: no scope at all, just a frame
+            pygame.draw.rect(self.screen, (12, 13, 16), (chart_x, y, chart_w, scope_h))
+            pygame.draw.rect(self.screen, (44, 48, 56), (chart_x, y, chart_w, scope_h), 1)
+        else:
+            self._draw_scope(chart_x, y, chart_w, scope_h, "TOTAL EXHAUST FLOW")
         row1 = [("IGNITION", sim.ignition_on, GOOD, WARN),
                 ("STARTER", sim.starter_engaged, ACCENT, DIM),
                 ("REV LIMIT", sim._fuel_cut, WARN, DIM)]
@@ -4562,6 +4622,32 @@ class App:
 
         def pt(rad, ang):
             return (cx + rad * math.cos(ang), cy - rad * math.sin(ang))
+
+        if self.low_quality:                          # flat tach: face + numbers + needle
+            pygame.draw.circle(self.screen, (40, 44, 52), (cx, cy), r + 6)
+            pygame.draw.circle(self.screen, (20, 22, 27), (cx, cy), r)
+            for i in range(14):                       # flat redline band
+                k = redline + (max_rpm - redline) * i / 13.0
+                a = start - span * (k / max_rpm)
+                pygame.draw.line(self.screen, (212, 60, 52), pt(r - 3, a), pt(r - 8, a), 4)
+            for k in range(0, int(max_rpm) + 1, 1000):
+                a = start - span * (k / max_rpm)
+                col = WARN if k >= redline else (200, 206, 216)
+                num = self.font.render(str(k // 1000), True, col)
+                nx, ny = pt(r - 30, a)
+                self.screen.blit(num, (nx - num.get_width() // 2, ny - num.get_height() // 2))
+            frac = min(max(rpm / max_rpm, 0.0), 1.0)
+            a = start - span * frac
+            ct, st = math.cos(a), math.sin(a)
+            pygame.draw.line(self.screen, WARN if rpm >= redline else ACCENT,
+                             (cx, cy), (cx + (r - 16) * ct, cy - (r - 16) * st), 3)
+            pygame.draw.circle(self.screen, (120, 126, 140), (cx, cy), 6)
+            sval, sunit = self._speed_disp(speed_kmh)
+            txt = self.font_small.render(f"{int(sval)} {sunit}", True, ACCENT)
+            self.screen.blit(txt, (cx - txt.get_width() // 2, cy + int(r * 0.40)))
+            cap = self.font_small.render(self.tr("x1000 rpm"), True, DIM)
+            self.screen.blit(cap, (cx - cap.get_width() // 2, cy + int(r * 0.40) + 18))
+            return
 
         # metal bezel (beveled ring) + dark glossy face
         pygame.draw.circle(self.screen, (38, 41, 48), (cx, cy), r + 12)
