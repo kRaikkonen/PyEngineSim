@@ -333,9 +333,12 @@ class App:
         sy = self.synth
         T = self.tr
         arr = "▼" if self.lang == "zh" else "▾"   # YaHei lacks U+25BE
-        if self.forza_ultra:                      # display-off mode: just these two
+        if self.forza_ultra:                      # display-off mode: just these
             return [
                 (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
+                (T("Mixer / EQ"),
+                 lambda: setattr(self, "mixer_open", not self.mixer_open),
+                 lambda: self.mixer_open, 0),
                 (T("Forza Ultra"),
                  lambda: setattr(self, "forza_ultra", False), lambda: True, 0,
                  ((110, 60, 40), (210, 110, 50))),
@@ -370,13 +373,14 @@ class App:
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 2),
             ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
+            # Forza Ultra sits right next to Forza
+            (T("Forza Ultra"), self._enter_forza_ultra, lambda: self.forza_ultra, 2,
+             ((110, 60, 40), (210, 110, 50))),
             (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
              else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
             # Touch moved out to the big top-right toggle (_draw_touch_toggle)
             (T("Low Q"), lambda: setattr(self, "low_quality", not self.low_quality),
              lambda: self.low_quality, 2),
-            (T("Forza Ultra"), self._enter_forza_ultra, lambda: self.forza_ultra, 2,
-             ((110, 60, 40), (210, 110, 50))),
             (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
              lambda: self.scope_open, 2),
         ]
@@ -1208,13 +1212,16 @@ class App:
             self._touch_toggle_rect = None        # owning panels aren't drawn here
             self._trip_reset_rect = None
             self.screen.fill((12, 13, 16))
+            if self.mixer_open:                   # the EQ window IS allowed up here
+                self._draw_mixer(pygame.Rect(24, 24, 620, 632))
+            else:
+                udp = (self.telemetry_mode and self.telemetry is not None)
+                msg = self.tr("FORZA ULTRA — display off (audio only)")
+                if not udp:
+                    msg += "   [UDP: --]"
+                m = self.font.render(msg, True, (96, 102, 116))
+                self.screen.blit(m, (WIDTH // 2 - m.get_width() // 2, HEIGHT // 2 - 10))
             self._draw_toolbar()
-            udp = (self.telemetry_mode and self.telemetry is not None)
-            msg = self.tr("FORZA ULTRA — display off (audio only)")
-            if not udp:
-                msg += "   [UDP: --]"
-            m = self.font.render(msg, True, (96, 102, 116))
-            self.screen.blit(m, (WIDTH // 2 - m.get_width() // 2, HEIGHT // 2 - 10))
             if self._open_menu is not None:
                 self._draw_menu()
             self._present()
@@ -1471,8 +1478,10 @@ class App:
         in the same iOS-glass style as the toolbar — GREEN glass when on, ORANGE
         glass when off."""
         on = self.touch_mode
-        h = max(54, self._toolbar_bottom - rect.y - 22)
-        r = pygame.Rect(rect.right - 102, rect.y + 14, 86, h)
+        # only span the TOP TWO toolbar rows, so the (wide) bottom row — Forza /
+        # Low Q / Scope — sits clear BELOW the toggle instead of under it
+        h = (self._toolbar_bottom - 32) - (rect.y + 14) - 4
+        r = pygame.Rect(rect.right - 102, rect.y + 14, 86, max(46, h))
         self._touch_toggle_rect = r
         c1, c2 = ((104, 200, 126), (30, 138, 66)) if on \
             else ((244, 186, 86), (196, 120, 26))
@@ -2523,13 +2532,17 @@ class App:
         pygame.draw.arc(sc, (96, 68, 26), sump, math.radians(200), math.radians(340), 4)
         # --- central PROP-REDUCTION gearbox: a toothed reduction gear + prop boss -
         hub_r = int(Rc * 0.2)
+        gear_a = 0.0 if self.telemetry_mode else sim.crank_angle * 0.5   # Forza: frozen
         for k in range(16):                              # reduction-gear teeth
-            t = sim.crank_angle * 0.5 + k * math.pi / 8
+            t = gear_a + k * math.pi / 8
             pygame.draw.line(sc, (150, 156, 172),
                              (int(cx + math.cos(t) * (hub_r - 1)), int(cy + math.sin(t) * (hub_r - 1))),
                              (int(cx + math.cos(t) * (hub_r + 2)), int(cy + math.sin(t) * (hub_r + 2))), 2)
-        sc.blit(self._grad_surf(2 * hub_r, 2 * hub_r, (130, 136, 152), (56, 62, 76),
-                                hub_r, gloss=True), (cx - hub_r, cy - hub_r))
+        if self.low_quality:                             # flat hub (no gloss shading)
+            pygame.draw.circle(sc, (122, 128, 144), (cx, cy), hub_r)
+        else:
+            sc.blit(self._grad_surf(2 * hub_r, 2 * hub_r, (130, 136, 152), (56, 62, 76),
+                                    hub_r, gloss=True), (cx - hub_r, cy - hub_r))
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), hub_r, 1)
         pygame.draw.circle(sc, (190, 196, 210), (cx, cy), 4)   # prop shaft boss
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 4, 1)
@@ -4310,7 +4323,8 @@ class App:
             # blur as the turbo spools — a live turbo-speed tachometer.
             fi_rpm = ez('fi_rpm', t.get('fi_rpm', 0.0), 0.18)
             ratio = fi_rpm / max(self.sim.rpm, 1.0)
-            spin = self.sim.crank_angle * max(ratio, 0.4)
+            # Forza: freeze the turbo visualiser (only pistons + dashboard move)
+            spin = 0.0 if self.telemetry_mode else self.sim.crank_angle * max(ratio, 0.4)
             load = (self.sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
             fcx, fcy = x0 + gap * 5.5, cy
             # no inline label — the rpm/boost readouts go below, clear of the wheel
@@ -4563,10 +4577,12 @@ class App:
         motion-blur disc, and the airspeed readout."""
         sc = self.screen
         cx, cy = int(cx), int(cy)
+        if self.low_quality:
+            ang = 0.0                                     # frozen prop in low-Q
         pygame.draw.circle(sc, (12, 14, 18), (cx, cy), R + 4)
         pygame.draw.circle(sc, (40, 44, 54), (cx, cy), R + 4, 1)
         spd = min(speed_kmh / 240.0, 1.0)                 # prop blur with airspeed
-        if spd > 0.05:
+        if spd > 0.05 and not self.low_quality:
             bl = pygame.Surface((2 * R, 2 * R), pygame.SRCALPHA)
             pygame.draw.circle(bl, (120, 130, 150, int(70 * spd)), (R, R), int(R * 0.92))
             sc.blit(bl, (cx - R, cy - R))
