@@ -249,8 +249,7 @@ class App:
     def __init__(self, preset_key="aven"):
         pygame.init()
         from . import __version__
-        pygame.display.set_caption(
-            f"Engine Simulator — Python Edition  v{__version__}")
+        pygame.display.set_caption(f"PyEngineSim  v{__version__}  —  by Leo")
         # The whole UI is drawn onto a fixed-size canvas, then scaled to fit a
         # freely resizable OS window — so you can drag the window to any size
         # (or maximise it) and everything scales cleanly, keeping its layout.
@@ -333,6 +332,14 @@ class App:
         sy = self.synth
         T = self.tr
         arr = "▼" if self.lang == "zh" else "▾"   # YaHei lacks U+25BE
+        # Forza / Forza Ultra button colour reflects the UDP link: GREEN once Forza
+        # packets are arriving, RED while connected-but-no-data, default when off.
+        if self.telemetry_mode and self.telemetry is not None:
+            tele_col = (((46, 168, 80), (22, 116, 52)) if self.telemetry.is_live()
+                        else ((200, 66, 54), (150, 40, 34)))
+        else:
+            tele_col = None
+        ultra_col = tele_col or ((110, 60, 40), (210, 110, 50))
         if self.forza_ultra:                      # display-off mode: just these
             return [
                 (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
@@ -341,7 +348,7 @@ class App:
                  lambda: self.mixer_open, 0),
                 (T("Forza Ultra"),
                  lambda: setattr(self, "forza_ultra", False), lambda: True, 0,
-                 ((110, 60, 40), (210, 110, 50))),
+                 ultra_col),
             ]
         return [
             # row 0 — car + sound toggles (part 1)
@@ -372,10 +379,10 @@ class App:
             # row 2 — output / device / view
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 2),
-            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2),
+            ("Forza", self.toggle_telemetry, lambda: self.telemetry_mode, 2, tele_col),
             # Forza Ultra sits right next to Forza
             (T("Forza Ultra"), self._enter_forza_ultra, lambda: self.forza_ultra, 2,
-             ((110, 60, 40), (210, 110, 50))),
+             ultra_col),
             (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
              else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
             # Touch moved out to the big top-right toggle (_draw_touch_toggle)

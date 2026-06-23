@@ -1,151 +1,148 @@
-
-# Direct Download Link
-
-https://drive.google.com/file/d/1wDNLnwA6D52N8XzoaFuPZ8HClBpt9Wd3/view?usp=drive_link
-
 # PyEngineSim
 
-A from-scratch **Python** combustion-engine simulator — physically-modelled
-crank/piston dynamics, a thermodynamic four-stroke combustion cycle, a drivetrain
-you can drive, and a fully **physics-driven, real-time audio synthesizer** with a
-live mixing console. Inspired by AngeTheGreat's
-[Engine Simulator](https://github.com/ange-yaghi/engine-sim).
+**A real‑time engine *sound + mechanics* simulator, written in pure Python.**
+By **Leo** · 🇬🇧 English (this file) · [🇨🇳 中文 README](README.zh.md)
 
-## Quick start
+> ⚠️ **Early Access** — PyEngineSim is under active development. Expect rough
+> edges, changing features and the occasional bug. Feedback is very welcome.
 
-**Windows, no Python needed** — download/clone this folder, then:
+![PyEngineSim — Ford GT 3.5 V6](docs/screenshot_fordgt.png)
 
-1. Double-click **`install.bat`** once (downloads a self-contained portable
-   Python + the libraries into `python_embeded\`, ComfyUI-style, ~2 min).
-2. Double-click **`run.bat`** to play.
+PyEngineSim physically models a 4‑stroke engine — crank/rod/piston kinematics, a
+thermodynamic combustion cycle, rigid‑body crankshaft dynamics — and turns the
+exhaust pulses into **live engine audio**. It draws an animated engine bay
+(pistons, valvetrain, turbos, manifolds), a full gauge cluster, and **130+
+real‑world engine presets**, from an inline‑3 to a Bugatti **W16**, F1 V10s, a
+Merlin **V12** aircraft engine and rotary Wankels.
 
-**With your own Python:** `pip install -r requirements.txt` then `py run.py`.
+It can also **follow a real Forza game over UDP** — drive in Forza Horizon /
+Motorsport and PyEngineSim revs the matching engine in real time.
 
-## Controls
+---
 
-The top **toolbar buttons** pick the car and sound — **Demo cars ▾** (the 7
-built-ins), **Load car… / Load EQ…** (native file picker for your own `.json`
-configs), **Save…**, **output device ▾**, sample rate, **Auto/Manual**, **Cabin**
-and **Forza** mode. The rest is keyboard:
+## 🙏 Credits
 
-| Key | Action |
-| :---: | :--- |
-| `A` | Toggle ignition |
-| `S` | Hold for the starter |
-| `↑` / `↓` | Throttle / **brake** |
-| `Z` / `X` | Shift down / up (paddle — tap, no clutch needed) |
-| `Shift` | Hold to ride the clutch (launches / stalls) |
-| `T` | Auto / manual gearbox |
-| `V` | Cycle firing-pulse timbre (voice) |
-| `I` | Cabin (interior) sound on/off |
-| `C` | Open the audio mixer (drag the sliders) |
-| `M` · `Esc` | Mute · quit |
+PyEngineSim is inspired by, and owes a huge debt to,
+**[AngeTheGreat](https://github.com/ange-yaghi)** and his original C++
+**[Engine Simulator](https://github.com/ange-yaghi/engine-sim)**. Watch his
+videos and star the original — this Python edition exists only because that work
+was so inspiring. PyEngineSim is an independent reimplementation and shares no
+code with the original.
 
-**Engines** (each with real bore/stroke, redline, firing order, gearbox and
-exhaust geometry): Porsche 911 3.8 flat-six, VW/Audi EA888 2.0T, Ford Coyote 5.0
-V8, Ferrari 458 flat-plane V8, Lexus LFA 4.8 V10, Lamborghini Murciélago 6.5 V12,
-Ferrari F2004 3.0 F1 V10 (18 500 rpm).
+---
 
-## Forza telemetry mode
+## ⬇️ Download & Run
 
-Click **Forza** to play the selected engine's sound at the **live rpm a running
-Forza Horizon / Motorsport broadcasts** (Horizon 4/5/6 and Motorsport 7/2023) —
-no gears, pure rpm. In the game: *Settings → HUD/Gameplay → Data Out = On*, set
-the Data Out IP to this PC and the port to **5300**.
+| Platform | How |
+|---|---|
+| **Windows (fast)** | Unzip `PyEngineSim-onedir.zip`, run `PyEngineSim/PyEngineSim.exe` |
+| **Windows (single file)** | `PyEngineSim-onefile.zip` → one `.exe` (slower first launch) |
+| **Android (arm64)** | Sideload `pyenginesim-…-arm64-v8a-debug.apk` (touch UI, SDL2 audio) |
+| **From source** | `pip install numpy scipy sounddevice pygame` → `python run.py` |
 
-> Forza is a sandboxed Store app, so sending to `127.0.0.1` on the same PC is
-> blocked — use this machine's **LAN IP** as the Data Out IP instead.
+Startup loads the **Lamborghini Aventador V12** by default; pick any engine from
+the **Demo cars ▾** menu.
 
-## Audio mixer & configs
+---
 
-Press **C** for the live console: fire/bang level + power-chord drive, body,
-firing pitch, attack softness, fizz, the two physical pipe resonances, intake
-roar, explosion + room reverb, per-cylinder spread and a 3-band EQ — all real
-time. **Save…** writes the current engine and sound as editable `.json` files;
-**Load car… / Load EQ…** open them again through a native file dialog.
+## 🎮 Connect a real Forza game (Data Out → PyEngineSim)
 
-## What it actually simulates
+Forza Horizon 4 / 5 and Forza Motorsport stream live telemetry over UDP.
+PyEngineSim listens for it and revs the engine to match the game.
 
-This is not a video player — it's a real, if simplified, engine simulation. Each
-cylinder is integrated through its **four-stroke cycle** every frame:
+1. **In PyEngineSim:** click **`Forza`** in the toolbar. The button colour shows
+   the link state — **🔴 red** = listening but no data yet, **🟢 green** = Forza
+   packets are arriving. PyEngineSim listens on **UDP port `5300`**.
+2. **In the Forza game:** open **Settings → HUD and Gameplay** (Horizon) /
+   **Settings → Gameplay & HUD** (Motorsport) and set:
+   - **Data Out:** `ON`
+   - **Data Out IP Address:** depends on which Forza you own (see note below).
+   - **Data Out IP Port:** `5300`
+   - **(Horizon)** choose the **"Dash"** format.
+3. Drive. The **Forza** button turns 🟢 green and the engine follows the game's
+   rpm / throttle / boost.
 
-1. **Slider-crank kinematics** — exact analytic piston position / velocity from
-   bore, stroke and rod length (`engine.py`). This is the readable equivalent of
-   the original's 2D rigid-body constraint solver.
-2. **Thermodynamics** — intake at manifold pressure → adiabatic compression →
-   heat release (spark + air) → adiabatic expansion → exhaust blowdown
-   (`simulator.py`). Gas pressure becomes crank torque via virtual work,
-   `T = (P − P_atm)·A · d(stroke)/dθ`.
-3. **Crankshaft dynamics** — all cylinder torques plus starter, friction,
-   windage and external load are summed and integrated (semi-implicit Euler with
-   adaptive sub-stepping so the combustion pulse stays sharp at high rpm).
-4. **Idle governor & rev limiter** — an idle-air controller holds a stable idle
-   with the throttle shut, and fuel is cut above the redline. Both are real
-   behaviours you can watch on the indicators.
-5. **Volumetric efficiency** — a breathing curve that gives the torque its proper
-   **mid-range hump** and fall-off toward idle and redline.
-6. **Drivetrain** — a slipping clutch, 5-speed gearbox + final drive and a
-   vehicle mass fighting rolling and aero drag (`drivetrain.py`). Dump the clutch
-   in gear and the load stalls the engine; feather it and you launch the car.
-7. **Audio** — every exhaust-valve opening stamps a decaying "blat" pulse into a
-   real-time `sounddevice` stream (`audio.py`). The pulse *train* is the engine
-   note: its rate rises with rpm, its punch rises with cylinder pressure, so it
-   idles lumpy and snarls under load — the same idea as the original's impulse
-   convolution, made cheap enough for pure Python.
+> **⚠️ Which IP? It depends on the Forza edition (same‑PC case):**
+> - **Steam edition** — a normal Win32 app, loopback works: use **`127.0.0.1`**.
+> - **Microsoft Store / Xbox Game Pass edition** — a sandboxed **UWP** app, and
+>   Windows **blocks UWP loopback**, so `127.0.0.1` never arrives. Use this PC's
+>   **LAN IP** instead (e.g. `192.168.1.x`, find it with `ipconfig`).
+>
+> If the game and PyEngineSim are on **different PCs**, always use the LAN IP of
+> the PC running PyEngineSim — regardless of edition.
 
-Run `py test_headless.py` to see the start-up sequence and a dyno-style
-torque/power curve printed for each engine, with no window or audio.
+> **Same‑PC performance:** if the game is heavy on your machine, switch
+> PyEngineSim to **Forza Ultra** (below) so it uses almost no resources.
 
-## How this maps to the original C++ project
+---
+
+## ⚡ Performance modes (Low‑Q & Forza Ultra)
+
+The bay rendering is heavy on a 16‑cylinder engine. Two toggles trade visuals for
+CPU so the audio thread never starves (no crackling):
+
+- **`Low Q` — Low‑Quality render.** Everything is drawn as **flat solid shapes
+  with no shading**: cylinders, pipes, turbos, belts/gears, gauges and the wheel
+  all go single‑colour, the combustion flash is off, and translucency is
+  disabled. Roughly **halves a heavy frame** — visually simpler, identical data.
+  Toggle it any time.
+- **`Forza`.** Entering Forza telemetry mode **auto‑enables Low‑Q**, freezes the
+  spinning parts (turbo, gears, prop — only the **pistons and dashboard** keep
+  moving) and drops the scopes / ignition lamps. Leaving Forza restores whatever
+  Low‑Q setting you had before.
+- **`Forza Ultra` — display off.** The screen goes blank except its own button,
+  the **Demo cars** menu and a **Mixer/EQ** toggle. The engine still runs and
+  follows Forza over UDP, but the renderer draws essentially nothing (~0.9 ms/
+  frame), so nearly the whole CPU is free for the game + audio. **Best mode while
+  actually racing.**
+
+---
+
+## ⌨️ Controls
+
+| Key | Action | | Key | Action |
+|---|---|---|---|---|
+| `↑ / ↓` | Throttle / brake | | `A` | Ignition on/off |
+| `Shift` (hold) | Clutch | | `S` (hold) | Starter |
+| `X` | Upshift | | `Z` | Downshift |
+| `T` | Auto / Manual | | `C` | Mixer / EQ |
+| `E` | Scope | | `M` | Mute |
+| `V` | Firing voice | | `Esc` | Quit |
+
+A **Touch** toggle (top‑right) brings up on‑screen pedals/paddles for
+touchscreens; it's on by default on Android.
+
+---
+
+## 🔬 What it actually simulates
+
+Each cylinder is integrated through its **four‑stroke cycle** every frame:
+slider‑crank kinematics → adiabatic compression → spark heat release → expansion
+→ exhaust blowdown; gas pressure becomes crank torque via virtual work, and all
+cylinder torques + starter + friction + load are integrated as rigid‑body
+crankshaft dynamics. A slipping clutch, gearbox, final drive and vehicle mass let
+you launch, stall and drive. Every exhaust‑valve opening stamps a decaying pulse
+into a real‑time audio stream — the *pulse train* is the engine note.
 
 | Original (C++) | Here (Python) |
-| :--- | :--- |
-| `delta-studio` (custom DX engine) | `pygame` window + drawing |
-| `simple-2d-constraint-solver` | analytic crank-slider + Euler integration |
-| `piranha` `.mr` engine scripts | `presets.py` (plain Python engine builders) |
-| impulse-response convolution synth | exhaust-pulse synthesizer (`audio.py`) |
-| `gas_system` / `combustion_chamber` | `simulator.py` thermodynamic model |
+|---|---|
+| `delta-studio` renderer | `pygame` window + drawing |
+| 2D constraint solver | analytic crank‑slider + Euler integration |
+| `.mr` engine scripts | `presets.py` engine builders |
+| impulse‑response synth | exhaust‑pulse synthesizer (`audio.py`) |
 
-### Honest limitations
+---
 
-Python can't match the C++ original's fidelity in real time, so the model is
-deliberately tractable: the gas cycle is open-loop (it doesn't track residual gas
-or cross-port flow between cylinders), there's no cam/valve-timing or
-forced-induction modelling, and the audio is a pulse synthesizer rather than true
-convolution. The torque-curve *shapes* and driving feel are realistic; the
-absolute numbers are in the right ballpark but not dyno-accurate.
+## 🛠️ Build it yourself
 
-## Make any car with an AI (no coding)
+- **Windows exe:** `pip install pyinstaller`, then
+  `pyinstaller packaging/PyEngineSim.spec` (fast one‑folder) or
+  `packaging/PyEngineSim-onefile.spec` (single file).
+- **Android apk:** on Linux/WSL with `buildozer` (see `buildozer.spec`). pygame /
+  SDL2 only compile with **python‑for‑android `v2023.09.16` (Python 3.10) +
+  NDK r25b**; newer combos break on `longintrepr.h` / `ALooper`.
 
-Don't want to touch Python? Open **[MAKE_A_CAR_PROMPT.md](MAKE_A_CAR_PROMPT.md)**,
-copy the prompt, paste it into any AI assistant with the car name you want, and
-it returns a finished `.json` engine file. Drop it in `configs/engines/` and load
-it with **Load car…**. The template encodes the exact schema, units, firing-order
-maths and a power-tuning table, so the result loads and runs realistically.
+---
 
-## Build your own engine (in code)
-
-Engines are modular: write a builder in `presets.py` that returns an `Engine`
-made of `Cylinder`s, then add one line to the `PRESETS` list — it shows up in the
-on-screen selector and on its number key automatically, nothing else to wire up.
-Bore, stroke, rod length, compression ratio, cylinder count, firing order,
-inertia, redline, the breathing/friction curves **and the full gearbox** (gear
-ratios, final drive, vehicle mass, wheel radius, clutch capacity) are all
-parameters on `Engine`. See `ferrari_458()` for a fully-specced real example.
-
-## Audio latency
-
-On Windows the synth opens the output stream on **WASAPI in exclusive mode**
-(~5 ms) when available, falling back to WASAPI shared low-latency, then the
-system default. This matters: PortAudio's default MME backend buffers 90–180 ms,
-enough to make the engine audibly lag the throttle. The chosen mode and measured
-latency are printed/queryable via `Synthesizer.mode` / `.latency_ms`.
-
-## Requirements
-
-```
-pip install -r requirements.txt   # numpy, pygame-ce, sounddevice
-```
-
-`sounddevice` is optional — if it's missing or no audio device opens, everything
-else still runs, silently.
+*PyEngineSim — by **Leo**. Early Access. With gratitude to **AngeTheGreat's**
+Engine Simulator.*
