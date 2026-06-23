@@ -131,6 +131,13 @@ class Engine:
     muffler_volume_m3: float = 0.003 # Helmholtz chamber volume (m^3)
     muffler_neck_area_m2: float = 0.0020
     muffler_neck_len_m: float = 0.08
+    # muffler construction: "reflective" = chambered/baffled (comb notches, drone),
+    # "absorptive" = straight-through packed (broadband HF soak, smooth, less comb)
+    muffler_type: str = "reflective"
+    # tail-pipe TIP mouth size relative to the pipe: >1 big bore (brighter, more
+    # open), <1 small bore (darker + a whistle, more restrictive)
+    tip_scale: float = 1.0
+    flex_pipe: bool = False           # corrugated flex section -> a buzzy mid resonance
 
     # forced induction -------------------------------------------------------
     # "na" naturally aspirated | "roots" positive-displacement supercharger

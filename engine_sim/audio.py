@@ -576,6 +576,8 @@ class Synthesizer:
         md = int(0.5 / 380.0 * sr) + BLOCK + 8
         self._muff_dl1, self._muff_dl2 = _BlockDelay(md), _BlockDelay(md)
         self._muff_len = (0.17, 0.31)
+        self._absorb_zi = np.zeros(1)     # absorptive-muffler HF soak state
+        self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
         # (#4) full-system round-trip reflection: a weak low-passed echo at the
         # pipe's round-trip time -> low-frequency elasticity + a longer, rounder tail.
         self._tail_len = 2.0 * max(eng.exhaust_total_m, 0.5)
@@ -821,10 +823,22 @@ class Synthesizer:
         # and raspier ("VTEC kicks in").  variable_valve is display-only on the
         # Engine; we read the same field here to colour the sound.
         self._vtec = 0.0
-        if getattr(eng, "variable_valve", ""):
+        vv = getattr(eng, "variable_valve", "")
+        if vv:
+            # Only LIFT-SWITCHING systems give an audible step ("kick") at the
+            # crossover — Honda VTEC, Toyota VVTL-i, Mitsubishi MIVEC, Audi AVS,
+            # Porsche VarioCam Plus.  Cam-PHASING / continuous-lift systems (BMW
+            # VANOS & Valvetronic, Toyota VVT-i, Ferrari VVT, Nissan CVTCS, Ford
+            # Ti-VCT, Hyundai CVVT) spool up SMOOTHLY — just a gentle brightening.
+            lift = any(k in vv for k in ("VTEC", "VVTL", "MIVEC", "AVS",
+                                         "VarioCam", "Valvematic"))
+            step = 1.0 if lift else 0.22
             self._vtec = min(max((rpm_frac - 0.68) / 0.06, 0.0), 1.0)
-            self._post_fc *= 1.0 + 0.30 * self._vtec
-            fc *= 1.0 + 0.26 * self._vtec
+            self._post_fc *= 1.0 + 0.30 * step * self._vtec
+            fc *= 1.0 + 0.26 * step * self._vtec
+        # tail-pipe TIP mouth: a big bore brightens the exit, a small one darkens it
+        # (tip_scale == 1.0 is neutral so existing presets are unchanged).
+        self._post_fc *= 0.70 + 0.30 * min(max(getattr(eng, "tip_scale", 1.0), 0.3), 2.0)
         # 2-valve heads breathe worse up top -> a touch darker than 4-valve
         if eng.valves_per_cyl <= 2:
             self._post_fc *= 0.82
@@ -1100,13 +1114,24 @@ class Synthesizer:
             # (expansion chamber + baffle paths) -> periodic notches = the muffler's
             # own colour, not just a low-pass.  Stronger in a packed/quiet box, light
             # on an open system.
-            mcomb = (1.0 - sim.engine.exhaust_openness)
+            # Muffler construction: a REFLECTIVE (chambered/baffled) box rings the
+            # comb notches and drones; an ABSORPTIVE (straight-through, fibre-packed)
+            # one barely combs but soaks the high end broadband -> smooth & open.
+            absorptive = getattr(sim.engine, "muffler_type", "reflective") == "absorptive"
+            mcomb = (1.0 - sim.engine.exhaust_openness) * (0.3 if absorptive else 1.0)
             if mcomb > 0.05:
                 d1 = self._muff_len[0] / c_runner * sr
                 d2 = self._muff_len[1] / c_runner * sr
                 mg = mcomb * P.get("muffler", 1.0)
                 sig = (sig + 0.32 * mg * self._muff_dl1.process(sig, d1)
                        + 0.22 * mg * self._muff_dl2.process(sig, d2))
+            if absorptive and _HAVE_SCIPY:    # packed-fibre broadband HF absorption
+                bA, aA = butter(1, min(6800.0, sr * 0.45) / (sr / 2), btype="low")
+                sig, self._absorb_zi = lfilter(bA, aA, sig, zi=self._absorb_zi)
+            if getattr(sim.engine, "flex_pipe", False) and _HAVE_SCIPY:
+                # corrugated flex section -> a buzzy mid resonance (the 'braaa' rasp)
+                bf, af = _peaking(1650.0, 2.2, 4.0, self.sample_rate)
+                sig, self._flex_zi = lfilter(bf, af, sig, zi=self._flex_zi)
             self._tap("muffler", sig)         # expansion low-pass + comb baffles
             # active exhaust valve: above ~40% redline the bypass flap cracks open
             # and the bright straight-through tap is crossfaded back in — the note

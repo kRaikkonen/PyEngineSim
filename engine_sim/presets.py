@@ -3032,6 +3032,16 @@ def _annotate(key, eng):
             eng.induction_subtype = "twin_scroll"
         elif key in _INLINE_TWIN:
             eng.induction_subtype = "twin"
+    # --- exhaust hardware (audio) ------------------------------------------------
+    # Performance cars run straight-through ABSORPTIVE mufflers (open, broadband,
+    # smooth); stock road cars keep the chambered REFLECTIVE box (default).
+    if eng.muffler_type == "reflective" and (eng.straight_cut
+            or eng.exhaust_openness >= 0.82 or eng.redline_rpm >= 8000):
+        eng.muffler_type = "absorptive"
+    # A corrugated flex section buzzes — common on small modern turbo cars.
+    if (not eng.flex_pipe and eng.induction == "turbo"
+            and eng.total_displacement * 1000.0 <= 2.6):
+        eng.flex_pipe = True
     # crank plane (display) for V8s: the screamers (Ferrari/McLaren/AMG GT/S65/
     # Voodoo ...) run a single-plane FLAT crank; every other 90-deg V8 is the
     # two-plane CROSS crank that gives the burble.
