@@ -46,6 +46,7 @@ bin/
 android_*.sh
 ndk_*.sh
 apk_*.sh
+p4a_*.sh
 _wslcheck.sh
 build_log.txt
 _srcstage/
