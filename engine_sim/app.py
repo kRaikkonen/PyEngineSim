@@ -561,6 +561,9 @@ class App:
                 self.telemetry.stop()
             self.telemetry = None
             self.telemetry_mode = False
+            # restore the low-Q state from before Forza was entered: it was forced
+            # on for Forza, so only keep it on if the user had it on beforehand
+            self.low_quality = getattr(self, "_low_q_pre_forza", False)
             self.sim.throttle = 0.0
             self._flash("Telemetry mode OFF")
             return
@@ -570,6 +573,7 @@ class App:
                         f"({self.telemetry.error})")
             self.telemetry = None
             return
+        self._low_q_pre_forza = self.low_quality   # remember to restore on exit
         self.telemetry_mode = True
         self.low_quality = True            # Forza defaults to the low-quality render
         self.sim.ignition_on = True
@@ -2407,8 +2411,11 @@ class App:
                                   int(c[1] + math.sin(t) * (r - 1))),
                                  (int(c[0] + math.cos(t) * (r + 2)),
                                   int(c[1] + math.sin(t) * (r + 2))), 2)
-            sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
-                                    gloss=True), (c[0] - r, c[1] - r))
+            if self.low_quality:
+                pygame.draw.circle(sc, (134, 140, 154), c, r)   # flat gear/sprocket
+            else:
+                sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
+                                        gloss=True), (c[0] - r, c[1] - r))
             if ring:
                 pygame.draw.circle(sc, ring, c, int(r * 0.7), 2)
             pygame.draw.circle(sc, (40, 44, 54), c, max(2, int(r * 0.28)))
@@ -2427,8 +2434,11 @@ class App:
         pygame.draw.ellipse(sc, (62, 62, 70), loop, 1)
         for px, py, pr in pulls:                         # pulleys with hubs
             spin = ang if pr > 7 else -ang * 1.7
-            sc.blit(self._grad_surf(2 * pr, 2 * pr, (150, 156, 170), (64, 70, 84),
-                                    pr, gloss=True), (px - pr, py - pr))
+            if self.low_quality:
+                pygame.draw.circle(sc, (140, 146, 160), (px, py), pr)   # flat pulley
+            else:
+                sc.blit(self._grad_surf(2 * pr, 2 * pr, (150, 156, 170), (64, 70, 84),
+                                        pr, gloss=True), (px - pr, py - pr))
             pygame.draw.circle(sc, (90, 96, 110), (px, py), pr, 1)
             pygame.draw.circle(sc, (40, 44, 54), (px, py),
                                max(2, int(pr * 0.4)))
@@ -2590,6 +2600,13 @@ class App:
         rounded rather than robotically square (a slight 488-style curve)."""
         cols = cols or self._EXH_COLS
         sc = self._pipe_target(cols)
+        if self.low_quality:                           # flat single-colour pipe
+            ipts = [(int(x), int(y)) for x, y in pts]  # no chamfer, no shading
+            if len(ipts) >= 2:
+                pygame.draw.lines(sc, cols[1], False, ipts, max(2, rad * 2))
+            if joint:
+                pygame.draw.circle(sc, cols[1], ipts[0], rad + 1)
+            return
         raw = [(float(x), float(y)) for x, y in pts]
         if len(raw) >= 3:                              # chamfer the interior corners
             soft = [raw[0]]
@@ -2729,8 +2746,11 @@ class App:
                 pygame.draw.line(sc, (158, 164, 180),
                                  (int(c[0] + math.cos(t) * (r - 1)), int(c[1] + math.sin(t) * (r - 1))),
                                  (int(c[0] + math.cos(t) * (r + 2)), int(c[1] + math.sin(t) * (r + 2))), 2)
-            sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
-                                    gloss=True), (c[0] - r, c[1] - r))
+            if self.low_quality:
+                pygame.draw.circle(sc, (134, 140, 154), c, r)   # flat gear/sprocket
+            else:
+                sc.blit(self._grad_surf(2 * r, 2 * r, (140, 146, 162), (60, 66, 80), r,
+                                        gloss=True), (c[0] - r, c[1] - r))
             if ring:
                 pygame.draw.circle(sc, ring, c, int(r * 0.7), 2)
             pygame.draw.circle(sc, (40, 44, 54), c, max(2, int(r * 0.28)))
@@ -3085,6 +3105,23 @@ class App:
         """A turbocharger: scroll/volute housing with a spinning turbine wheel,
         glowing hotter as it makes boost."""
         cx, cy = int(cx), int(cy)
+        if self.low_quality:
+            # flat single-colour turbo; spin kept (cheap); heat glow is BINARY
+            pygame.draw.circle(self.screen, (54, 58, 68), (cx, cy), r)
+            pygame.draw.circle(self.screen, (120, 126, 138), (cx, cy), r, 1)
+            hub = max(3, int(r * 0.18))
+            for k in range(6):
+                a = spin + k * (2 * math.pi / 6)
+                pygame.draw.line(self.screen, (150, 156, 168), (cx, cy),
+                                 (int(cx + r * 0.7 * math.cos(a)),
+                                  int(cy + r * 0.7 * math.sin(a))), 2)
+            if load > 0.25:                                # binary on/off orange
+                pygame.draw.circle(self.screen, (255, 140, 50), (cx, cy), int(r * 0.45))
+            pygame.draw.circle(self.screen, (90, 96, 108), (cx, cy), hub)
+            if label:
+                lab = self.font_small.render(self.tr("TURBO"), True, DIM)
+                self.screen.blit(lab, (cx - lab.get_width() // 2, cy + r + 5))
+            return
         pygame.draw.circle(self.screen, (52, 56, 66), (cx, cy), r)         # volute
         pygame.draw.circle(self.screen, (150, 156, 168), (cx, cy), r, 2)
         pygame.draw.circle(self.screen, (28, 30, 36), (cx, cy), int(r * 0.78))
@@ -3149,6 +3186,15 @@ class App:
         angle so the exhaust is seen flowing into the volute."""
         cx, cy, r = int(cx), int(cy), int(r)
         sc = self.screen
+        if self.low_quality:                          # flat turbo, NO cast shadow
+            self._draw_turbo(cx, cy, r, spin, load, label=False)
+            if inlet_dir is not None:                 # short red inlet throat
+                ca, sa = math.cos(inlet_dir), math.sin(inlet_dir)
+                pygame.draw.line(sc, (178, 64, 40),
+                                 (cx + ca * (r - 1), cy + sa * (r - 1)),
+                                 (cx + ca * (r + 10), cy + sa * (r + 10)), 6)
+            self._turbo_pts.append((cx, cy, r))       # for downstream piping
+            return
         # soft cast shadow grounding the turbo on whatever is behind it
         shp = pygame.Surface((2 * r + 12, 2 * r + 12), pygame.SRCALPHA)
         pygame.draw.circle(shp, (0, 0, 0, 110), (r + 6, r + 6), r + 2)
@@ -3317,6 +3363,21 @@ class App:
     def _draw_ancillary(self, cx, cy, kind, throttle=0.0):
         """A small icon for a forced-induction ancillary part."""
         sc = self.screen
+        if self.low_quality:                             # flat single-colour box
+            cols = {"tb": (110, 118, 132), "ic": (110, 118, 132),
+                    "cat": (132, 138, 152), "dpf": (120, 122, 130),
+                    "scr": (120, 122, 130), "def": (110, 150, 196),
+                    "res": (118, 124, 138), "muf": (118, 124, 138),
+                    "tail": (90, 96, 108), "wg": (150, 92, 60), "bov": (110, 140, 200)}
+            r = pygame.Rect(cx - 17, cy - 8, 34, 16)
+            pygame.draw.rect(sc, cols.get(kind, (112, 120, 134)), r, 0, border_radius=4)
+            pygame.draw.rect(sc, (40, 44, 54), r, 1, border_radius=4)
+            if kind == "tb":                             # keep the butterfly (throttle)
+                ang = math.radians(90.0 - 80.0 * min(max(throttle, 0.0), 1.0))
+                dx, dy = math.cos(ang) * 12, math.sin(ang) * 6
+                pygame.draw.line(sc, (206, 212, 224),
+                                 (cx - dx, cy - dy), (cx + dx, cy + dy), 3)
+            return
         if kind == "tb":                                 # throttle body: live butterfly
             r = pygame.Rect(cx - 17, cy - 9, 34, 18)
             sc.blit(self._grad_surf(r.w, r.h, (122, 130, 144), (60, 66, 80), 4), r.topleft)
@@ -4349,6 +4410,21 @@ class App:
         star, a red brake caliper and a drilled disc."""
         cx, cy = int(cx), int(cy)
         sc = self.screen
+        if self.low_quality:
+            # static, flat wheel — no spin, no rotozoom lettering, no shading
+            pygame.draw.circle(sc, (12, 13, 16), (cx, cy), R + 4)          # tyre
+            pygame.draw.circle(sc, (44, 48, 56), (cx, cy), int(R * 0.8))   # rim
+            pygame.draw.circle(sc, (70, 75, 88), (cx, cy), int(R * 0.8), 1)
+            for k in range(5):                                            # flat spokes
+                a = k * (2 * math.pi / 5.0)
+                pygame.draw.line(sc, (90, 95, 108), (cx, cy),
+                                 (int(cx + R * 0.74 * math.cos(a)),
+                                  int(cy + R * 0.74 * math.sin(a))), 3)
+            pygame.draw.circle(sc, (28, 30, 36), (cx, cy), int(R * 0.22))  # hub
+            sval, sunit = self._speed_disp(speed_kmh)
+            lab = self.font_small.render(f"{sval:.0f} {sunit}", True, DIM)
+            sc.blit(lab, (cx - lab.get_width() // 2, cy + R + 6))
+            return
         # tyre (black) + soft sheen
         pygame.draw.circle(sc, (10, 11, 13), (cx, cy), R + 4)
         sh = pygame.Surface((2 * (R + 5), 2 * (R + 5)), pygame.SRCALPHA)

@@ -1568,19 +1568,24 @@ class Synthesizer:
                     blocksize=128, latency="low", extra_settings=excl)))
             except Exception:
                 pass
+        # Keep the tested 256-frame render block (bigger blocks broke the synth's
+        # internal buffers), but ask for a generous ~60ms host buffer so a long
+        # pure-Python draw can stall the GIL without underrunning the audio.
+        # (Exclusive mode above stays tiny for the latency purists who opt in.)
+        OB, OL = BLOCK, 0.06
         if self._device is not None:
             attempts.append(("shared", dict(
                 device=self._device, samplerate=self.sample_rate, channels=2,
-                blocksize=BLOCK, latency="low")))
+                blocksize=OB, latency=OL)))
             attempts.append(("shared-mono", dict(
                 device=self._device, samplerate=self.sample_rate, channels=1,
-                blocksize=BLOCK, latency="low")))
+                blocksize=OB, latency=OL)))
         attempts.append(("default", dict(
-            device=None, samplerate=SAMPLE_RATE, channels=2, blocksize=BLOCK,
-            latency="low")))
+            device=None, samplerate=SAMPLE_RATE, channels=2, blocksize=OB,
+            latency=OL)))
         attempts.append(("default-mono", dict(
-            device=None, samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK,
-            latency="low")))
+            device=None, samplerate=SAMPLE_RATE, channels=1, blocksize=OB,
+            latency=OL)))
 
         for mode, cfg in attempts:
             try:
@@ -1632,7 +1637,7 @@ class Synthesizer:
     def _pygame_feed(self):
         import time
         import pygame
-        CH = 1024                                # frames per queued chunk
+        CH = BLOCK                               # frames per queued chunk (tested size)
         while self._pg_run:
             try:
                 if self._pg_chan.get_queue() is not None:   # already one ahead
