@@ -2991,13 +2991,46 @@ PRESETS = [
 # Variable-valve technology by registry key (only engines that truly have a
 # branded system; blank = none shown).  VTEC / VANOS / Valvetronic / VVT-i ...
 _VARIABLE_VALVE = {
+    # Honda — VTEC (LIFT-switching, the audible "kick")
     "ek9": "VTEC", "ep3": "VTEC", "fk8": "VTEC", "nsx": "VTEC",
+    # BMW — VANOS (phasing) / Valvetronic (continuous lift), both SMOOTH
     "e36m3": "VANOS", "e92m3": "double-VANOS", "m3gtr": "double-VANOS",
     "0": "Valvetronic", "e60m5": "double-VANOS", "b48": "Valvetronic",
-    "9": "VVT-i", "5": "VVT-i", "4": "F1-Trac VVT", "488": "VVT",
-    "lafe": "VVT", "rs3": "AVS", "rs5": "AVS", "audiv8": "AVS",
+    "330i": "double-VANOS", "bmwv8": "Valvetronic",          # S63
+    # Toyota / Lexus — VVT-i (phasing)
+    "9": "VVT-i", "5": "VVT-i",
+    # Ferrari — VVT (phasing); F1 cars use pneumatic valves -> none
+    "4": "F1-Trac VVT", "488": "VVT", "pista": "VVT", "lafe": "VVT",
+    "enzo": "VVT", "fxxk": "VVT",
+    # Audi / VW group — AVS (2-stage lift) / cam phasing
+    "rs3": "AVS", "rs5": "AVS", "audiv8": "AVS", "d8gto": "AVS",
+    "2": "VVT", "borav5": "VVT", "veyron": "VVT",            # EA888 / VR5 / W16
+    "conti": "VVT", "bentss": "VVT",                          # Bentley W12
+    # Porsche — VarioCam(+) (lift on the Plus systems)
     "gt3": "VarioCam", "1": "VarioCam", "991rs": "VarioCam",
-    "fd370z": "CVTCS", "s15": "VVT",
+    "gt2rs": "VarioCam", "997rs4": "VarioCam", "918": "VarioCam",
+    # Nissan — CVTC(S) (phasing)
+    "fd370z": "CVTCS", "s15": "VVT", "r35": "CVTCS",
+    # Subaru — AVCS (phasing, intake)
+    "gdb": "AVCS", "gv": "AVCS",
+    # Ford — Ti-VCT (twin independent cam timing, phasing)
+    "3": "Ti-VCT", "rtr": "Ti-VCT", "gt350r": "Ti-VCT", "gt500": "Ti-VCT",
+    "fordgt": "Ti-VCT", "raptor": "Ti-VCT", "focus3": "Ti-VCT",
+    "hoonitruck": "Ti-VCT",
+    # GM — cam-phasing VVT (LS3 / older LS have NONE)
+    "c7": "VVT", "ct5v": "VVT",                              # LT1 / LT4
+    # Chrysler/HEMI — VVT (cam phasing); Viper V10 pushrod -> none
+    "charger": "VVT", "challenger": "VVT", "8": "VVT",       # 5.7 / 6.4 / Hellcat
+    # Mercedes-AMG — VVT (M139 = Camtronic 2-stage LIFT)
+    "a45": "Camtronic", "amggt": "VVT", "c63bs": "VVT", "e63": "VVT",
+    "valhalla": "VVT",                                       # AMG M178
+    # Lamborghini — VVT (mid-2000s on; Countach/Diablo = none)
+    "aven": "VVT", "hura": "VVT", "6": "VVT",
+    # Maserati / Alfa (Ferrari-derived) — VVT
+    "gts": "VVT", "giulia": "dual VVT",
+    # Aston / Jaguar / McLaren / Koenigsegg — VVT
+    "db11": "VVT", "vulcan": "VVT", "valk": "VVT", "ftype": "VVT",
+    "p1": "VVT", "senna": "VVT", "one1": "VVT",
 }
 # Honda transverse engines famously spin the "wrong" way (CCW from the pulley).
 _CCW_ROTATION = {"ek9", "ep3", "fk8", "nsx"}

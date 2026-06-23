@@ -831,7 +831,7 @@ class Synthesizer:
             # VANOS & Valvetronic, Toyota VVT-i, Ferrari VVT, Nissan CVTCS, Ford
             # Ti-VCT, Hyundai CVVT) spool up SMOOTHLY — just a gentle brightening.
             lift = any(k in vv for k in ("VTEC", "VVTL", "MIVEC", "AVS",
-                                         "VarioCam", "Valvematic"))
+                                         "VarioCam", "Valvematic", "Camtronic"))
             step = 1.0 if lift else 0.22
             self._vtec = min(max((rpm_frac - 0.68) / 0.06, 0.0), 1.0)
             self._post_fc *= 1.0 + 0.30 * step * self._vtec
