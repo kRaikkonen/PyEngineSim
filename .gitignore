@@ -50,3 +50,5 @@ p4a_*.sh
 _wslcheck.sh
 build_log.txt
 _srcstage/
+
+agent.py

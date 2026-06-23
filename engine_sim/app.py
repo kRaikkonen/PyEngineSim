@@ -33,9 +33,14 @@ from .units import nm_to_lbft, nm_to_hp_at, rpm_to_rads
 
 # python-for-android sets these in the app's environment; use them to detect that
 # we're running on a phone so the UI can default to the finger-control overlay.
-ON_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
+# Unified Android detection (compatible with both env vars and sys.platform)
+IS_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
                   or os.environ.get("ANDROID_APP_PATH")
-                  or os.environ.get("ANDROID_PRIVATE"))
+                  or os.environ.get("ANDROID_PRIVATE")
+                  or (hasattr(sys, "platform") and sys.platform == "android"))
+
+# Backward compatibility: keep ON_ANDROID for existing code
+ON_ANDROID = IS_ANDROID
 
 SAMPLE_RATES = [44100, 48000]
 
@@ -184,7 +189,12 @@ TR_ZH = {
     "Presence (bite)": "临场(咬合)",
 }
 
-WIDTH, HEIGHT = 1100, 680
+# Platform-specific rendering resolution
+# Android: 854x480 (16:9) for lower GPU load, PC: 1280x720 for better quality
+if IS_ANDROID:
+    WIDTH, HEIGHT = 854, 480
+else:
+    WIDTH, HEIGHT = 1280, 720
 FPS = 60
 
 # Friendly transmission labels for the HUD (sets the auto-shift feel).
@@ -254,13 +264,16 @@ class App:
         # freely resizable OS window — so you can drag the window to any size
         # (or maximise it) and everything scales cleanly, keeping its layout.
         self._scaled = False
-        if ON_ANDROID:
-            # SDL2 logical-size scaling: render the fixed 1100x680 canvas, then let
-            # the GPU scale it to FILL the phone screen (fixes the "tiny in the
-            # corner" bug and drops the costly per-frame CPU smoothscale).
+        if IS_ANDROID:
+            # Force GLES 2.0 context for hardware acceleration
+            os.environ["SDL_VIDEO_GL_DRIVER"] = "gles2"
+            os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+            # SDL2 logical-size scaling: render the fixed canvas, then let
+            # the GPU scale it to FILL the phone screen with aspect ratio preserved
+            # (fixes the "tiny in the corner" bug and drops the costly per-frame CPU smoothscale).
             try:
                 self.window = pygame.display.set_mode(
-                    (WIDTH, HEIGHT), pygame.SCALED | pygame.FULLSCREEN)
+                    (WIDTH, HEIGHT), pygame.SCALED | pygame.FULLSCREEN | pygame.DOUBLEBUF)
                 self._scaled = True
             except Exception:
                 self.window = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -334,6 +347,23 @@ class App:
         self._open_menu = None    # active dropdown {items, rect, item_rects}
         self._build_mixer()
         self.running = True
+
+        # --- Android-specific performance optimizations ---
+        if IS_ANDROID:
+            # Force low-quality mode: disable gradients, anti-aliasing, fine shading
+            self.low_quality = True
+            # Disable waveform/scope display (high CPU cost)
+            self.scope_open = False
+            # Disable ignition indicator lights (if exists)
+            if hasattr(self, "_ign_flash"):
+                self._ign_flash = {}
+            # Disable turbo/belt rotation animations (if exists)
+            if hasattr(self, "_wheel_ang"):
+                self._wheel_ang = 0.0
+            # Disable combustion flash effects (if exists)
+            if hasattr(self, "_flash"):
+                # Keep the method but it will check low_quality flag
+                pass
 
     # ------------------------------------------------------------- toolbar
     def _toolbar_defs(self):

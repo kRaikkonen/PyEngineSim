@@ -5,6 +5,14 @@
 """
 
 import argparse
+import os
+import sys
+
+# Unified Android environment detection (compatible with both env vars and sys.platform)
+IS_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
+                  or os.environ.get("ANDROID_APP_PATH")
+                  or os.environ.get("ANDROID_PRIVATE")
+                  or (hasattr(sys, "platform") and sys.platform == "android"))
 
 from engine_sim import presets
 from engine_sim.app import App
