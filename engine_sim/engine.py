@@ -169,6 +169,13 @@ class Engine:
     # Unequal-length exhaust headers delay one bank's pulses, creating the
     # classic Subaru boxer rumble (even firing, uneven *sound*).
     header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
+    # Exhaust merge topology — which cylinders share a (secondary) collector:
+    #   "auto" -> 4-1 for equal-length race headers, 4-2-1 otherwise
+    #   "4-1"  -> every runner on a bank merges at one collector (raw, top-end)
+    #   "4-2-1"/"tri-y" -> runners pair up first (paired cylinders share a pipe),
+    #                      then merge -> a secondary resonance, smoother mid-range
+    #   "log"  -> a shared cast log manifold (cylinders strongly coupled, muffled)
+    header_type: str = "auto"
     valvetrain: str = "dohc"         # dohc | sohc | ohv -> breathing + tick
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
     variable_valve: str = ""         # "VTEC"/"VANOS"/"VVT-i"/... "" = none (display only)

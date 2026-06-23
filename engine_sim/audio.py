@@ -581,8 +581,34 @@ class Synthesizer:
         self._tail_len = 2.0 * max(eng.exhaust_total_m, 0.5)
         self._tail_dl = _BlockDelay(int(self._tail_len / 380.0 * sr) + BLOCK + 8)
         # deterministic per-cylinder voicing (granular idle, no random/no per-car)
+        # Exhaust merge topology: which cylinders share a SECONDARY collector.
+        #   4-1   -> collector == channel (all runners merge at once: raw, top-end)
+        #   4-2-1 -> each bank splits into TWO secondaries, pairing cylinders that
+        #            fire ~360 deg apart so each secondary sees evenly-spaced pulses.
+        #            The PAIRED cylinders share a pipe and load each other — this is
+        #            exactly "which cylinders share a header runner", audibly.
+        htype = getattr(eng, "header_type", "auto")
+        if htype == "auto":
+            htype = "4-1" if self._equal_headers else "4-2-1"
+        self._header_type = htype
+        self._collector_of = list(self._channel_of)
+        if htype in ("4-2-1", "tri-y", "tri-Y"):
+            by_ch, coll = {}, 0
+            for j in range(eng.num_cylinders):
+                by_ch.setdefault(self._channel_of[j], []).append(j)
+            for ch in sorted(by_ch):
+                members = sorted(by_ch[ch], key=lambda i: self._offsets[i] % 720.0)
+                if len(members) >= 4:                  # pair only 4+ runners/bank
+                    for rank, j in enumerate(members):
+                        self._collector_of[j] = coll + (rank % 2)
+                    coll += 2
+                else:
+                    for j in members:
+                        self._collector_of[j] = coll
+                    coll += 1
+        # backpressure / shared-runner loading groups by the SECONDARY collector
         self._cyl_voice = CylinderVoicing(
-            self._runner_len, self._channel_of, [float(o) for o in self._offsets], sr,
+            self._runner_len, self._collector_of, [float(o) for o in self._offsets], sr,
             intake_runner_m=getattr(eng, "intake_runner_m", 0.30),
             bp_coupling=getattr(eng, "backpressure_coupling", 0.5))
         # TWO waveguides per channel: a short primary runner (high resonance) and
@@ -685,9 +711,22 @@ class Synthesizer:
             # The MATERIAL shifts the ring: titanium (stiff & light) sings high and
             # clear, steel sits mid, cast iron is low & dead.  f_wall ~ sqrt(E/rho).
             r = max(eng.exhaust_radius_m, 0.012)
-            mat = {"titanium": 1.28, "aluminium": 1.18, "aluminum": 1.18,
-                   "steel": 1.0, "stainless": 1.0, "iron": 0.72, "cast_iron": 0.72}
-            mf = mat.get(getattr(eng, "wall_material", "steel"), 1.0)
+            # MATERIAL -> (formant-frequency multiplier, ring-gain scale).
+            # f_wall ~ sqrt(E/rho): stiff & light alloys ring HIGH; cast iron sits
+            # LOW & dead.  The ring scale is the metal "ping" strength — stainless
+            # is a touch harder/brighter than mild steel, 321 SS brighter still,
+            # inconel hard & harsh, and a CERAMIC COATING insulates + damps the
+            # ping (smoother, less metallic).
+            MAT = {"titanium": (1.28, 1.05), "ti": (1.28, 1.05),
+                   "321": (1.12, 1.00), "321ss": (1.12, 1.00), "321ti": (1.12, 1.00),
+                   "stainless": (1.06, 1.00), "304": (1.06, 1.00), "ss": (1.06, 1.00),
+                   "inconel": (0.96, 1.12),
+                   "steel": (1.00, 0.95), "mild_steel": (1.00, 0.95),
+                   "aluminium": (1.18, 0.90), "aluminum": (1.18, 0.90),
+                   "iron": (0.72, 0.70), "cast_iron": (0.72, 0.70),
+                   "ceramic": (0.95, 0.60), "ceramic_coated": (0.95, 0.60)}
+            mf, ring = MAT.get(getattr(eng, "wall_material", "steel"), (1.0, 0.95))
+            self._wall_ring = ring
             self._wall_f1 = min(max(2300.0 * (0.024 / r) * mf, 1300.0), 4200.0)
             self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
             self._wallpk1_zi = np.zeros(2)
@@ -777,6 +816,15 @@ class Synthesizer:
         if eng.is_rotary:
             self._post_fc *= 1.35
             fc *= 1.4
+        # VTEC / VVT high-lift cam CROSSOVER -> an audible step: above the crossover
+        # rpm the aggressive cam piles on lift + overlap, so the note jumps brighter
+        # and raspier ("VTEC kicks in").  variable_valve is display-only on the
+        # Engine; we read the same field here to colour the sound.
+        self._vtec = 0.0
+        if getattr(eng, "variable_valve", ""):
+            self._vtec = min(max((rpm_frac - 0.68) / 0.06, 0.0), 1.0)
+            self._post_fc *= 1.0 + 0.30 * self._vtec
+            fc *= 1.0 + 0.26 * self._vtec
         # 2-valve heads breathe worse up top -> a touch darker than 4-valve
         if eng.valves_per_cyl <= 2:
             self._post_fc *= 0.82
@@ -1114,9 +1162,10 @@ class Synthesizer:
         if _HAVE_SCIPY:
             f1 = self._wall_f1 * (1.0 - 0.18 * wt)
             f2 = self._wall_f2 * (1.0 - 0.22 * wt)
-            bp1, ap1 = _peaking(f1, 3.4, 3.0 - 1.2 * wt, self.sample_rate)
+            ring = getattr(self, "_wall_ring", 1.0)      # material ping strength
+            bp1, ap1 = _peaking(f1, 3.4, (3.0 - 1.2 * wt) * ring, self.sample_rate)
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
-            bp2, ap2 = _peaking(f2, 4.2, 2.2 - 1.4 * wt, self.sample_rate)
+            bp2, ap2 = _peaking(f2, 4.2, (2.2 - 1.4 * wt) * ring, self.sample_rate)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         self._tap("metal ring", sig)          # stainless wall-resonance formants
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
