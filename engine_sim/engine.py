@@ -183,9 +183,29 @@ class Engine:
     #                      then merge -> a secondary resonance, smoother mid-range
     #   "log"  -> a shared cast log manifold (cylinders strongly coupled, muffled)
     header_type: str = "auto"
+    # Runner-length equality, GRADUATED: 0.0 = very uneven (cast log) .. 1.0 =
+    # perfectly equal (e.g. a tuned 6-into-1 equal-length header).  -1 = auto
+    # (binary classify from redline / straight-cut).  A "61 等长 / partial-equal"
+    # header is a middle value (~0.7-0.9), not just the equal/unequal extremes.
+    header_equality: float = -1.0
     valvetrain: str = "dohc"         # dohc | sohc | ohv -> breathing + tick
     valves_per_cyl: int = 4          # 4 = breathes high, 2 = low-end / muted
     variable_valve: str = ""         # "VTEC"/"VANOS"/"VVT-i"/... "" = none (display only)
+    # --- extra detail models (audio); all default NEUTRAL (no change) -----------
+    # Fuel injection: "port" (MPI, soft), "direct" (GDI injector tick/clatter),
+    # "dual" (port+direct), "piezo" (sharp high-pressure click), "carb" (none),
+    # "mech" (old mechanical race injection, none), "diesel" (common-rail clatter).
+    injection: str = "port"
+    balance_shaft: bool = False      # cancels the secondary shake of an I4 / 90deg-V6
+    # Valve LIFT mechanism: "fixed", "two-stage" (VTEC/AVS-style switch -> a step),
+    # "continuous" (Valvetronic/MultiAir -> throttleless, extra-smooth).  Derived
+    # from variable_valve in _annotate.
+    valve_lift: str = "fixed"
+    integrated_manifold: bool = False  # exhaust manifold cast into the head (modern
+    #                                    turbos): short, hot, tighter & more muffled
+    # Cam profile: "mild" (smooth idle), "stock", "hot" (lopey idle + rasp),
+    # "race" (very lumpy idle, big overlap, strong top-end).
+    cam_profile: str = "stock"
     rotation: str = "CW"             # crank rotation viewed from front: CW | CCW (display)
     crank_plane: str = ""            # crankpin phase (display): "flat" (single-plane,
                                      #   pins at 0/180 -> the high flat-plane scream)

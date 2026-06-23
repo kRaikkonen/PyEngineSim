@@ -3049,6 +3049,26 @@ _FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
                "f40", "gt350r", "m3gtr", "one1", "p1", "pista", "senna",
                "valhalla"}
 
+# --- detail-model lookups (audio) -------------------------------------------
+_CARB = frozenset({"z28", "250cal", "countach", "crs27", "930", "gt40", "w154",
+                   "boneshaker", "917", "t100", "speed12", "diablo"})
+_MECH_INJ = frozenset({"7", "f2007", "mp44", "cgt", "r390", "clkgtr", "zonda",
+                       "zondar", "mf1", "f50gt", "f40"})  # mech / slide-throttle race
+_DUAL_INJ = frozenset({"5", "lafe", "3", "rtr"})          # Toyota D-4S / Ford dual
+_GDI = frozenset({"2", "a45", "b48", "0", "330i", "rs3", "rs5", "d8gto", "fk8",
+                  "fordgt", "raptor", "focus3", "gt350r", "gt500", "ct5v", "c7",
+                  "amggt", "c63bs", "e63", "giulia", "aven", "hura", "6", "db11",
+                  "ftype", "one1", "r35", "488", "pista", "fxxk", "enzo",
+                  "valhalla", "p1", "senna", "gt2rs", "918", "hoonitruck"})
+_NO_BALANCE = frozenset({"22b", "gdb", "gv", "vt15r", "evo7", "ae86", "s15",
+                         "escrs", "rs200", "hoonrs", "deltas4", "p205", "focus3"})
+_INTEGRATED_MANIFOLD = frozenset({"2", "a45", "b48", "330i", "0", "fk8", "focus3",
+                                  "giulia", "raptor", "hoonitruck", "fordgt"})
+_RACE_CAM = frozenset({"7", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12",
+                       "clkgtr", "zondar", "r390", "cgt", "996gt1"})
+_HOT_CAM = frozenset({"4", "488", "pista", "f355", "nsx", "ek9", "ep3", "fk8",
+                      "gt3", "991rs", "997rs4", "lafe", "enzo", "gt350r"})
+
 
 def _annotate(key, eng):
     """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
@@ -3075,6 +3095,44 @@ def _annotate(key, eng):
     if (not eng.flex_pipe and eng.induction == "turbo"
             and eng.total_displacement * 1000.0 <= 2.6):
         eng.flex_pipe = True
+
+    # --- detail models (audio): injection / balance shaft / valve lift /
+    #     integrated manifold / cam profile.  Heuristic auto-config; defaults are
+    #     NEUTRAL so anything not matched here is left unchanged. ----------------
+    nc = eng.num_cylinders
+    diesel = eng.cylinders[0].compression_ratio >= 14.5
+    if eng.injection == "port":                       # only fill the default
+        if diesel:
+            eng.injection = "diesel"
+        elif key in _CARB:
+            eng.injection = "carb"
+        elif key in _MECH_INJ:
+            eng.injection = "mech"
+        elif key in _DUAL_INJ:
+            eng.injection = "dual"
+        elif key in _GDI:
+            eng.injection = "direct"
+        # else stays "port" (no injector tick)
+    # balance shaft: road I3/I4/90deg-V6 have one (smooth); raw race/old ones don't
+    if nc in (3, 4) and not eng.is_rotary:
+        eng.balance_shaft = key not in _NO_BALANCE
+    # valve LIFT mechanism, from the VVT tech
+    vv = eng.variable_valve
+    if any(k in vv for k in ("VTEC", "VVTL", "MIVEC", "AVS", "VarioCam", "Camtronic")):
+        eng.valve_lift = "two-stage"
+    elif "Valvetronic" in vv or "MultiAir" in vv:
+        eng.valve_lift = "continuous"
+    # integrated (in-head) exhaust manifold — modern turbo fours
+    if key in _INTEGRATED_MANIFOLD:
+        eng.integrated_manifold = True
+    # cam profile — race screamers are lumpy + raspy, luxo/diesel are mild
+    if eng.cam_profile == "stock":
+        if eng.redline_rpm >= 9000 or key in _RACE_CAM:
+            eng.cam_profile = "race"
+        elif key in _HOT_CAM or (eng.induction == "na" and eng.redline_rpm >= 7800):
+            eng.cam_profile = "hot"
+        elif diesel or eng.redline_rpm <= 5600:
+            eng.cam_profile = "mild"
     # crank plane (display) for V8s: the screamers (Ferrari/McLaren/AMG GT/S65/
     # Voodoo ...) run a single-plane FLAT crank; every other 90-deg V8 is the
     # two-plane CROSS crank that gives the burble.

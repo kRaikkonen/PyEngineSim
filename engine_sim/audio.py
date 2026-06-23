@@ -554,9 +554,19 @@ class Synthesizer:
         # Unequal headers (muscle / road V8s) spread the lengths -> staggered
         # arrival -> the low-rpm 'boil' / rumble.  Derived from the car's own
         # nature so no preset needs hand-editing.
-        self._equal_headers = (eng.straight_cut or eng.gearbox_type == "single"
-                               or eng.redline_rpm >= 8400)
-        spread = 0.10 if self._equal_headers else 0.95
+        # Header runner-length spread is GRADUATED, not just equal-vs-unequal: a
+        # "6-into-1 equal-length" header is tight (low spread), a tuned 4-2-1 road
+        # header is part-way, a cast log manifold is very uneven.  header_equality
+        # (0 = log .. 1 = perfectly equal) sets it directly when given; otherwise
+        # we auto-classify from the car's nature.
+        he = getattr(eng, "header_equality", -1.0)
+        if he >= 0.0:
+            self._equal_headers = he >= 0.6
+            spread = max(0.05, 0.95 * (1.0 - he))
+        else:
+            self._equal_headers = (eng.straight_cut or eng.gearbox_type == "single"
+                                   or eng.redline_rpm >= 8400)
+            spread = 0.10 if self._equal_headers else 0.95
         seen, posn = {}, []
         for c in eng.cylinders:
             ch = 0 if (self._nchan == 1 or c.bank_angle_deg < 0) else 1
@@ -578,6 +588,15 @@ class Synthesizer:
         self._muff_len = (0.17, 0.31)
         self._absorb_zi = np.zeros(1)     # absorptive-muffler HF soak state
         self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
+        self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
+        self._wob_w = 0.0
+        self._inj_amt = self._cam_lump = self._balance_rough = 0.0
+        if _HAVE_SCIPY:                   # injector-clatter band-pass (~5-9 kHz)
+            self._inj_bp = butter(2, [5000.0 / (sr / 2),
+                                      min(9000.0, sr * 0.45) / (sr / 2)], btype="band")
+        else:
+            self._inj_bp = None
+        self._inj_zi = np.zeros(4)
         # (#4) full-system round-trip reflection: a weak low-passed echo at the
         # pipe's round-trip time -> low-frequency elasticity + a longer, rounder tail.
         self._tail_len = 2.0 * max(eng.exhaust_total_m, 0.5)
@@ -839,6 +858,33 @@ class Synthesizer:
         # tail-pipe TIP mouth: a big bore brightens the exit, a small one darkens it
         # (tip_scale == 1.0 is neutral so existing presets are unchanged).
         self._post_fc *= 0.70 + 0.30 * min(max(getattr(eng, "tip_scale", 1.0), 0.3), 2.0)
+        # --- extra detail models (all neutral at their defaults) -----------------
+        # CAM profile: a big/race cam rasps up top and chops at idle (overlap);
+        # a mild cam is calm.
+        cam = getattr(eng, "cam_profile", "stock")
+        self._post_fc *= 1.0 + {"mild": -0.06, "hot": 0.12, "race": 0.22}.get(cam, 0.0)
+        self._cam_lump = ({"hot": 0.16, "race": 0.28}.get(cam, 0.0)
+                          * max(1.0 - rpm_frac * 2.2, 0.0))   # lopey idle only
+        # INTEGRATED (in-head) exhaust manifold: short, hot, buried -> tighter & a
+        # touch more muffled than an external cast/tubular manifold.
+        if getattr(eng, "integrated_manifold", False):
+            self._post_fc *= 0.93
+            fc *= 0.92
+        # CONTINUOUS variable lift (Valvetronic / MultiAir): throttleless, smoother.
+        if getattr(eng, "valve_lift", "fixed") == "continuous":
+            self._post_fc *= 0.97
+        # INJECTION clatter amount (idle-weighted): GDI / piezo / diesel injector tick.
+        self._inj_amt = ({"direct": 0.05, "piezo": 0.065, "dual": 0.038,
+                          "diesel": 0.10}.get(getattr(eng, "injection", "port"), 0.0)
+                         * max(1.0 - rpm_frac * 1.4, 0.16))
+        # BALANCE-SHAFT roughness: an I3 / I4 / 90deg-V6 with NO balance shaft buzzes.
+        self._balance_rough = 0.0
+        if (eng.num_cylinders in (3, 4) and not eng.is_rotary
+                and not getattr(eng, "balance_shaft", False)):
+            self._balance_rough = 0.06 * max(1.0 - rpm_frac * 1.6, 0.15)
+        # wobble rate for the cam chop / balance buzz ~ the firing frequency
+        fire_hz = max(self.sim.rpm, 1.0) / 120.0 * eng.num_cylinders   # fires/sec / 2
+        self._wob_w = 2.0 * math.pi * fire_hz / self.sample_rate
         # 2-valve heads breathe worse up top -> a touch darker than 4-valve
         if eng.valves_per_cyl <= 2:
             self._post_fc *= 0.82
@@ -1309,6 +1355,21 @@ class Synthesizer:
                 nz2, self._roadn_lp_zi = lfilter(self._roadn_lp[0], self._roadn_lp[1],
                                                  nz2, zi=self._roadn_lp_zi)
                 sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
+
+        # --- injection clatter: GDI 'sewing-machine' / piezo / diesel injector tick,
+        # a band-passed HF texture loudest at idle and fading out with revs.
+        ia = getattr(self, "_inj_amt", 0.0)
+        if ia > 1e-3 and self._inj_bp is not None:
+            nz, self._inj_zi = lfilter(self._inj_bp[0], self._inj_bp[1],
+                                       self._rng.standard_normal(frames), zi=self._inj_zi)
+            sig = sig + ia * nz
+        # --- cam-overlap idle CHOP + balance-shaft buzz: a slow amplitude wobble at
+        # the firing rate (deep at idle for a big cam / an unbalanced no-shaft four).
+        lump = getattr(self, "_cam_lump", 0.0) + getattr(self, "_balance_rough", 0.0)
+        if lump > 1e-3 and self._wob_w > 0.0:
+            ph = self._wob_ph + self._wob_w * np.arange(frames)
+            self._wob_ph = float((ph[-1] + self._wob_w) % (2.0 * math.pi))
+            sig = sig * (1.0 - lump * (0.5 + 0.5 * np.sin(ph)))
 
         # anti-harshness low-pass whose cutoff DROPS at very high rpm, where the
         # sharp combustion edges' harmonics fold past Nyquist into breakup (the
