@@ -1185,10 +1185,13 @@ class App:
             self._draw_engine_panel(left)
             self._draw_engine_off_prompt()
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
-        # the exhaust-path stage scopes only sample audio while the overlay is up
+        # the exhaust-path stage scopes only sample audio while the overlay is up;
+        # in Forza/telemetry mode they're suppressed entirely (only the TOTAL
+        # EXHAUST FLOW scope stays) to keep the frame cheap for the audio thread.
+        stage_scopes = self.scope_open and not self.telemetry_mode
         if self.synth is not None:
-            self.synth.scope_enabled = self.scope_open
-        if self.scope_open:
+            self.synth.scope_enabled = stage_scopes
+        if stage_scopes:
             self._draw_exhaust_scopes(pygame.Rect(24, 24, 1052, 632))
         if self._open_menu is not None:
             self._draw_menu()
@@ -2500,9 +2503,16 @@ class App:
 
     def _begin_pipe_layers(self):
         self._pl_real = self.screen
-        self._pipe_layers = (self._get_layer(0), self._get_layer(1))
+        # Forza/telemetry mode: draw pipes SOLID straight onto the screen (skip the
+        # per-frame full-window alpha alloc/clear/composite) to free CPU for audio.
+        if self.telemetry_mode:
+            self._pipe_layers = None
+        else:
+            self._pipe_layers = (self._get_layer(0), self._get_layer(1))
 
     def _end_pipe_layers(self):
+        if self._pipe_layers is None:
+            return
         g, r = self._pipe_layers
         self._pipe_layers = None
         br = getattr(self, "_bay_rect", None)
@@ -3354,7 +3364,8 @@ class App:
             top_y = bay.bottom - 72 - h
         if top_y < cy + 4:
             return
-        sc = self._get_layer(2)                       # 75% layer (cached)
+        solid = self.telemetry_mode                   # Forza: draw opaque, no alpha
+        sc = self.screen if solid else self._get_layer(2)   # 75% layer (cached)
         cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
         pts = [(cxp - wt // 2, top_y), (cxp + wt // 2, top_y),
                (cxp + wb // 2, top_y + h), (cxp - wb // 2, top_y + h)]
@@ -3368,9 +3379,10 @@ class App:
         pygame.draw.polygon(sc, (30, 33, 42), pts, 2)
         pygame.draw.circle(sc, (120, 126, 140), (cxp, top_y + h), 3)   # drain plug
         pygame.draw.circle(sc, (40, 44, 54), (cxp, top_y + h), 3, 1)
-        sc.set_alpha(191)                             # ~75% opacity
-        br = getattr(self, "_bay_rect", None)
-        self.screen.blit(sc, br.topleft if br else (0, 0), br)
+        if not solid:
+            sc.set_alpha(191)                         # ~75% opacity
+            br = getattr(self, "_bay_rect", None)
+            self.screen.blit(sc, br.topleft if br else (0, 0), br)
 
     def _bay_ancillaries(self, bay, eng, throttle=0.0):
         """A labelled row of intake/boost ancillaries along the bay floor, PLUMBED
@@ -3549,7 +3561,8 @@ class App:
         # cool-air ducts from the filter down to each turbo's compressor inlet,
         # drawn onto a temp layer at ~35% opacity (semi-transparent blue)
         real = self.screen
-        ds = self._get_layer(3)
+        solid = self.telemetry_mode                   # Forza: opaque ducts, no alpha
+        ds = real if solid else self._get_layer(3)
         self.screen = ds
         if tps:                                       # turbo: filter -> compressors
             for tx, ty, tr in tps:
@@ -3563,9 +3576,10 @@ class App:
                                    (int(intake_x), int(row_y) - 9)], 3, cool)
             pygame.draw.circle(ds, cool[1], (int(intake_x), int(row_y) - 9), 3)
         self.screen = real
-        ds.set_alpha(89)
-        br = getattr(self, "_bay_rect", None)
-        real.blit(ds, br.topleft if br else (0, 0), br)
+        if not solid:
+            ds.set_alpha(89)
+            br = getattr(self, "_bay_rect", None)
+            real.blit(ds, br.topleft if br else (0, 0), br)
 
     def _forced_drive(self, eng, sim):
         """(spin, load) for the forced-induction hardware — shaft spin scaled by
