@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import math
 import os
+import sys
+
+# Let the audio callback thread grab the GIL more often (default 5ms) so a long
+# pure-Python draw can't starve it for a whole audio block -> no high-rpm breakup.
+sys.setswitchinterval(0.001)
 
 import numpy as np
 import pygame
@@ -102,7 +107,7 @@ TR_ZH = {
     "Twin-scroll Single Turbo": "双涡管单涡轮", "Parallel Twin-turbo": "并列双涡轮",
     "Twincharge": "双增压", "DOC": "氧化催化", "DPF": "颗粒捕集", "DEF": "尿素",
     # touch toggle / states
-    "ON": "开", "OFF": "关", "Odo Reset": "里程清零",
+    "ON": "开", "OFF": "关", "Odo Reset": "里程清零", "Low Q": "低画质",
     # gearbox type tag in the GEAR readout
     "single-clutch": "单离合", "AT": "自动变速", "manual": "手动挡", "DCT": "双离合",
     # toolbar
@@ -289,6 +294,7 @@ class App:
         # Forza telemetry mode: drive the sound from a real game's broadcast rpm
         self.telemetry = None
         self.telemetry_mode = False
+        self.low_quality = False  # simplified bay render (solid, lighter cylinders)
         self.g_spatial = False    # drift the spatial dot from Forza G-force
         self.slow_mo = 1.0        # 1.0 normal .. 0.001 = 1000x slow motion
 
@@ -358,6 +364,8 @@ class App:
             (f"{T('Slow')} {int(round(1/self.slow_mo))}x" if self.slow_mo < 1
              else T("Slow-mo"), self.toggle_slow, lambda: self.slow_mo < 1.0, 2),
             # Touch moved out to the big top-right toggle (_draw_touch_toggle)
+            (T("Low Q"), lambda: setattr(self, "low_quality", not self.low_quality),
+             lambda: self.low_quality, 2),
             (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
              lambda: self.scope_open, 2),
         ]
@@ -563,6 +571,7 @@ class App:
             self.telemetry = None
             return
         self.telemetry_mode = True
+        self.low_quality = True            # Forza defaults to the low-quality render
         self.sim.ignition_on = True
         self._flash(f"Telemetry ON · Forza Data Out -> this PC :{FORZA_PORT}")
 
@@ -1186,9 +1195,9 @@ class App:
             self._draw_engine_off_prompt()
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         # the exhaust-path stage scopes only sample audio while the overlay is up;
-        # in Forza/telemetry mode they're suppressed entirely (only the TOTAL
-        # EXHAUST FLOW scope stays) to keep the frame cheap for the audio thread.
-        stage_scopes = self.scope_open and not self.telemetry_mode
+        # in low-quality mode they're suppressed entirely (only the TOTAL EXHAUST
+        # FLOW scope stays) to keep the frame cheap for the audio thread.
+        stage_scopes = self.scope_open and not self.low_quality
         if self.synth is not None:
             self.synth.scope_enabled = stage_scopes
         if stage_scopes:
@@ -2002,6 +2011,36 @@ class App:
         bx, by = jx + ux * cr * 1.4, jy + uy * cr * 1.4   # bore base (off the crank)
         hw = width / 2.0
 
+        if self.low_quality:
+            # LOW-QUALITY: just the right SHAPES in a few FLAT colours — no metal
+            # strip-shading, no domed caps, no valvetrain.  Keeps the piston moving.
+            def quad(d0, d1, halfw, col, w=0):
+                pygame.draw.polygon(self.screen, col, [
+                    (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
+                    (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
+                    (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
+                    (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
+            quad(-2, length + 4, hw + 3, (98, 104, 118))      # cylinder sleeve
+            quad(length - 1, length + 5, hw + 3, (70, 76, 90))  # head band
+            quad(-2, length + 4, hw + 3, (28, 30, 38), 2)     # outline
+            quad(1, length, hw - 2, (24, 26, 32))             # bore interior
+            if glow > 0.02:                                   # combustion flash
+                gx, gy = bx + ux * (length - 7), by + uy * (length - 7)
+                gs = self._flash_surf(width * 0.6, glow)
+                self.screen.blit(gs, (int(gx) - gs.get_width() // 2,
+                                      int(gy) - gs.get_height() // 2))
+            plen = 15.0
+            travel = max(length - plen - 14, 6.0)
+            ppos = 8.0 + (1.0 - frac) * travel                # TDC high, BDC low
+            quad(ppos, ppos + plen, hw - 3, (190, 196, 208))  # piston
+            quad(ppos, ppos + plen, hw - 3, (96, 102, 114), 1)
+            pin = (int(bx + ux * ppos), int(by + uy * ppos))
+            jrn = (int(jx + cr * math.sin(theta)), int(jy + cr * math.cos(theta)))
+            pygame.draw.line(self.screen, (126, 132, 146), pin, jrn, 4)  # con-rod
+            pygame.draw.circle(self.screen, (54, 58, 70), pin, 4)
+            pygame.draw.circle(self.screen, (150, 156, 168), jrn, 4)
+            return
+
         def shaded(d0, d1, halfw, base, n=9):         # round-metal strip gradient
             # light from the upper-left: brightest just left of centre, dark edges
             for si in range(n):
@@ -2503,9 +2542,9 @@ class App:
 
     def _begin_pipe_layers(self):
         self._pl_real = self.screen
-        # Forza/telemetry mode: draw pipes SOLID straight onto the screen (skip the
+        # Low-quality mode: draw pipes SOLID straight onto the screen (skip the
         # per-frame full-window alpha alloc/clear/composite) to free CPU for audio.
-        if self.telemetry_mode:
+        if self.low_quality:
             self._pipe_layers = None
         else:
             self._pipe_layers = (self._get_layer(0), self._get_layer(1))
@@ -3364,7 +3403,7 @@ class App:
             top_y = bay.bottom - 72 - h
         if top_y < cy + 4:
             return
-        solid = self.telemetry_mode                   # Forza: draw opaque, no alpha
+        solid = self.low_quality                      # low-Q: draw opaque, no alpha
         sc = self.screen if solid else self._get_layer(2)   # 75% layer (cached)
         cxp = int(cx); wt = int(bay.width * 0.28); wb = int(bay.width * 0.19)
         pts = [(cxp - wt // 2, top_y), (cxp + wt // 2, top_y),
@@ -3561,7 +3600,7 @@ class App:
         # cool-air ducts from the filter down to each turbo's compressor inlet,
         # drawn onto a temp layer at ~35% opacity (semi-transparent blue)
         real = self.screen
-        solid = self.telemetry_mode                   # Forza: opaque ducts, no alpha
+        solid = self.low_quality                       # low-Q: opaque ducts, no alpha
         ds = real if solid else self._get_layer(3)
         self.screen = ds
         if tps:                                       # turbo: filter -> compressors
