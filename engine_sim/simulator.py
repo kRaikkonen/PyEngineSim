@@ -71,6 +71,44 @@ class Simulator:
         # precompute per-cylinder cycle offset in radians of the *cycle*
         self._offset_deg = np.array([c.cycle_offset_deg for c in engine.cylinders])
 
+        # Size the clutch so it can actually HOLD this engine.  A real clutch is
+        # rated ABOVE peak torque; if the (boosted) engine makes more torque than
+        # the clutch can pass, the coupling saturates and the light flywheel just
+        # free-revs to the limiter no matter the road speed — the "stab the
+        # throttle and it instantly rushes to redline, even after an upshift" bug.
+        # We sweep WOT+full-boost torque once at load and lift the capacity to
+        # cover it (keeping the preset value if it's already higher).
+        try:
+            peak = self._peak_wot_torque()
+            self.drivetrain.clutch_capacity = max(
+                self.drivetrain.clutch_capacity, peak * 1.25)
+        except Exception:
+            pass
+
+    def _peak_wot_torque(self) -> float:
+        """Approximate peak MEAN crank torque at wide-open throttle and full
+        boost, by sweeping rpm and averaging the gas torque over a 720 deg cycle.
+        Restores all live state before returning (pure measurement)."""
+        eng = self.engine
+        saved = (self.throttle, self.boost, self.omega, self.crank_angle,
+                 self._fuel_cut, self._shift_cut)
+        self.throttle, self.boost = 1.0, eng.boost_bar
+        self._fuel_cut = self._shift_cut = False
+        best = 0.0
+        rpm = max(eng.idle_rpm, 1000.0)
+        while rpm <= eng.redline_rpm:
+            self.omega = rpm * TWO_PI / 60.0
+            tot = 0.0
+            for d in range(0, 720, 20):
+                self.crank_angle = d * DEG
+                tot += self._compute_torque()
+            best = max(best, tot / 36.0)
+            rpm += 200.0
+        (self.throttle, self.boost, self.omega, self.crank_angle,
+         self._fuel_cut, self._shift_cut) = saved
+        self.cylinder_pressure[:] = P_ATM
+        return best
+
     # ------------------------------------------------------------------ rpm
     @property
     def rpm(self) -> float:
