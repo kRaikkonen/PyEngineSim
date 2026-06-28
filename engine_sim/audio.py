@@ -589,6 +589,7 @@ class Synthesizer:
         self._absorb_zi = np.zeros(1)     # absorptive-muffler HF soak state
         self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
+        self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -1130,6 +1131,20 @@ class Synthesizer:
             else:
                 sig, self._head_lp_zi = lfilter(self._head_lp[0], self._head_lp[1],
                                                 sig, zi=self._head_lp_zi)
+        self._tap("head/port", sig)
+
+        # --- (3b) TURBINE damping: a turbo's hot-side wheel sits right in the
+        # exhaust stream and smears the pressure pulses — so as BOOST climbs the
+        # note gets muffled, woofy and "swallowed", losing the raw header edge.
+        # This is the core reason a turbo car is NOT just "NA + a boost number".
+        # Cutoff falls with boost; off-boost it's high (barely touches the sound).
+        _eng = sim.engine
+        if _eng.induction == "turbo" and _HAVE_SCIPY:
+            bf = (min(sim.boost / max(_eng.boost_bar, 0.05), 1.0)
+                  if _eng.boost_bar else 0.0)
+            tcut = 9000.0 - 6600.0 * bf            # ~9k off-boost .. ~2.4k on full boost
+            b, a = self._bw(2, tcut)
+            sig, self._turbine_zi = lfilter(b, a, sig, zi=self._turbine_zi)
         self._tap("head/port", sig)
 
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
