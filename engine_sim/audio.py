@@ -588,6 +588,7 @@ class Synthesizer:
         self._muff_len = (0.17, 0.31)
         self._absorb_zi = np.zeros(1)     # absorptive-muffler HF soak state
         self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
+        self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -912,6 +913,31 @@ class Synthesizer:
         step = max(1, len(sig) // 96)
         self._stage_taps[name] = sig[::step][:96].astype(np.float64).copy()
 
+    def _pk(self, f0, Q, gain_db):
+        """Cached peaking biquad — IIR design is expensive, so memoise by rounded
+        params (the centres/gains slide slowly, so this hits the cache almost
+        every block instead of redesigning ~17 filters per 256-frame block)."""
+        key = ('pk', int(f0 / 8.0), int(Q * 10.0), int(round(gain_db * 4.0)))
+        ba = self._fcache.get(key)
+        if ba is None:
+            if len(self._fcache) > 800:
+                self._fcache.clear()
+            ba = self._fcache[key] = _peaking(max(f0, 20.0), max(Q, 0.05),
+                                              gain_db, self.sample_rate)
+        return ba
+
+    def _bw(self, order, fc, btype='low'):
+        """Cached Butterworth design (see _pk)."""
+        sr = self.sample_rate
+        fc = min(max(fc, 20.0), sr * 0.49)
+        key = ('bw', order, int(fc / 8.0), btype)
+        ba = self._fcache.get(key)
+        if ba is None:
+            if len(self._fcache) > 800:
+                self._fcache.clear()
+            ba = self._fcache[key] = butter(order, fc / (sr / 2), btype=btype)
+        return ba
+
     def _render_block(self, frames: int) -> np.ndarray:
         sim = self.sim
         omega = sim.omega
@@ -1065,7 +1091,7 @@ class Synthesizer:
         if drive > 1e-3:
             bang = np.tanh(bang * (1.0 + 7.0 * drive))
         if _HAVE_SCIPY and fw > 0.02:                    # low-shelf 'weight'
-            b, a = _peaking(110.0, 0.6, 10.0 * fw, self.sample_rate)
+            b, a = self._pk(110.0, 0.6, 10.0 * fw)
             bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
 
         # separated fizz (own slider) + clean wet pipe resonance on top
@@ -1099,7 +1125,7 @@ class Synthesizer:
         if _HAVE_SCIPY:
             if self._cold > 0.02:
                 hc = min(11000.0 * (1.0 - 0.30 * self._cold), self.sample_rate * 0.45)
-                bhd, ahd = butter(2, hc / (self.sample_rate / 2), btype="low")
+                bhd, ahd = self._bw(2, hc)
                 sig, self._head_lp_zi = lfilter(bhd, ahd, sig, zi=self._head_lp_zi)
             else:
                 sig, self._head_lp_zi = lfilter(self._head_lp[0], self._head_lp[1],
@@ -1130,7 +1156,7 @@ class Synthesizer:
                 if 2400.0 < fc < min(8000.0, self.sample_rate * 0.45):
                     Q = min(Qbase * math.sqrt(1.0 + 0.10 * n), 22.0)
                     gain = (5.5 - 1.3 * k) * wamt * P.get("whine", 1.0)
-                    bw, aw = _peaking(fc, Q, gain, self.sample_rate)
+                    bw, aw = self._pk(fc, Q, gain)
                     sig, self._whine_zi[k] = lfilter(bw, aw, sig, zi=self._whine_zi[k])
         self._tap("standing-wave", sig)
 
@@ -1143,18 +1169,18 @@ class Synthesizer:
             bypass = sig
             # (5) resonator: Helmholtz used as a NOTCH (Akrapovic-style: remove the
             # drone boom, do not add yet another resonance).
-            bH, aH = _peaking(f_helm, 1.2, -4.0, self.sample_rate)
+            bH, aH = self._pk(f_helm, 1.2, -4.0)
             sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
             self._tap("resonator", sig)       # Helmholtz de-drone notch
             # (6) muffler: variable-valve expansion low-pass — muffled at idle,
             # wide open at redline.
             sr = self.sample_rate
             cutoff = min(self._post_fc, sr * 0.45)
-            blp, alp = butter(2, cutoff / (sr / 2), btype="low")
+            blp, alp = self._bw(2, cutoff)
             sig, self._lp_zi = lfilter(blp, alp, sig, zi=self._lp_zi)
             # ...and its expansion-chamber low-end body when the valve is shut.
             if self._valve < 0.75:
-                bL, aL = _peaking(110.0, 0.6, (1.0 - self._valve) * 7.0, sr)
+                bL, aL = self._pk(110.0, 0.6, (1.0 - self._valve) * 7.0)
                 sig, self._lowboost_zi = lfilter(bL, aL, sig, zi=self._lowboost_zi)
             # (6b) muffler internal reflections: two short feed-forward comb taps
             # (expansion chamber + baffle paths) -> periodic notches = the muffler's
@@ -1172,11 +1198,11 @@ class Synthesizer:
                 sig = (sig + 0.32 * mg * self._muff_dl1.process(sig, d1)
                        + 0.22 * mg * self._muff_dl2.process(sig, d2))
             if absorptive and _HAVE_SCIPY:    # packed-fibre broadband HF absorption
-                bA, aA = butter(1, min(6800.0, sr * 0.45) / (sr / 2), btype="low")
+                bA, aA = self._bw(1, min(6800.0, sr * 0.45))
                 sig, self._absorb_zi = lfilter(bA, aA, sig, zi=self._absorb_zi)
             if getattr(sim.engine, "flex_pipe", False) and _HAVE_SCIPY:
                 # corrugated flex section -> a buzzy mid resonance (the 'braaa' rasp)
-                bf, af = _peaking(1650.0, 2.2, 4.0, self.sample_rate)
+                bf, af = self._pk(1650.0, 2.2, 4.0)
                 sig, self._flex_zi = lfilter(bf, af, sig, zi=self._flex_zi)
             self._tap("muffler", sig)         # expansion low-pass + comb baffles
             # active exhaust valve: above ~40% redline the bypass flap cracks open
@@ -1221,9 +1247,9 @@ class Synthesizer:
         # scoop THAT band and add a touch of low-shelf body (thicker, not thinner).
         wt = P["wall_thickness"]
         if _HAVE_SCIPY and wt > 1e-3:
-            b, a = _peaking(1850.0, 1.1, -16.0 * wt, self.sample_rate)   # de-honk
+            b, a = self._pk(1850.0, 1.1, -16.0 * wt)   # de-honk
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
-            b2, a2 = _peaking(150.0, 0.7, 4.0 * wt, self.sample_rate)    # add body
+            b2, a2 = self._pk(150.0, 0.7, 4.0 * wt)    # add body
             sig, self._wall_low_zi = lfilter(b2, a2, sig, zi=self._wall_low_zi)
         self._tap("wall de-honk", sig)        # tail-pipe wall thickness scoop
         # (Step 4) stainless-wall resonance formants: two narrow peaks give the
@@ -1234,9 +1260,9 @@ class Synthesizer:
             f1 = self._wall_f1 * (1.0 - 0.18 * wt)
             f2 = self._wall_f2 * (1.0 - 0.22 * wt)
             ring = getattr(self, "_wall_ring", 1.0)      # material ping strength
-            bp1, ap1 = _peaking(f1, 3.4, (3.0 - 1.2 * wt) * ring, self.sample_rate)
+            bp1, ap1 = self._pk(f1, 3.4, (3.0 - 1.2 * wt) * ring)
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
-            bp2, ap2 = _peaking(f2, 4.2, (2.2 - 1.4 * wt) * ring, self.sample_rate)
+            bp2, ap2 = self._pk(f2, 4.2, (2.2 - 1.4 * wt) * ring)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         self._tap("metal ring", sig)          # stainless wall-resonance formants
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
@@ -1294,16 +1320,16 @@ class Synthesizer:
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
             if abs(P["eq_low"]) > 0.1:
-                b, a = _peaking(120.0, 0.7, P["eq_low"], self.sample_rate)
+                b, a = self._pk(120.0, 0.7, P["eq_low"])
                 sig, self._eq_lo_zi = lfilter(b, a, sig, zi=self._eq_lo_zi)
             if abs(P["eq_mid"]) > 0.1:
-                b, a = _peaking(850.0, 0.8, P["eq_mid"], self.sample_rate)
+                b, a = self._pk(850.0, 0.8, P["eq_mid"])
                 sig, self._eq_mid_zi = lfilter(b, a, sig, zi=self._eq_mid_zi)
             if abs(P["eq_high"]) > 0.1:
-                b, a = _peaking(4500.0, 0.7, P["eq_high"], self.sample_rate)
+                b, a = self._pk(4500.0, 0.7, P["eq_high"])
                 sig, self._eq_hi_zi = lfilter(b, a, sig, zi=self._eq_hi_zi)
             if abs(P["presence"]) > 0.1:        # amp 'presence': broad upper-mid lift
-                b, a = _peaking(3000.0, 0.6, P["presence"], self.sample_rate)
+                b, a = self._pk(3000.0, 0.6, P["presence"])
                 sig, self._eq_pres_zi = lfilter(b, a, sig, zi=self._eq_pres_zi)
         self._tap("EQ", sig)
 
@@ -1337,7 +1363,7 @@ class Synthesizer:
         if _HAVE_SCIPY and d > 0.02:
             sr = self.sample_rate
             cut = min(max(14000.0 - 11500.0 * d, 600.0), sr * 0.45)
-            b, a = butter(2, cut / (sr / 2), btype="low")
+            b, a = self._bw(2, cut)
             sig, self._spatial_zi = lfilter(b, a, sig, zi=self._spatial_zi)
         sig = sig * (1.0 / (1.0 + 1.7 * d))
 
@@ -1611,7 +1637,7 @@ class Synthesizer:
         wt = P["wall_thickness"]
         if _HAVE_SCIPY and wt > 1e-3:
             cut = min(max(7000.0 - 5600.0 * wt, 900.0), sr * 0.45)
-            b, a = butter(2, cut / (sr / 2), btype="low")
+            b, a = self._bw(2, cut)
             out, self._wall_out_zi = lfilter(b, a, out, zi=self._wall_out_zi)
             gw, self._wall_gw_zi = lfilter(b, a, gw, zi=self._wall_gw_zi)
         return out, gw
@@ -1667,7 +1693,7 @@ class Synthesizer:
             return (lvl * 1.4) * out
         # muffle (a low-pass whose cutoff drops as pop_muff rises)
         cut = min(max(9000.0 - 7600.0 * P["pop_muff"], 700.0), sr * 0.45)
-        b, a = butter(2, cut / (sr / 2), btype="low")
+        b, a = self._bw(2, cut)
         out, self._pop_lp_zi = lfilter(b, a, out, zi=self._pop_lp_zi)
         out = (lvl * 1.4) * out
         if P["pops_reverb"] > 1e-3:                   # roomy echo
