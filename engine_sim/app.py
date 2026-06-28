@@ -238,7 +238,7 @@ SLIDER_DEFS = [
     ("road_noise", "Road / tyre rumble", 0.0, 0.6),
     ("whine", "Exhaust whine/scream", 0.0, 2.0),
     ("valve_open", "Active valve open", 0.0, 1.5),
-    ("Muffler", "Muffler reflections", 0.0, 1.5),
+    ("muffler", "Muffler reflections", 0.0, 1.5),
     ("shear", "Tailpipe air-shear", 0.0, 0.5),
     ("eq_low", "EQ low (dB)", -12.0, 12.0),
     ("eq_mid", "EQ mid (dB)", -12.0, 12.0),
@@ -1601,6 +1601,27 @@ class App:
             pygame.draw.rect(self.screen, BTN_ON_HI, (track_x, thumb_y, 5, thumb_h),
                              border_radius=3)
 
+    def _slider_active(self, key):
+        """Whether a mixer slider has any audible effect on the CURRENT engine.
+        Induction-/gearbox-specific channels are silent on a car that lacks the
+        hardware (e.g. the turbo/supercharger/hybrid/straight-cut sliders on a
+        plain NA car) — those are shown greyed-out + 'n/a' so they read as
+        not-applicable, not broken."""
+        eng = self.sim.engine
+        ind = getattr(eng, "induction", "na")
+        if key == "turbo_vol":
+            return ind == "turbo" or getattr(eng, "electric_turbo", False)
+        if key == "super_vol":
+            return ind in ("roots", "centrifugal")
+        if key == "spool_reverb":
+            return ind != "na" or getattr(eng, "electric_turbo", False)
+        if key in ("gearbox_vol", "gearbox_reverb"):
+            return getattr(eng, "straight_cut", False)
+        if key == "hybrid_vol":
+            return (getattr(eng, "hybrid_kw", 0.0) > 0.0
+                    or getattr(eng, "electric_turbo", False))
+        return True
+
     def _draw_mixer(self, rect):
         self._panel(rect, screws=False)
         self.screen.blit(self.font.render(self.tr("AUDIO MIXER"), True, INK),
@@ -1615,28 +1636,39 @@ class App:
         self.screen.blit(self.font_small.render("X", True, INK),
                          (self._mixer_close_rect.x + 9, self._mixer_close_rect.y + 4))
         P = self.synth.params
+        DIM2 = (92, 98, 110)                  # greyed-out (not-applicable) colour
         for s in self._sliders:
             key, t = s["key"], s["track"]
+            active = self._slider_active(key)
             val = P.get(key, 0.0)
             norm = (val - s["min"]) / (s["max"] - s["min"]) if s["max"] > s["min"] else 0
             norm = min(max(norm, 0.0), 1.0)
-            # label + value
-            self.screen.blit(self.font_small.render(self.tr(s["label"]), True, INK),
-                             (rect.x + 22, s["row_y"] + 2))
-            vtxt = f"{val:5.0f}" if s["max"] > 20 else f"{val:5.2f}"
-            self.screen.blit(self.font_small.render(vtxt, True, ACCENT),
-                             (t.right + 6, s["row_y"] + 2))
+            # label + value (greyed + 'n/a' when the channel doesn't apply here)
+            self.screen.blit(self.font_small.render(self.tr(s["label"]), True,
+                             INK if active else DIM2), (rect.x + 22, s["row_y"] + 2))
+            if active:
+                vtxt = f"{val:5.0f}" if s["max"] > 20 else f"{val:5.2f}"
+                self.screen.blit(self.font_small.render(vtxt, True, ACCENT),
+                                 (t.right + 6, s["row_y"] + 2))
+            else:
+                self.screen.blit(self.font_small.render(self.tr("n/a"), True, DIM2),
+                                 (t.right + 6, s["row_y"] + 2))
             # inset glossy track + blue-glass fill + chrome knob (iOS 6)
             pygame.draw.rect(self.screen, (24, 26, 31), t, border_radius=3)
             pygame.draw.line(self.screen, (12, 13, 16), (t.x + 2, t.y),
                              (t.right - 2, t.y))               # inset shadow
             fill = t.copy(); fill.width = max(0, int(t.width * norm))
             if fill.width > 2:
-                self.screen.blit(self._grad_surf(fill.width, t.height, BTN_ON_HI,
-                                                 BTN_ON_LO, 3, gloss=True), fill.topleft)
+                if active:
+                    self.screen.blit(self._grad_surf(fill.width, t.height, BTN_ON_HI,
+                                                     BTN_ON_LO, 3, gloss=True), fill.topleft)
+                else:
+                    pygame.draw.rect(self.screen, (52, 56, 66), fill, border_radius=3)
             hx = t.x + int(t.width * norm)
-            self.screen.blit(self._grad_surf(16, 16, (236, 240, 245), (150, 158, 170),
-                                             8, gloss=True), (hx - 8, t.centery - 8))
+            knob_hi, knob_lo = ((236, 240, 245), (150, 158, 170)) if active \
+                else ((150, 154, 162), (96, 100, 110))
+            self.screen.blit(self._grad_surf(16, 16, knob_hi, knob_lo, 8, gloss=True),
+                             (hx - 8, t.centery - 8))
             pygame.draw.circle(self.screen, (90, 96, 108), (hx, t.centery), 8, 1)
 
         # --- spatial audio XY pad (drag the dot = position in the room) ------
