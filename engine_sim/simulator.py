@@ -288,6 +288,12 @@ class Simulator:
             force = (p - P_ATM) * cyl.piston_area
             # Virtual work: torque = force * (dx/dtheta).
             total += force * cyl.d_displacement_d_theta(theta)
+        # Per-car forced-induction torque trim, BLENDED BY BOOST so it only bites
+        # on boost (off-boost/NA torque is untouched).  Audio is unaffected.
+        ts = eng.torque_scale
+        if ts != 1.0 and eng.boost_bar > 0.0:
+            bf = min(self.boost / eng.boost_bar, 1.0)
+            total *= 1.0 + (ts - 1.0) * bf
         return total
 
     # ------------------------------------------------------------- losses

@@ -92,6 +92,12 @@ class Engine:
 
     # combustion / loss tuning ------------------------------------------------
     heat_release_k: float = 3.0      # peak combustion pressure multiplier scale
+    # Torque-only trim for FORCED-INDUCTION cars whose open-loop boost torque runs
+    # high vs the real car.  1.0 = no change.  Applied to crank torque ONLY (never
+    # the audio), and BLENDED BY BOOST: full effect at peak boost, none off-boost
+    # (so idle / light-throttle / NA behaviour is untouched).  e.g. 0.47 ~= halve
+    # the on-boost torque of a car that simulates ~2x real.
+    torque_scale: float = 1.0
     friction_static: float = 5.0     # N*m constant drag
     friction_linear: float = 0.012   # N*m per (rad/s)
     friction_quad: float = 9.0e-5    # N*m per (rad/s)^2 (windage/pumping at revs)

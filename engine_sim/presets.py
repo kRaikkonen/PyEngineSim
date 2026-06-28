@@ -3069,9 +3069,24 @@ _RACE_CAM = frozenset({"7", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12
 _HOT_CAM = frozenset({"4", "488", "pista", "f355", "nsx", "ek9", "ep3", "fk8",
                       "gt3", "991rs", "997rs4", "lafe", "enzo", "gt350r"})
 
+# Forced-induction TORQUE trim (boost-blended, torque-path only — see
+# Engine.torque_scale).  The open-loop Otto model + boost makes some turbo/SC
+# cars produce ~2x their real peak torque; these multipliers pull each back to
+# its catalogue figure (auto-calibrated vs real-world peak Nm, verified to land
+# within ~1% at full boost).  Off-boost behaviour and the exhaust SOUND are
+# unchanged.  NA cars never appear here (no boost to trim).
+_TORQUE_SCALE = {
+    "488": 0.48, "930": 0.46, "22b": 0.40, "gdb": 0.47, "giulia": 0.52,
+    "gt500": 0.49, "9": 0.79, "f40": 0.80, "evo7": 0.66, "ct5v": 0.53,
+    "e63": 0.41, "db11": 0.64, "pista": 0.49, "senna": 0.50, "one1": 0.50,
+    "gt2rs": 0.49,
+}
+
 
 def _annotate(key, eng):
     """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
+    if key in _TORQUE_SCALE:
+        eng.torque_scale = _TORQUE_SCALE[key]
     if not eng.variable_valve and key in _VARIABLE_VALVE:
         eng.variable_valve = _VARIABLE_VALVE[key]
     if key in _CCW_ROTATION:
