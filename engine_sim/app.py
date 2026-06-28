@@ -290,6 +290,13 @@ class App:
         self._draw_offset = (0, 0)
         self._draw_scale = 1.0
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
+        # Low-Q per-element refresh dividers: secondary readouts (exhaust scope
+        # waveform, ignition lamps, fuel/economy text) don't need the full render
+        # rate — their rendered Surface is cached and rebuilt only every N draws,
+        # then re-blitted each draw so they stay visible.  Normal mode draws every
+        # element live.  See _slow_surf / _draw_n.
+        self._draw_n = 0
+        self._elem_cache = {}
         # Static cylinder-SLEEVE cache (lossless render optimisation): the metal
         # barrel/head/fins never move, so each cylinder's shell is rendered ONCE to
         # a small opaque sprite and re-blitted every frame; only the live
@@ -715,6 +722,7 @@ class App:
         self._disp_torque = 0.0
         self._tele_smooth.clear()             # don't carry needle state across cars
         self._sleeve_sprites = None           # new layout -> rebuild the sleeve cache
+        self._elem_cache.clear()              # drop slow-refresh surfaces of the old car
         self._reset_trip()                    # fresh odometer / fuel / oil per car
 
     def _reset_trip(self):
@@ -1280,6 +1288,7 @@ class App:
         self.forza_ultra = True
 
     def draw(self):
+        self._draw_n += 1
         self._update_hud_signals()
         if self.forza_ultra:
             # DISPLAY OFF: plain background + just the (minimal) toolbar + any menu.
@@ -4134,21 +4143,44 @@ class App:
         pitch = min(20, 52 // max(nrows, 1))
         r = 6 if pitch >= 17 else (5 if pitch >= 12 else 4)
         fade = self._ign_flash
-        for rr, rw in enumerate(rows_list):
-            if not lights:                        # Forza: skip the live lamps
-                break
-            for cc, i in enumerate(rw):
-                cxp = int(x + 8 + dx * (cc + 0.5))
-                cyp = int(top0 + rr * pitch)
-                phi = sim.cycle_phase_deg(i)
-                firing = sim.ignition_on and not sim._fuel_cut and 360.0 <= phi < 455.0
-                fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
-                f = fade[i]
-                col = (int(38 + 214 * f), int(44 + 150 * f), int(52 + 36 * f))
-                pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), r + 2)
-                pygame.draw.circle(self.screen, col, (cxp, cyp), r)
-                pygame.draw.circle(self.screen, (140, 146, 160), (cxp, cyp), r, 1)
+        # The lamp layer is drawn into its own surface so Low-Q can refresh it at a
+        # lower rate (~10 fps): the firing sequence still reads fine and the
+        # per-cylinder fade just decays in coarser steps.  Normal draws it live.
+        sx, sy = x, top0 - (r + 2)                    # surface origin on screen
+        sw, sh = w, nrows * pitch + 2 * (r + 2)
+
+        def _build_lamps():
+            surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            if lights:
+                for rr, rw in enumerate(rows_list):
+                    for cc, i in enumerate(rw):
+                        cxp = int(8 + dx * (cc + 0.5))           # local coords
+                        cyp = int((r + 2) + rr * pitch)
+                        phi = sim.cycle_phase_deg(i)
+                        firing = (sim.ignition_on and not sim._fuel_cut
+                                  and 360.0 <= phi < 455.0)
+                        fade[i] = max(1.0 if firing else 0.0, fade.get(i, 0.0) * 0.70)
+                        f = fade[i]
+                        col = (int(38 + 214 * f), int(44 + 150 * f), int(52 + 36 * f))
+                        pygame.draw.circle(surf, (22, 24, 30), (cxp, cyp), r + 2)
+                        pygame.draw.circle(surf, col, (cxp, cyp), r)
+                        pygame.draw.circle(surf, (140, 146, 160), (cxp, cyp), r, 1)
+            return surf
+        self.screen.blit(self._slow_surf("ignition", 3, _build_lamps), (sx, sy))
         return top0 + min(nrows * pitch + 4, 46)      # bounded height for any layout
+
+    def _slow_surf(self, key, period, render_fn):
+        """Low-Q: call ``render_fn`` (which returns a Surface) only once every
+        ``period`` draws and reuse the cached Surface in between — for secondary
+        readouts that don't need the full frame rate.  Normal mode renders live
+        every draw.  The caller blits the returned Surface itself."""
+        if not self.low_quality:
+            return render_fn()
+        c = self._elem_cache.get(key)
+        if c is None or (self._draw_n % period) == 0:
+            c = render_fn()
+            self._elem_cache[key] = c
+        return c
 
     def _draw_scope(self, x, y, w, h, label):
         """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
@@ -4190,22 +4222,25 @@ class App:
             self._scope_xs = xs
             self._scope_envs = envs
         xs, envs = self._scope_xs, self._scope_envs
-        surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        for i in range(n):
-            # exaggerate the (small) per-cylinder voicing x3 so the strong/weak
-            # difference is legible on screen (display only — audio is unchanged)
-            vdev = (voice.amp[i] - 1.0) * 3.0 if voice and i < len(voice.amp) else 0.0
-            # live firing flash: each pulse brightens & swells as its cylinder
-            # actually fires now (reuses the ignition-light fade), so a fixed-axis
-            # refresh scope still shows the cylinders firing in sequence.
-            flash = self._ign_flash.get(i, 0.0)
-            amp_i = load * (1.0 + vdev) * (0.45 + 0.55 * flash)
-            yv = base - np.clip(envs[i] * amp_i, 0.0, 1.1) * amp
-            sh = (i % 6) * 8
-            a = int(90 + 150 * flash)                    # brighter as it fires
-            pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
-            pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, a), False, pts, 1)
-        self.screen.blit(surf, (x, y))
+
+        def _build_traces():
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            for i in range(n):
+                # exaggerate the (small) per-cylinder voicing x3 so the strong/weak
+                # difference is legible (display only — audio is unchanged)
+                vdev = (voice.amp[i] - 1.0) * 3.0 if voice and i < len(voice.amp) else 0.0
+                # live firing flash: each pulse brightens & swells as its cylinder
+                # actually fires now (reuses the ignition-light fade).
+                flash = self._ign_flash.get(i, 0.0)
+                amp_i = load * (1.0 + vdev) * (0.45 + 0.55 * flash)
+                yv = base - np.clip(envs[i] * amp_i, 0.0, 1.1) * amp
+                sh = (i % 6) * 8
+                a = int(90 + 150 * flash)                # brighter as it fires
+                pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
+                pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, a), False, pts, 1)
+            return surf
+        # Low-Q: rebuild the waveform every 2nd draw (~15 fps) — plenty for a scope.
+        self.screen.blit(self._slow_surf("scope", 2, _build_traces), (x, y))
         cap = self.font_small.render(f"x{n}", True, (130, 96, 54))
         self.screen.blit(cap, (x + w - cap.get_width() - 6, y + 3))
 
@@ -4648,14 +4683,21 @@ class App:
             ("EX O2", f"{t['o2_pct']:.1f} %"),
             ("FUEL", f"{self._fuel_lph:.1f} L/h"),
         ]
-        col_lab = [rect.x + 24, rect.x + 220]
-        col_rt = [rect.x + 200, rect.right - 26]      # values right-aligned per column
-        for i, (lab, val) in enumerate(flow):
-            c = i % 2; ry = y + (i // 2) * 18
-            self.screen.blit(self.font_small.render(T(lab), True, DIM), (col_lab[c], ry))
-            vs = self.font_small.render(val, True, INK)
-            self.screen.blit(vs, (col_rt[c] - vs.get_width(), ry))
-        y += 3 * 18 + 2
+        col_lab = [24, 220]                            # local x within the block
+        col_rt = [200, rect.width - 26]                # values right-aligned per column
+        fh = 3 * 18
+
+        def _build_flow():
+            surf = pygame.Surface((rect.width, fh), pygame.SRCALPHA)
+            for i, (lab, val) in enumerate(flow):
+                c = i % 2; ry = (i // 2) * 18
+                surf.blit(self.font_small.render(T(lab), True, DIM), (col_lab[c], ry))
+                vs = self.font_small.render(val, True, INK)
+                surf.blit(vs, (col_rt[c] - vs.get_width(), ry))
+            return surf
+        # Low-Q: these flow/consumption readouts crawl, so rebuild every 6th draw.
+        self.screen.blit(self._slow_surf("flow", 6, _build_flow), (rect.x, y))
+        y += fh + 2
         odo = self._odo_km * (0.621371 if self.speed_mph else 1.0)
         odo_u = "mi" if self.speed_mph else "km"
         dist_km, fuel_l = self._odo_km, self._fuel_total_l
