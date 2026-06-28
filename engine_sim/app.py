@@ -42,7 +42,11 @@ IS_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
 # Backward compatibility: keep ON_ANDROID for existing code
 ON_ANDROID = IS_ANDROID
 
-SAMPLE_RATES = [44100, 48000]
+# 32 kHz is the DEFAULT: the whole synth is sample-rate-normalised (every filter
+# cutoff is f/(sr/2) and clamped to sr*0.45, delays/decays are in seconds), so
+# dropping from 44.1k costs almost nothing audible but cuts the per-block DSP by
+# ~27% — the cheapest real win on a phone.  44.1/48k stay available on the toggle.
+SAMPLE_RATES = [32000, 44100, 48000]
 
 
 def _open_file_dialog(title, initialdir, save=False, default=""):

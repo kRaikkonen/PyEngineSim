@@ -1786,10 +1786,10 @@ class Synthesizer:
                 device=self._device, samplerate=self.sample_rate, channels=1,
                 blocksize=OB, latency=OL)))
         attempts.append(("default", dict(
-            device=None, samplerate=SAMPLE_RATE, channels=2, blocksize=OB,
+            device=None, samplerate=self.sample_rate, channels=2, blocksize=OB,
             latency=OL)))
         attempts.append(("default-mono", dict(
-            device=None, samplerate=SAMPLE_RATE, channels=1, blocksize=OB,
+            device=None, samplerate=self.sample_rate, channels=1, blocksize=OB,
             latency=OL)))
 
         for mode, cfg in attempts:
