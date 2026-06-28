@@ -1820,10 +1820,16 @@ class Synthesizer:
             self.enabled = False
             return False
         sr = int(self.sample_rate or SAMPLE_RATE)
+        # Larger device buffer on the pygame/Android backend: the SDL audio
+        # callback then fires half as often, giving the (GIL-contended) feeder
+        # thread more wall-clock slack to stay ahead at high rpm — fewer under-runs
+        # / less crackle on weak SoCs.  Costs ~30 ms more latency, inaudible for an
+        # engine sim.  Desktop uses the low-latency sounddevice path instead.
+        pg_buf = 2048
         try:
             if pygame.mixer.get_init():
                 pygame.mixer.quit()
-            pygame.mixer.init(frequency=sr, size=-16, channels=2, buffer=1024)
+            pygame.mixer.init(frequency=sr, size=-16, channels=2, buffer=pg_buf)
         except Exception as exc:
             print("[audio] disabled: pygame.mixer.init failed (%s)" % exc)
             self.enabled = False
@@ -1836,7 +1842,7 @@ class Synthesizer:
         self._pg_thread = threading.Thread(target=self._pygame_feed, daemon=True)
         self._pg_thread.start()
         self.mode = "pygame"
-        self.latency_ms = round(2 * 1024 / sr * 1000.0, 1)
+        self.latency_ms = round(2 * pg_buf / sr * 1000.0, 1)
         return True
 
     def _pygame_feed(self):

@@ -12,7 +12,7 @@ package.domain = com.pyenginesim
 source.dir = .
 source.include_exts = py,png,jpg,ttf,json,otf
 source.include_patterns = engine_sim/assets/*
-version = 0.1
+version = 0.2.0
 # scipy DROPPED: extremely painful to cross-compile with p4a, and audio.py
 # already has a pure-numpy fallback for every scipy call (_HAVE_SCIPY guards).
 # Use pygame-ce (Community Edition) for better Android GLES2 support
@@ -30,9 +30,13 @@ android.allow_backup = True
 android.enable_gles2 = True
 # Disable GL debugging for better performance
 android.debug_gl = False
-# Use a PRE-EXTRACTED NDK so p4a never runs its (no-timeout, stall-prone)
-# downloader — we fetch + unzip it ourselves with wget retries.
-android.ndk_path = /root/.buildozer/android/platform/android-ndk-r28c
+# Pin p4a to the v2023.09.16 release: it builds CPython 3.10 (pygame-ce needs the
+# top-level longintrepr.h that 3.12 removed) and its bundled SDL2 still calls
+# ALooper_pollAll, which NDK r26+ removed.  master + r28c FAILS to compile.
+p4a.branch = v2023.09.16
+# Use a PRE-EXTRACTED NDK r25b (last NDK keeping ALooper_pollAll) so p4a never
+# runs its stall-prone downloader — android_ndk25_prep.sh fetches/unzips it.
+android.ndk_path = /root/.buildozer/android/platform/android-ndk-r25b
 
 [buildozer]
 log_level = 2
