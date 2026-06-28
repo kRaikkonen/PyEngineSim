@@ -24,4 +24,4 @@ from . import presets
 __all__ = ["Cylinder", "Engine", "Simulator", "presets"]
 # Bumped automatically by .git/hooks/post-commit after each commit:
 # 0.1 -> 0.1.1 -> 0.1.2 -> ...
-__version__ = "0.1.21"
+__version__ = "0.1.22"

@@ -29,6 +29,15 @@ from .drivetrain import Drivetrain
 from .units import rads_to_rpm
 
 GAMMA = 1.30          # ratio of specific heats for burned gas (~1.3)
+# Physical peak-cylinder-pressure ceiling (Pa).  The open-loop Otto model lets a
+# HIGH compression ratio multiply with boost into absurd peak pressures (a diesel
+# at CR~20 + boost computes ~1300 bar, ~8x its real torque).  Real engines are
+# limited by structure/combustion to a few hundred bar, so we clamp here.  Set
+# well ABOVE petrol peaks (~100-180 bar even boosted) so only the broken
+# high-CR/high-boost (diesel) cases are touched.  Used for TORQUE only — the
+# audio's blowdown model is separate and stays as tuned.
+P_PEAK_CAP = 3.0e7    # ~300 bar (well above petrol ~120-180 bar peaks; clamps the
+                      # broken diesel/high-CR cases: ~8x real -> ~0.9x)
 TWO_PI = 2.0 * math.pi
 DEG = math.pi / 180.0
 
@@ -240,9 +249,15 @@ class Simulator:
                 # Heat release scales with trapped charge mass (~ manifold
                 # pressure x how well the engine is breathing): a near-empty or
                 # badly-breathing cylinder barely burns, a full one makes a big
-                # pressure spike.
+                # pressure spike.  The charge-mass factor is CLAMPED at the NA
+                # wide-open value (1.0): boost already raises p_compressed
+                # linearly, so letting it ALSO grow this multiplier made p_peak
+                # scale with manifold pressure SQUARED — wildly overpowering
+                # forced-induction (and especially high-CR diesel) engines.
+                # Capping it keeps the physical LINEAR torque gain with boost and
+                # leaves every NA engine (ratio <= 1 at WOT) untouched.
                 k = 1.0 + self.engine.heat_release_k * (p_manifold / P_ATM) * ve
-                p_peak = p_compressed * k
+                p_peak = min(p_compressed * k, P_PEAK_CAP)   # physical pressure ceiling
             else:
                 p_peak = p_compressed
             return p_peak * (cyl.clearance_volume / v_now) ** GAMMA
