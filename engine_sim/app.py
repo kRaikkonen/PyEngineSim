@@ -4938,12 +4938,27 @@ class App:
 
     # ------------------------------------------------------------------ loop
     def run(self):
+        # Render is DECOUPLED from physics.  Physics + the audio-thread state stay
+        # at the full 60 Hz; in Low-Q (phones / Forza) the heavy 2D draw is capped
+        # to 30 fps so it stops hogging the CPU/GIL from the real-time audio — the
+        # single biggest win for weak SoCs (e.g. Snapdragon 845).  Normal mode is
+        # untouched: it draws every frame.  Purely a scheduling change — no physics
+        # or audio fidelity is lost, and a phone can't tell 30 vs 60 fps here.
+        render_accum = 0.0
+        RENDER_PERIOD = 1.0 / 30.0
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
             dt = min(dt, 0.05)              # clamp huge hitches
             self.handle_events()
             self.update(dt)
-            self.draw()
+            if self.low_quality:
+                render_accum += dt
+                if render_accum >= RENDER_PERIOD:
+                    render_accum = 0.0
+                    self.draw()
+            else:
+                render_accum = 0.0
+                self.draw()
         self.synth.stop()
         pygame.quit()
 
