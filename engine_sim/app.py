@@ -189,12 +189,14 @@ TR_ZH = {
     "Presence (bite)": "临场(咬合)",
 }
 
-# Platform-specific rendering resolution
-# Android: 854x480 (16:9) for lower GPU load, PC: 1280x720 for better quality
-if IS_ANDROID:
-    WIDTH, HEIGHT = 854, 480
-else:
-    WIDTH, HEIGHT = 1280, 720
+# The UI is authored in a fixed 1100x680 logical coordinate space (panels reach
+# ~1076x656, so a smaller canvas CLIPS the layout — it does not scale it).  On
+# Android the GPU (SDL2 SCALED, below) downsamples this logical canvas to the
+# phone's native screen, so the cheap GPU shrink is what cuts the on-screen
+# pixel cost — NOT a smaller logical canvas, which would just chop off the
+# gauges/bay.  Per-frame CPU cost is reduced losslessly by the static-layer
+# cache instead (see _bay_cache / _draw_engine_panel).
+WIDTH, HEIGHT = 1100, 680
 FPS = 60
 
 # Friendly transmission labels for the HUD (sets the auto-shift feel).
@@ -284,6 +286,19 @@ class App:
         self._draw_offset = (0, 0)
         self._draw_scale = 1.0
         self._grad_cache = {}     # cached gradient/gloss surfaces (iOS 6 skin)
+        # Static cylinder-SLEEVE cache (lossless render optimisation): the metal
+        # barrel/head/fins never move, so each cylinder's shell is rendered ONCE to
+        # a small opaque sprite and re-blitted every frame; only the live
+        # valvetrain/piston/crank are redrawn.  Sprites are blitted per-cylinder, in
+        # the same order as the inline draw, so cross-cylinder OVERLAP (where one
+        # bank's shell covers a neighbour's parts) stays byte-for-byte identical.
+        # Invalidated on engine swap (load_engine) and Low-Q toggle — the only
+        # things that change sleeve geometry/appearance.
+        self._sleeve_sprites = None     # list[(Surface, (x, y)) | None] per cylinder
+        self._sleeve_scratch = None     # reusable full-canvas SRCALPHA render target
+        self._bay_sig = None
+        self._bay_dirty = False
+        self._cyl_idx = 0               # per-frame cylinder counter (sprite index)
         self._tele_smooth = {}    # eased telemetry values (calm gauge needles)
         self._cyl_flow_hist = []  # per-cylinder exhaust-flow scope ring buffers
         self._fuel_total_l = 0.0  # integrated fuel burned (L)
@@ -695,6 +710,7 @@ class App:
         self._make_synth(start=True, keep_engine_flags=False)   # GPF/Cat per new car
         self._disp_torque = 0.0
         self._tele_smooth.clear()             # don't carry needle state across cars
+        self._sleeve_sprites = None           # new layout -> rebuild the sleeve cache
         self._reset_trip()                    # fresh odometer / fuel / oil per car
 
     def _reset_trip(self):
@@ -1825,6 +1841,31 @@ class App:
             pygame.draw.circle(self.screen, col, (bx0 - 7, bay.y + 13), 4)
             pygame.draw.circle(self.screen, (30, 33, 42), (bx0 - 7, bay.y + 13), 4, 1)
             self.screen.blit(bd, (bx0, bay.y + 7))
+        # --- static cylinder-sleeve cache (lossless) ----------------------------
+        # The metal barrels/heads don't move; cache each cylinder's shell as a
+        # sprite so _draw_cyl only redraws its live valvetrain/piston/crank.
+        # Rebuild when the engine or Low-Q state (the only things affecting sleeve
+        # geometry/look) changes; on the rebuild frame _draw_cyl paints the shell to
+        # both the sprite and the screen, so output is pixel-identical to drawing
+        # the cylinder inline.  Sprites are blitted per-cylinder (in draw order) so
+        # cross-cylinder overlap is preserved exactly.
+        # Only worthwhile in HIGH-Q: Low-Q sleeves are already cheap flat quads, so
+        # the per-cylinder sprite blit costs about as much as redrawing them — there
+        # the direct path (sprites=None) is used instead.
+        if self.low_quality:
+            self._sleeve_sprites = None        # -> _draw_cyl draws shells directly
+            self._bay_dirty = False
+        else:
+            sig = (self.current_key, WIDTH, HEIGHT)
+            if self._sleeve_sprites is None or sig != self._bay_sig:
+                self._sleeve_sprites = []
+                self._bay_sig = sig
+                self._bay_dirty = True
+                if self._sleeve_scratch is None:
+                    self._sleeve_scratch = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            else:
+                self._bay_dirty = False
+        self._cyl_idx = 0
         top = bay.y + 26
         bottom = bay.bottom - 24
         # Per-cylinder size scaled by DISPLACEMENT, with the Bugatti W16's
@@ -2109,7 +2150,38 @@ class App:
         """Draw one cylinder + reciprocating piston + rod + crank journal along a
         bank axis tilted by angle ``a`` (radians) from vertical, hinged at the
         crank centre (jx, jy).  Metal surfaces are strip-shaded (bright centre,
-        dark edges) for the round skeuomorphic look, even when tilted."""
+        dark edges) for the round skeuomorphic look, even when tilted.
+
+        The static metal SLEEVE/head is cached once per engine (see
+        _draw_engine_panel) as a per-cylinder sprite and re-blitted each frame just
+        before that cylinder's live valvetrain/piston/crank — preserving the inline
+        draw order, so the result is byte-for-byte identical."""
+        idx = self._cyl_idx
+        self._cyl_idx += 1
+        if self._sleeve_sprites is None:               # defensive: no cache -> draw all
+            self._cyl_static(self.screen, jx, jy, a, length, width)
+        elif self._bay_dirty:                          # building the sprite this frame
+            scr = self._sleeve_scratch
+            scr.fill((0, 0, 0, 0))
+            self._cyl_static(scr, jx, jy, a, length, width)
+            bb = scr.get_bounding_rect()               # tight box of the opaque shell
+            if bb.width and bb.height:
+                spr = scr.subsurface(bb).copy()
+                self._sleeve_sprites.append((spr, (bb.x, bb.y)))
+                self.screen.blit(spr, (bb.x, bb.y))    # rebuild frame: show the shell
+            else:
+                self._sleeve_sprites.append(None)
+        else:                                          # restore this cylinder's shell
+            item = self._sleeve_sprites[idx] if idx < len(self._sleeve_sprites) else None
+            if item is not None:
+                self.screen.blit(item[0], item[1])
+        self._cyl_dynamic(jx, jy, a, length, width, frac, theta, glow, phi)
+
+    def _cyl_static(self, tgt, jx, jy, a, length, width):
+        """The non-moving cylinder shell — base cap, strip-shaded sleeve, brushed
+        grain, specular band, cooling fins, edge outline and the domed head cap
+        (in Low-Q: the flat sleeve/head-band/outline/bore).  Painted onto ``tgt``
+        (the sleeve cache, or directly the screen on the rebuild frame)."""
         ux, uy = math.sin(a), -math.cos(a)            # 'up' along the cylinder
         qx, qy = math.cos(a), math.sin(a)             # perpendicular (across bore)
         cr = 9.0
@@ -2117,10 +2189,8 @@ class App:
         hw = width / 2.0
 
         if self.low_quality:
-            # LOW-QUALITY: just the right SHAPES in a few FLAT colours — no metal
-            # strip-shading, no domed caps, no valvetrain.  Keeps the piston moving.
             def quad(d0, d1, halfw, col, w=0):
-                pygame.draw.polygon(self.screen, col, [
+                pygame.draw.polygon(tgt, col, [
                     (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
                     (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
                     (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
@@ -2129,17 +2199,6 @@ class App:
             quad(length - 1, length + 5, hw + 3, (70, 76, 90))  # head band
             quad(-2, length + 4, hw + 3, (28, 30, 38), 2)     # outline
             quad(1, length, hw - 2, (24, 26, 32))             # bore interior
-            # (low-Q: no combustion flash)
-            plen = 15.0
-            travel = max(length - plen - 14, 6.0)
-            ppos = 8.0 + (1.0 - frac) * travel                # TDC high, BDC low
-            quad(ppos, ppos + plen, hw - 3, (190, 196, 208))  # piston
-            quad(ppos, ppos + plen, hw - 3, (96, 102, 114), 1)
-            pin = (int(bx + ux * ppos), int(by + uy * ppos))
-            jrn = (int(jx + cr * math.sin(theta)), int(jy + cr * math.cos(theta)))
-            pygame.draw.line(self.screen, (126, 132, 146), pin, jrn, 4)  # con-rod
-            pygame.draw.circle(self.screen, (54, 58, 70), pin, 4)
-            pygame.draw.circle(self.screen, (150, 156, 168), jrn, 4)
             return
 
         def shaded(d0, d1, halfw, base, n=9):         # round-metal strip gradient
@@ -2150,7 +2209,7 @@ class App:
                 f = 0.30 + 0.85 * max(0.0, 1.0 - abs(t - 0.18)) ** 1.3   # off-centre hi
                 col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
                        min(255, int(base[2] * f)))
-                pygame.draw.polygon(self.screen, col, [
+                pygame.draw.polygon(tgt, col, [
                     (bx + ux * d0 + qx * e0, by + uy * d0 + qy * e0),
                     (bx + ux * d1 + qx * e0, by + uy * d1 + qy * e0),
                     (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
@@ -2164,20 +2223,20 @@ class App:
                 ox = int(qx * halfw * off); oy = int(qy * halfw * off)   # toward light
                 col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
                        min(255, int(base[2] * f)))
-                pygame.draw.circle(self.screen, col, (cxp + ox, cyp + oy), max(1, sr))
-            pygame.draw.circle(self.screen, (22, 24, 30), (cxp, cyp), rr, 1)
+                pygame.draw.circle(tgt, col, (cxp + ox, cyp + oy), max(1, sr))
+            pygame.draw.circle(tgt, (22, 24, 30), (cxp, cyp), rr, 1)
             if spec and rr >= 5:                       # sharp polished catch-light
-                pygame.draw.circle(self.screen, (240, 244, 252),
+                pygame.draw.circle(tgt, (240, 244, 252),
                                    (cxp + int(qx * halfw * 0.5), cyp + int(qy * halfw * 0.5)),
                                    max(1, rr // 5))
 
         def along(d0, d1, e, col, w=1):               # a line running ALONG the bore
-            pygame.draw.line(self.screen, col,
+            pygame.draw.line(tgt, col,
                              (bx + ux * d0 + qx * e, by + uy * d0 + qy * e),
                              (bx + ux * d1 + qx * e, by + uy * d1 + qy * e), w)
 
         def edge(d0, d1, halfw, col, w=1):
-            pygame.draw.polygon(self.screen, col, [
+            pygame.draw.polygon(tgt, col, [
                 (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
                 (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
                 (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
@@ -2194,11 +2253,61 @@ class App:
                   (c, min(255, c + 6), min(255, c + 16)), 2 if c > 190 else 1)
         for fz in range(4):                           # cooling fins near the head
             d = length - 2 - fz * 5
-            pygame.draw.line(self.screen, (40, 44, 54),
+            pygame.draw.line(tgt, (40, 44, 54),
                              (bx + ux * d + qx * (hw + 3), by + uy * d + qy * (hw + 3)),
                              (bx + ux * d - qx * (hw + 3), by + uy * d - qy * (hw + 3)), 2)
         edge(-2, length + 4, hw + 3, (22, 24, 30), 2)
         cap(length + 4, hw + 3, (104, 110, 124), spec=True)   # DOMED head cap on top
+
+    def _cyl_dynamic(self, jx, jy, a, length, width, frac, theta, glow, phi=0.0):
+        """The moving parts drawn on TOP of the cached sleeve each frame: the
+        valvetrain on the head, the dark bore, combustion glow, the piston + rod
+        and the crank throw/journals."""
+        ux, uy = math.sin(a), -math.cos(a)            # 'up' along the cylinder
+        qx, qy = math.cos(a), math.sin(a)             # perpendicular (across bore)
+        cr = 9.0
+        bx, by = jx + ux * cr * 1.4, jy + uy * cr * 1.4   # bore base (off the crank)
+        hw = width / 2.0
+
+        if self.low_quality:
+            def quad(d0, d1, halfw, col, w=0):
+                pygame.draw.polygon(self.screen, col, [
+                    (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
+                    (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
+                    (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
+                    (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
+            plen = 15.0
+            travel = max(length - plen - 14, 6.0)
+            ppos = 8.0 + (1.0 - frac) * travel                # TDC high, BDC low
+            quad(ppos, ppos + plen, hw - 3, (190, 196, 208))  # piston
+            quad(ppos, ppos + plen, hw - 3, (96, 102, 114), 1)
+            pin = (int(bx + ux * ppos), int(by + uy * ppos))
+            jrn = (int(jx + cr * math.sin(theta)), int(jy + cr * math.cos(theta)))
+            pygame.draw.line(self.screen, (126, 132, 146), pin, jrn, 4)  # con-rod
+            pygame.draw.circle(self.screen, (54, 58, 70), pin, 4)
+            pygame.draw.circle(self.screen, (150, 156, 168), jrn, 4)
+            return
+
+        def shaded(d0, d1, halfw, base, n=9):         # round-metal strip gradient
+            for si in range(n):
+                e0 = (si / n * 2 - 1) * halfw; e1 = ((si + 1) / n * 2 - 1) * halfw
+                t = (si + 0.5) / n * 2 - 1             # -1 edge .. +1 edge
+                f = 0.30 + 0.85 * max(0.0, 1.0 - abs(t - 0.18)) ** 1.3   # off-centre hi
+                col = (min(255, int(base[0] * f)), min(255, int(base[1] * f)),
+                       min(255, int(base[2] * f)))
+                pygame.draw.polygon(self.screen, col, [
+                    (bx + ux * d0 + qx * e0, by + uy * d0 + qy * e0),
+                    (bx + ux * d1 + qx * e0, by + uy * d1 + qy * e0),
+                    (bx + ux * d1 + qx * e1, by + uy * d1 + qy * e1),
+                    (bx + ux * d0 + qx * e1, by + uy * d0 + qy * e1)])
+
+        def edge(d0, d1, halfw, col, w=1):
+            pygame.draw.polygon(self.screen, col, [
+                (bx + ux * d0 + qx * halfw, by + uy * d0 + qy * halfw),
+                (bx + ux * d1 + qx * halfw, by + uy * d1 + qy * halfw),
+                (bx + ux * d1 - qx * halfw, by + uy * d1 - qy * halfw),
+                (bx + ux * d0 - qx * halfw, by + uy * d0 - qy * halfw)], w)
+
         # --- valvetrain on the head: poppet valves, springs, lifters + camshaft -
         if length > 34:
             sc = self.screen
