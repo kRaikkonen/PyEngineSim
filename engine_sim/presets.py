@@ -2226,7 +2226,7 @@ def porsche_996_gt1() -> Engine:
                 wall_material="titanium", gear_grain=0.3,
                 gear_ratios=[2.74, 1.81, 1.35, 1.08, 0.89, 0.74], final_drive=3.44,
                 vehicle_mass=1150.0, wheel_radius=0.33, clutch_capacity=620.0,
-                gearbox_type="single")
+                gearbox_type="manual")   # Strassenversion: 6-speed H-pattern manual
 
 
 def porsche_997_gt3_rs_40() -> Engine:
@@ -2240,7 +2240,7 @@ def porsche_997_gt3_rs_40() -> Engine:
                 backpressure_coupling=0.8, gear_grain=0.3,
                 gear_ratios=[3.15, 2.0, 1.48, 1.13, 0.92, 0.78], final_drive=3.89,
                 vehicle_mass=1370.0, wheel_radius=0.33, clutch_capacity=560.0,
-                gearbox_type="single")
+                gearbox_type="manual")   # 997.2 GT3 RS 4.0: manual-only (no PDK)
 
 
 def porsche_991_gt3_rs() -> Engine:
