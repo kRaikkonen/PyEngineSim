@@ -1164,6 +1164,11 @@ class App:
     def update(self, dt):
         if self.synth:
             self.synth.time_scale = 1.0 if self.telemetry_mode else self.slow_mo
+        # Low-Q (phones) caps the high-rpm physics sub-steps lower: ~3x cheaper
+        # integration where it matters (the redline), with a negligible rpm-
+        # trajectory shift (the flywheel smooths it; audio is independent).  Normal
+        # mode keeps the fine 80 for full fidelity.
+        self.sim.substep_cap = 24 if self.low_quality else 80
         if self.telemetry_mode:
             self._update_telemetry(dt)
         else:
@@ -4164,14 +4169,29 @@ class App:
         load = min(max((sim.blowdown_pressure() - 101325.0) / (0.9 * 101325.0),
                        0.30), 1.05)
         base, amp = h - 4, h - 12
-        ang = np.arange(w) / (w - 1) * 720.0          # FIXED window (refresh, no scroll)
+        # The per-cylinder pulse ENVELOPE is fixed (it depends only on the static
+        # crank offsets), so precompute it once per engine/scope-size instead of
+        # re-running np.where/exp every frame for every cylinder.  In Low-Q the
+        # trace is decimated horizontally (every 2nd pixel) — half the points to
+        # transform + draw, visually indistinguishable on a phone.  Display only;
+        # the audio is untouched.
+        step = 2 if self.low_quality else 1
+        key = (n, w, step, id(offs))
+        if getattr(self, "_scope_key", None) != key:
+            xs = np.arange(0, w, step)
+            ang = xs / (w - 1) * 720.0                  # FIXED window (refresh, no scroll)
+            envs = []
+            for i in range(n):
+                d = (ang + offs[i]) % 720.0 - 505.0     # 0 at exhaust-valve open
+                envs.append(np.where((d >= 0) & (d < 210.0),
+                            np.clip(d / 4.0, 0.0, 1.0) * np.exp(-np.clip(d, 0, None) / 30.0),
+                            0.0))
+            self._scope_key = key
+            self._scope_xs = xs
+            self._scope_envs = envs
+        xs, envs = self._scope_xs, self._scope_envs
         surf = pygame.Surface((w, h), pygame.SRCALPHA)
         for i in range(n):
-            phi = (ang + offs[i]) % 720.0
-            d = phi - 505.0                              # 0 at exhaust-valve open
-            env = np.where((d >= 0) & (d < 210.0),
-                           np.clip(d / 4.0, 0.0, 1.0) * np.exp(-np.clip(d, 0, None) / 30.0),
-                           0.0)
             # exaggerate the (small) per-cylinder voicing x3 so the strong/weak
             # difference is legible on screen (display only — audio is unchanged)
             vdev = (voice.amp[i] - 1.0) * 3.0 if voice and i < len(voice.amp) else 0.0
@@ -4180,10 +4200,10 @@ class App:
             # refresh scope still shows the cylinders firing in sequence.
             flash = self._ign_flash.get(i, 0.0)
             amp_i = load * (1.0 + vdev) * (0.45 + 0.55 * flash)
-            yv = base - np.clip(env * amp_i, 0.0, 1.1) * amp
+            yv = base - np.clip(envs[i] * amp_i, 0.0, 1.1) * amp
             sh = (i % 6) * 8
             a = int(90 + 150 * flash)                    # brighter as it fires
-            pts = np.column_stack((np.arange(w), yv)).astype(np.int32).tolist()
+            pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
             pygame.draw.lines(surf, (236, 150 - sh, 60 + sh, a), False, pts, 1)
         self.screen.blit(surf, (x, y))
         cap = self.font_small.render(f"x{n}", True, (130, 96, 54))

@@ -70,6 +70,12 @@ class Simulator:
         self.boost = 0.0                # forced-induction boost (bar gauge)
         self._idle_trim = engine.idle_air_base  # idle-governor air, 0..~0.3
         self.hybrid_on = True           # electric-motor assist enabled (hybrids)
+        # Max physics sub-steps per frame.  The crank-angle integration sub-steps
+        # for torque-pulse resolution; the flywheel smooths pulses at high rpm so a
+        # coarser cap barely moves the rpm TRAJECTORY (and the audio runs its own
+        # crank, independent of this).  Normal mode keeps the fine 80; Low-Q (phones)
+        # lowers it to slash the high-rpm physics cost.  Set by the app per mode.
+        self.substep_cap = 80
 
         # --- telemetry (updated every step) ---
         self.gas_torque = 0.0
@@ -357,7 +363,7 @@ class Simulator:
         speed = max(abs(self.omega), 1.0)
         max_step = (3.0 + 11.0 * min(speed / 1500.0, 1.0)) * DEG
         n = int(dt * speed / max_step) + 1
-        n = min(n, 80)
+        n = min(n, self.substep_cap)
         h = dt / n
 
         for _ in range(n):
