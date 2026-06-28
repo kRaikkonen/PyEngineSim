@@ -961,6 +961,7 @@ class Synthesizer:
         # --- per-channel excitation, sampled from the physics ---------------
         chans = [np.zeros(frames, dtype=np.float64) for _ in range(self._nchan)]
         fizz_chans = [np.zeros(frames, dtype=np.float64) for _ in range(self._nchan)]
+        choke = 0.0          # exhaust-valve choked-flow factor (0 subsonic .. 1 choked)
         if dps > 1e-12:
             idx = np.arange(frames)
             crank = self._audio_crank + dps * idx
@@ -969,6 +970,15 @@ class Synthesizer:
             # load 0..1 from the cylinder pressure at valve-open: drives how steep
             # and tall the blowdown edge is (high load = sharper edge = more scream).
             load = min(max(abs(strength) * 1.25, 0.08), 1.0)
+            # CHOKED-FLOW orifice (standard IC-engine compressible discharge): once
+            # the exhaust/cylinder pressure ratio drops below the critical ~0.54
+            # (gamma~1.33 hot gas), the blowdown jet goes sonic and the flow
+            # SATURATES — the pulse top is physically clipped and steepened, which
+            # is where a hard-driven engine's high-order "tear/grit" harmonics come
+            # from (vs. a clean louder pulse).  One scalar/ frame, no per-sample cost.
+            p_cyl = p_open + 1.05 * P_ATM                  # absolute blowdown pressure
+            pr = (1.05 * P_ATM) / max(p_cyl, 1.05 * P_ATM)   # back/cylinder ratio (0,1]
+            choke = min(max((0.54 - pr) / 0.54, 0.0), 1.0)   # 0 subsonic .. 1 choked
             self._jit += (1.0 + 0.12 * (self._rng.random(len(self._jit)) - 0.5)
                           - self._jit) * 0.25
 
@@ -1088,7 +1098,10 @@ class Synthesizer:
         fw, fg = P["fire_weight"], P["fire_grit"]
         bang = (P["dry"] * dry + P["crack"] * (1.0 + 1.3 * fg) * crack
                 + (1.6 * P["body"]) * (1.0 + 1.4 * fw) * body)
-        drive = P["drive"] + 1.6 * fg
+        # choked blowdown adds saturation/harmonics at the SOURCE — only at high
+        # load (choke>0), so idle/cruise stay clean; this is the physical origin of
+        # the coarse "tear" a turbo/NA engine gets when you bury the throttle.
+        drive = P["drive"] + 1.6 * fg + 0.5 * choke
         if drive > 1e-3:
             bang = np.tanh(bang * (1.0 + 7.0 * drive))
         if _HAVE_SCIPY and fw > 0.02:                    # low-shelf 'weight'
@@ -1142,7 +1155,14 @@ class Synthesizer:
         if _eng.induction == "turbo" and _HAVE_SCIPY:
             bf = (min(sim.boost / max(_eng.boost_bar, 0.05), 1.0)
                   if _eng.boost_bar else 0.0)
-            tcut = 9000.0 - 6600.0 * bf            # ~9k off-boost .. ~2.4k on full boost
+            # TWO variables, not just boost: the turbine's LOADING (boost) smears and
+            # muffles, while its SPEED (~exhaust mass-flow, tracked by rpm) keeps the
+            # bright impeller whistle alive.  So high-rpm/low-boost stays sharp and
+            # whistly, low-rpm/high-boost goes deep and dull — they no longer sound
+            # identical.  Off-boost it barely touches the note at any rpm.
+            rpm_frac = min(sim.rpm / max(_eng.redline_rpm, 1.0), 1.0)
+            tcut = 9000.0 - 6600.0 * bf + 2000.0 * rpm_frac
+            tcut = min(max(tcut, 2200.0), 11000.0)   # ~2.4-4.4k boosted .. 9-11k off
             b, a = self._bw(2, tcut)
             sig, self._turbine_zi = lfilter(b, a, sig, zi=self._turbine_zi)
         self._tap("head/port", sig)
@@ -1227,6 +1247,15 @@ class Synthesizer:
             vo = min(vo, 0.85)
             if vo > 1e-3:
                 sig = (1.0 - vo) * sig + vo * bypass
+            # SPL-controlled "blow-out": when the engine is LOUD (hard on it) the box
+            # can't hold the pressure, so a touch more of the bright pre-muffler
+            # signal bleeds through -> an active-valve-like dynamic ("内敛 -> 炸开")
+            # WITHOUT a real second path.  Reuses last block's output RMS (free); the
+            # (1-vo) guard avoids double-counting an already-open valve.
+            spl = min(getattr(self, "last_level", 0.0) * 3.0, 1.0)
+            bl = 0.16 * spl * (1.0 - vo)
+            if bl > 1e-3:
+                sig = (1.0 - bl) * sig + bl * bypass
         else:
             sig = np.diff(sig, prepend=sig[:1])
         self._tap("valve bypass", sig)        # active-valve straight-through mix
