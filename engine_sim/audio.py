@@ -412,10 +412,14 @@ class Synthesizer:
         # Live, user-adjustable mix (the in-app audio console drives these).
         # Akrapovic-style: keep the firing 'bang' + low body strong, keep pipe
         # resonance modest (too much = the 'plastic tube' ring), de-drone.
+        # dry/wet REBALANCED (2026-07 "system body" pass): dry 1.6 / res 0.10+0.24
+        # meant the raw combustion bang was ~5x the pipe's own voice — that IS the
+        # sound of a bench dyno with the mic at the header.  A car on the street
+        # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 1.6,          # combustion bang level
-            "res1": 0.10,         # primary pipe resonance (runner)
-            "res2": 0.24,         # secondary pipe resonance (full system)
+            "dry": 1.28,         # combustion bang level
+            "res1": 0.15,         # primary pipe resonance (runner)
+            "res2": 0.36,         # secondary pipe resonance (full system)
             "crack": 0.12,        # attack snap (explosion punch)
             "attack_deg": 9.0,    # onset softness (deg): bigger = blunter attack
             "body": 1.60,         # thickness / low-end of each firing (浑厚)
@@ -830,11 +834,28 @@ class Synthesizer:
         # mostly rpm-driven (throttle just nudges it open a bit)
         drive = min(rpm_frac + 0.30 * min(max(self.sim.throttle, 0.0), 1.0), 1.0)
         valve = min(max((drive - 0.28) / 0.45, 0.0), 1.0)
+        # NONLINEAR opening curve (was linear): a real flap/gas-path brightens
+        # slowly off idle then rushes open up top — and loudness perception is
+        # log, so the linear map made idle and redline sound like the same
+        # brightness with a volume knob.  ^1.4 keeps the low end darker longer
+        # and steepens the top -> far more idle-vs-redline contrast.
+        valve = valve ** 1.4
         self._valve = valve
         self._post_fc = 1600.0 + 9600.0 * valve     # muffled 1.6 kHz .. bright 11 kHz
 
+        # MEAN EXHAUST FLOW (0..1) — drives the TURBULENT (v^2) nonlinearities:
+        # pipe losses, wave steepening and backflow burble all scale with it.
+        flow = rpm_frac * (0.30 + 0.70 * min(max(self.sim.throttle, 0.0), 1.0))
+        self._flow = flow
+
         # in-loop treble damping, also scaled shut by the valve
         fc = (2000.0 + 7000.0 * eng.exhaust_openness) * (0.4 + 0.6 * valve)
+        # TURBULENT wall/radiation loss grows with flow SQUARED (laminar at idle,
+        # scrubbing at WOT): the resonator's Q and its top end fall away as flow
+        # rises, so idle rings clean and hollow while a redline pull gets rough
+        # and gritty instead of politely ringing — losses were previously static.
+        fc *= 1.0 - 0.22 * flow * flow
+        g = g * (1.0 - 0.09 * flow * flow)      # feedback gain: same v^2 loss
         # a rotary 'braps' brighter and raspier than a piston engine
         if eng.is_rotary:
             self._post_fc *= 1.35
@@ -1116,6 +1137,18 @@ class Synthesizer:
         for ci in range(self._nchan):
             fizz += fizz_chans[ci]
         sig = bang + wet + P["turbulence"] * (fizz * inv)
+        # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
+        # collapses and the REFLECTED wave dominates at the collector — shear
+        # between the returning and residual gas makes pulse-synchronous chuffs.
+        # Model: noise MULTIPLIED by the wet (reflected) envelope — a genuinely
+        # nonlinear self-modulation, so the burble breathes with the pipe instead
+        # of being a steady hiss.  Only computed off-throttle (zero cost on power).
+        ov = (max(0.0, 1.0 - min(max(sim.throttle, 0.0), 1.0) * 6.0)   # foot off
+              * min(getattr(self, "_flow", 0.0) * 4.0, 1.0)           # revs up
+              * min(sim.rpm / max(sim.engine.idle_rpm * 1.5, 1.0), 1.0))  # not idling
+        if ov > 0.03 and dps > 1e-12:
+            nz_b = self._rng.standard_normal(frames)
+            sig = sig + (0.55 * ov) * np.abs(wet) * nz_b
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
@@ -1136,6 +1169,16 @@ class Synthesizer:
         #   9. room / environment reverb  (the space — added last, below)
 
         self._tap("header", sig)              # exhaust gas at the header collector
+        # --- FINITE-AMPLITUDE WAVE STEEPENING (nonlinear acoustics): a loud
+        # pressure wave travels on its own compressed, hotter gas, so its crest
+        # outruns its trough and the front STEEPENS as it goes down the pipe —
+        # generating high harmonics in proportion to amplitude (the same physics
+        # as a trumpet's brassy 'cuivre' snarl).  Quadratic self-distortion,
+        # strength driven by mean flow + choked blowdown, so idle stays clean and
+        # a hard pull turns raspy from the physics up.  One vector op.
+        kst = 0.22 * getattr(self, "_flow", 0.0) + 0.30 * choke
+        if kst > 0.01:
+            sig = sig + kst * sig * np.abs(sig)
         # --- (3a) cylinder-head / exhaust-port cavity low-pass: round the raw
         # pulse so it reads as a metal port, not an electronic click.  A touch
         # duller while the engine is still cold.

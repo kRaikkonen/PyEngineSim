@@ -312,6 +312,11 @@ class App:
         # element live.  See _slow_surf / _draw_n.
         self._draw_n = 0
         self._elem_cache = {}
+        # FOCUS OSCILLOSCOPE (original engine-sim layout): one big scope window +
+        # a row of clickable channel tiles below it (waveform / exhaust flow /
+        # valve lift / cylinder pressure) — click a tile to focus that channel.
+        self._scope_chan = "flow"
+        self._scope_tile_rects = {}
         # Static cylinder-SLEEVE cache (lossless render optimisation): the metal
         # barrel/head/fins never move, so each cylinder's shell is rendered ONCE to
         # a small opaque sprite and re-blitted every frame; only the live
@@ -934,6 +939,13 @@ class App:
         if rr is not None and rr.collidepoint(mpos):
             self._reset_trip()
             return
+        # focus-oscilloscope channel tiles (right panel, below the scope window)
+        if not self.mixer_open and self._open_menu is None:
+            for chan, tr in self._scope_tile_rects.items():
+                if tr.collidepoint(mpos):
+                    self._scope_chan = chan
+                    self._elem_cache.pop("scope", None)   # refresh the Low-Q cache
+                    return
         tt = self._touch_toggle_rect
         if (tt is not None and not self.mixer_open and self._open_menu is None
                 and tt.collidepoint(mpos)):
@@ -4197,6 +4209,106 @@ class App:
             self._elem_cache[key] = c
         return c
 
+    # ---------------------------------------------------- focus oscilloscope
+    # The original engine-sim layout: one big FOCUS OSCILLOSCOPE window with a
+    # row of channel tiles under it (waveform / exhaust flow / valve lift /
+    # cylinder pressure) — click a tile to put that channel on the big screen.
+    _SCOPE_CHANNELS = [("wave", "WAVEFORM"), ("flow", "EXH FLOW"),
+                       ("lift", "VALVE LIFT"), ("press", "CYL PRESS")]
+    _SCOPE_PINK = (238, 148, 196)          # the design sheet's pixel-pink caps
+
+    def _draw_focus_scope(self, x, y, w, h):
+        tile_h = 16
+        fh = max(24, h - tile_h - 2)       # focus window height
+        chan = self._scope_chan
+        if chan == "flow":                 # per-cylinder exhaust-flow envelopes
+            self._draw_scope(x, y, w, fh, "EXHAUST FLOW")
+        else:
+            pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, fh))
+            pygame.draw.rect(self.screen, (44, 48, 56), (x, y, w, fh), 1)
+            if chan == "wave":
+                self._focus_wave(x, y, w, fh)
+            elif chan == "lift":
+                self._focus_lift(x, y, w, fh)
+            else:
+                self._focus_press(x, y, w, fh)
+        # --- channel tiles (click to focus) ---------------------------------
+        n = len(self._SCOPE_CHANNELS)
+        gap = 3
+        tw = (w - gap * (n - 1)) // n
+        ty = y + fh + 2
+        self._scope_tile_rects = {}
+        for i, (key, label) in enumerate(self._SCOPE_CHANNELS):
+            tr = pygame.Rect(x + i * (tw + gap), ty, tw, tile_h)
+            self._scope_tile_rects[key] = tr
+            sel = (key == chan)
+            pygame.draw.rect(self.screen, (26, 20, 25) if sel else (12, 13, 16), tr)
+            pygame.draw.rect(self.screen, self._SCOPE_PINK if sel else (44, 48, 56),
+                             tr, 1)
+            ts = self.font_hint.render(label, True,
+                                       self._SCOPE_PINK if sel else (110, 116, 128))
+            self.screen.blit(ts, (tr.centerx - ts.get_width() // 2,
+                                  tr.centery - ts.get_height() // 2))
+
+    def _focus_wave(self, x, y, w, fh):
+        """Master audio output waveform (what the tailpipe is radiating NOW)."""
+        self.screen.blit(self.font_small.render("WAVEFORM", True, self._SCOPE_PINK),
+                         (x + 6, y + 2))
+        wave = getattr(self.synth, "last_wave", None) if self.synth else None
+        mid = y + fh // 2
+        pygame.draw.line(self.screen, (30, 33, 40), (x + 2, mid), (x + w - 2, mid))
+        if wave is None or len(wave) < 2:
+            return
+        amp = (fh - 10) * 0.5
+        xs = x + 2 + np.arange(len(wave)) * (w - 4) / (len(wave) - 1)
+        ys = mid - np.clip(wave, -1.0, 1.0) * amp
+        pts = np.column_stack((xs, ys)).astype(np.int32).tolist()
+        pygame.draw.lines(self.screen, (120, 235, 170), False, pts, 1)
+
+    def _focus_lift(self, x, y, w, fh):
+        """Intake/exhaust valve lift over the 720-deg cycle + live phase cursor
+        (same raised-cosine lift model the animated valvetrain uses)."""
+        self.screen.blit(self.font_small.render("VALVE LIFT", True, self._SCOPE_PINK),
+                         (x + 6, y + 2))
+        base = y + fh - 5
+        amp = fh - 18
+        ang = np.arange(0, 720, 6, dtype=np.float64)
+        for open_deg, dur, col in ((700.0, 240.0, (110, 196, 255)),
+                                   (500.0, 230.0, (255, 146, 110))):
+            t = ((ang - open_deg) % 720.0) / dur
+            lift = np.where(t <= 1.0, 0.5 * (1.0 - np.cos(2 * math.pi * t)), 0.0)
+            xs = x + 2 + ang * (w - 4) / 720.0
+            ys = base - lift * amp
+            pts = np.column_stack((xs, ys)).astype(np.int32).tolist()
+            pygame.draw.lines(self.screen, col, False, pts, 1)
+        phi = self.sim.cycle_phase_deg(0)
+        cx = int(x + 2 + phi * (w - 4) / 720.0)
+        pygame.draw.line(self.screen, (200, 206, 216), (cx, y + 14), (cx, base), 1)
+
+    def _focus_press(self, x, y, w, fh):
+        """Cylinder-1 pressure over the 720-deg cycle (log scale) + live cursor."""
+        self.screen.blit(self.font_small.render("CYL PRESSURE", True, self._SCOPE_PINK),
+                         (x + 6, y + 2))
+        sim = self.sim
+        cyl = sim.engine.cylinders[0]
+        p_man = sim._manifold_pressure()
+        ve = sim._volumetric_efficiency()
+        burning = sim.ignition_on and not sim._fuel_cut and not sim._shift_cut
+        ang = np.arange(0, 721, 8, dtype=np.float64)
+        p = np.array([sim._cylinder_pressure(cyl, a, p_man, burning, ve)
+                      for a in ang])
+        logp = np.log10(np.maximum(p, 1e3))
+        lo, hi = math.log10(0.1 * 101325.0), max(float(logp.max()), 6.0)
+        norm = np.clip((logp - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+        base = y + fh - 5
+        xs = x + 2 + ang * (w - 4) / 720.0
+        ys = base - norm * (fh - 18)
+        pts = np.column_stack((xs, ys)).astype(np.int32).tolist()
+        pygame.draw.lines(self.screen, (235, 200, 120), False, pts, 1)
+        phi = sim.cycle_phase_deg(0)
+        cx = int(x + 2 + phi * (w - 4) / 720.0)
+        pygame.draw.line(self.screen, (200, 206, 216), (cx, y + 14), (cx, base), 1)
+
     def _draw_scope(self, x, y, w, h, label):
         """Per-cylinder exhaust-flow scope: ONE translucent orange trace per
         cylinder.  The whole 720-deg cycle maps across the width with the pulses
@@ -4747,10 +4859,11 @@ class App:
         scope_h = max(34, min(74, int(status_y1 - 10 - y)))
         chart_x, chart_w = rect.x + 24, rect.width - 48
         if self.telemetry_mode:                  # Forza: no scope at all, just a frame
+            self._scope_tile_rects = {}
             pygame.draw.rect(self.screen, (12, 13, 16), (chart_x, y, chart_w, scope_h))
             pygame.draw.rect(self.screen, (44, 48, 56), (chart_x, y, chart_w, scope_h), 1)
         else:
-            self._draw_scope(chart_x, y, chart_w, scope_h, "TOTAL EXHAUST FLOW")
+            self._draw_focus_scope(chart_x, y, chart_w, scope_h)
         row1 = [("IGNITION", sim.ignition_on, GOOD, WARN),
                 ("STARTER", sim.starter_engaged, ACCENT, DIM),
                 ("REV LIMIT", sim._fuel_cut, WARN, DIM)]
