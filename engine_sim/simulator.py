@@ -95,8 +95,12 @@ class Simulator:
         self._cut_mask = np.zeros(engine.num_cylinders, dtype=bool)
         self._cycle_n = 0               # 720-deg cycle counter (rotates the mask)
         # --- thermal state (drives cold friction, fast idle and audio timbre) ---
-        self.coolant_c = 20.0           # coolant temperature (deg C, ambient start)
-        self.oil_c = 20.0               # oil temperature (lags the coolant)
+        # Start WARMED THROUGH: a cold start means ~2 minutes of thick-oil drag +
+        # fast idle before the car feels right — realistic, but a bad default for
+        # a sim you open to PLAY.  The dynamics still live (temps climb under
+        # load, cool off when parked); set these to ~20 for a true cold start.
+        self.coolant_c = 88.0           # coolant temperature (deg C)
+        self.oil_c = 85.0               # oil temperature (lags the coolant)
 
         # precompute per-cylinder cycle offset in radians of the *cycle*
         self._offset_deg = np.array([c.cycle_offset_deg for c in engine.cylinders])

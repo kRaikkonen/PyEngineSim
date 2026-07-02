@@ -127,7 +127,7 @@ TR_ZH = {
     "Touch": "触屏", "Touch OFF": "关闭触屏",
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
-    "Lang": "语言", "Pops": "放炮", "Slow-mo": "慢动作", "Slow": "慢",
+    "Lang": "语言", "Pops": "放炮", "Slip": "打滑", "Slow-mo": "慢动作", "Slow": "慢",
     "off": "关", "Firing order:": "点火顺序:",
     # gauges / readouts
     "RPM": "转速", "TORQUE": "扭矩", "POWER": "功率", "THROTTLE": "油门",
@@ -366,6 +366,7 @@ class App:
         self.telemetry = None
         self.telemetry_mode = False
         self.low_quality = ON_ANDROID  # phones default to the lighter render
+        self.traction_on = False       # tyre-slip dynamics: OPT-IN (Slip toggle)
         self.forza_ultra = False  # draw NOTHING (just audio) — max perf for Forza play
         self.g_spatial = False    # drift the spatial dot from Forza G-force
         self.slow_mo = 1.0        # 1.0 normal .. 0.001 = 1000x slow motion
@@ -460,6 +461,10 @@ class App:
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
              lambda: sy.pops_on, 1),
+            # tyre-slip dynamics (friction circle + wheelspin): OPT-IN — the grip
+            # cap changes launch feel a lot, so it stays off unless asked for
+            (T("Slip"), lambda: setattr(self, "traction_on", not self.traction_on),
+             lambda: self.traction_on, 1),
             ("mph" if self.speed_mph else "km/h",
              lambda: setattr(self, "speed_mph", not self.speed_mph),
              lambda: self.speed_mph, 1),
@@ -1204,6 +1209,9 @@ class App:
         # trajectory shift (the flywheel smooths it; audio is independent).  Normal
         # mode keeps the fine 80 for full fidelity.
         self.sim.substep_cap = 24 if self.low_quality else 80
+        # tyre-slip dynamics follow the toggle (re-pushed every frame so it
+        # survives engine swaps, which rebuild the drivetrain)
+        self.sim.drivetrain.traction_model = self.traction_on
         if self.telemetry_mode:
             self._update_telemetry(dt)
         else:
@@ -4220,6 +4228,13 @@ class App:
     _SCOPE_PINK = (238, 148, 196)          # the design sheet's pixel-pink caps
 
     def _draw_focus_scope(self, x, y, w, h):
+        # ADAPTIVE: the channel tiles need vertical room — when the gauges panel
+        # squeezes the scope (small h), skip the tiles and show the plain flow
+        # scope full-height instead of overlapping the status rows below.
+        if h < 56:
+            self._scope_tile_rects = {}
+            self._draw_scope(x, y, w, h, "EXHAUST FLOW")
+            return
         tile_h = 16
         fh = max(24, h - tile_h - 2)       # focus window height
         chan = self._scope_chan
@@ -4811,8 +4826,6 @@ class App:
             ("IN AFR", f"{t['afr']:.1f}"),
             ("EX O2", f"{t['o2_pct']:.1f} %"),
             ("FUEL", f"{self._fuel_lph:.1f} L/h"),
-            ("H2O", f"{getattr(sim, 'coolant_c', 20.0):.0f} °C"),
-            ("OIL", f"{getattr(sim, 'oil_c', 20.0):.0f} °C"),
         ]
         col_lab = [24, 220]                            # local x within the block
         col_rt = [200, rect.width - 26]                # values right-aligned per column
@@ -4851,7 +4864,9 @@ class App:
             econ = f"{mpg:.1f} mpg · {l100:.1f} L/100km"
         else:
             econ = "-- mpg · -- L/100km"
-        line2 = f"{econ} · {T('Oil')} {self._oil_total_l * 1000.0:.0f} mL"
+        line2 = (f"{econ} · {T('Oil')} {self._oil_total_l * 1000.0:.0f} mL"
+                 f" · {getattr(sim, 'coolant_c', 88.0):.0f}/"
+                 f"{getattr(sim, 'oil_c', 85.0):.0f}°C")
         self.screen.blit(self.font_small.render(line2, True, ACCENT), (rect.x + 24, y))
         y += 19
 

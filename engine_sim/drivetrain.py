@@ -68,6 +68,9 @@ class Drivetrain:
         self.tire_mu = getattr(engine, "tire_mu", 1.05) if engine is not None else 1.05
         self.spin = 0.0                   # m/s of wheelspin (surface - road speed)
         self._m_drive = 40.0              # equiv. mass of wheels+driveline at the tread
+        # OPT-IN: the grip cap changes launch/accel feel a lot, so the slip
+        # dynamics are OFF by default (the Slip toolbar toggle enables them).
+        self.traction_model = False
         self._prop_k = 0.0
         if self.is_aircraft and engine is not None:
             # size the propeller drag so the engine settles near ~0.9 redline at
@@ -398,8 +401,13 @@ class Drivetrain:
         # pushing the car; while sliding the tread only gives ~85% of the static
         # grip (kinetic < static, the classic breakaway), and the spin decays as
         # the surplus disappears (grip re-hooks).
-        f_grip = self.tire_mu * 0.55 * self.mass * G
-        f_kin = 0.85 * f_grip                    # sliding (kinetic) grip < static
+        if not self.traction_model:
+            self.spin = 0.0                      # slip dynamics disabled (default)
+            f_grip = float("inf")
+        else:
+            # driven axle ~80% effective under launch load transfer
+            f_grip = self.tire_mu * 0.80 * self.mass * G
+        f_kin = 0.92 * f_grip                    # sliding (kinetic) grip < static
         if self.spin > 0.0 or wheel_force > f_grip:
             # SLIDING: while the tread slips, the road always receives kinetic
             # friction (the spinning wheels' energy is what pushes the car), and

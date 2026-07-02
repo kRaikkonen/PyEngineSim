@@ -1182,8 +1182,11 @@ class Synthesizer:
                     harmonics=[(1, 1.0), (2, 0.62), (3, 0.42), (4, 0.30),
                                (5, 0.20), (6, 0.13), (8, 0.07)],
                     phase_attr="_scream_phase")
-                amp = m * (0.28 + 0.55 * load)
-                sig = sig * (1.0 - 0.38 * m) + amp * scream
+                # REINFORCE only — never duck the real pulse signal (v1 replaced
+                # 38% of it with a plain sine stack, which read as a vacuum
+                # cleaner).  The stack rides quietly under the pulses to firm up
+                # the merged-fire fundamental; the pulse model stays the voice.
+                sig = sig + (0.10 * m * (0.4 + 0.6 * load)) * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
