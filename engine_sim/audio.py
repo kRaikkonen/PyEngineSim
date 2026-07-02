@@ -438,7 +438,7 @@ class Synthesizer:
             "turbo_vol": 0.45,    # turbo spool whistle + BOV (was 0.6 -> 75%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
-            "shear": 0.10,        # tail-pipe air-shear roar at the exit (mass-flow)
+            "shear": 0.07,        # tail-pipe air-shear roar at the exit (mass-flow)
             "whine": 1.0,         # high-rpm standing-wave whine/scream amount
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
@@ -1038,7 +1038,10 @@ class Synthesizer:
                 e = chans[ci] * strength
                 noise = self._rng.standard_normal(frames)
                 chans[ci] = 0.55 * e                      # clean bang -> pipe + dry
-                fizz_chans[ci] = e * noise + 0.03 * noise  # fizz, scaled later
+                # fizz: gas-rush noise GATED by the pulse; the UNGATED floor is
+                # kept tiny — a constant hiss between pulses is what reads as a
+                # dyno-cell recording instead of a car (白噪音过大).
+                fizz_chans[ci] = e * noise + 0.015 * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -1164,7 +1167,19 @@ class Synthesizer:
             tcut = 9000.0 - 6600.0 * bf + 2000.0 * rpm_frac
             tcut = min(max(tcut, 2200.0), 11000.0)   # ~2.4-4.4k boosted .. 9-11k off
             b, a = self._bw(2, tcut)
+            pre_turbine = sig                        # tap BEFORE the turbine wheel
             sig, self._turbine_zi = lfilter(b, a, sig, zi=self._turbine_zi)
+            # WASTEGATE BYPASS: once boost reaches its target the wastegate cracks
+            # open and part of the exhaust skips the turbine entirely — that gas
+            # keeps its raw, bright pulse edge.  Crossfade a slice of the
+            # pre-turbine signal back in as the gate opens, so FULL boost gains a
+            # hard raspy layer instead of only sinking deeper into the muffle
+            # (real cars get angrier at peak boost, not woollier).  Scalar mix per
+            # block; zero extra filter state.
+            wg = min(max((bf - 0.78) / 0.22, 0.0), 1.0)   # gate opens ~78% -> 100%
+            m = 0.28 * wg
+            if m > 1e-3:
+                sig = (1.0 - m) * sig + m * pre_turbine
         self._tap("head/port", sig)
 
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw

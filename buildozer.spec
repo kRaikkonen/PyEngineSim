@@ -12,7 +12,7 @@ package.domain = com.pyenginesim
 source.dir = .
 source.include_exts = py,png,jpg,ttf,json,otf
 source.include_patterns = engine_sim/assets/*
-version = 0.2.0
+version = 0.2.2
 # scipy DROPPED: extremely painful to cross-compile with p4a, and audio.py
 # already has a pure-numpy fallback for every scipy call (_HAVE_SCIPY guards).
 # Use pygame-ce (Community Edition) for better Android GLES2 support

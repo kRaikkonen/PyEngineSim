@@ -247,16 +247,18 @@ SLIDER_DEFS = [
 ]
 
 # Firing-pulse timbre presets, cycled with V.  Each sets the single-firing tone.
+# turbulence trimmed ~28% across all voices (2026-07): the gas-noise bed was
+# loud enough to read as a dyno-cell recording; relative voice character kept.
 FIRING_VOICES = [
-    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.72, "body": 1.05,
+    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.52, "body": 1.05,
                   "crack": 0.16, "firing_pitch": 105.0}),
-    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.60, "body": 0.62,
+    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.44, "body": 0.62,
                   "crack": 0.30, "firing_pitch": 145.0}),
-    ("Deep",     {"pulse_tau": 30.0, "turbulence": 0.70, "body": 0.95,
+    ("Deep",     {"pulse_tau": 30.0, "turbulence": 0.50, "body": 0.95,
                   "crack": 0.16, "firing_pitch": 75.0}),
-    ("Raspy",    {"pulse_tau": 18.0, "turbulence": 1.15, "body": 0.50,
+    ("Raspy",    {"pulse_tau": 18.0, "turbulence": 0.85, "body": 0.50,
                   "crack": 0.30, "firing_pitch": 130.0}),
-    ("Hollow",   {"pulse_tau": 26.0, "turbulence": 0.45, "body": 0.70,
+    ("Hollow",   {"pulse_tau": 26.0, "turbulence": 0.33, "body": 0.70,
                   "crack": 0.20, "firing_pitch": 95.0}),
 ]
 
