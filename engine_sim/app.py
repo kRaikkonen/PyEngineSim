@@ -268,6 +268,12 @@ class App:
         pygame.init()
         from . import __version__
         pygame.display.set_caption(f"PyEngineSim  v{__version__}  —  by Leo")
+        try:                                  # window/taskbar icon: the hot turbo
+            icon = pygame.image.load(os.path.join(
+                os.path.dirname(__file__), "assets", "logo.png"))
+            pygame.display.set_icon(icon)
+        except Exception:
+            pass
         # The whole UI is drawn onto a fixed-size canvas, then scaled to fit a
         # freely resizable OS window — so you can drag the window to any size
         # (or maximise it) and everything scales cleanly, keeping its layout.
@@ -3694,28 +3700,48 @@ class App:
                 pygame.draw.line(sc, (206, 212, 224),
                                  (cx - dx, cy - dy), (cx + dx, cy + dy), 3)
             return
+        # soft contact shadow so every unit SITS in the bay instead of floating
+        sh = pygame.Surface((48, 10), pygame.SRCALPHA)
+        pygame.draw.ellipse(sh, (0, 0, 0, 70), (2, 2, 44, 6))
+        sc.blit(sh, (cx - 24, cy + 8))
         if kind == "tb":                                 # throttle body: live butterfly
-            r = pygame.Rect(cx - 17, cy - 9, 34, 18)
-            sc.blit(self._grad_surf(r.w, r.h, (122, 130, 144), (60, 66, 80), 4), r.topleft)
-            pygame.draw.rect(sc, (20, 22, 28), r.inflate(-6, -4), 0, border_radius=3)  # bore
-            pygame.draw.rect(sc, (40, 44, 54), r, 1, border_radius=4)
+            r = pygame.Rect(cx - 15, cy - 10, 30, 20)
+            sc.blit(self._grad_surf(r.w, r.h, (128, 136, 150), (58, 64, 78), 6), r.topleft)
+            pygame.draw.rect(sc, (40, 44, 54), r, 1, border_radius=6)
+            pygame.draw.circle(sc, (20, 22, 28), (cx, cy), 8)                # round bore
+            pygame.draw.circle(sc, (166, 172, 186), (cx, cy), 8, 1)          # bore lip
             ang = math.radians(90.0 - 80.0 * min(max(throttle, 0.0), 1.0))   # closed->open
-            dx, dy = math.cos(ang) * 12, math.sin(ang) * 6
-            pygame.draw.line(sc, (206, 212, 224), (cx - dx, cy - dy), (cx + dx, cy + dy), 3)
+            dx, dy = math.cos(ang) * 7, math.sin(ang) * 7
+            pygame.draw.line(sc, (216, 222, 234), (cx - dx, cy - dy), (cx + dx, cy + dy), 3)
             pygame.draw.circle(sc, (96, 102, 116), (cx, cy), 2)              # spindle
-        elif kind == "ic":                               # intercooler: finned core
-            r = pygame.Rect(cx - 18, cy - 8, 36, 16)
-            sc.blit(self._grad_surf(r.w, r.h, (122, 130, 144), (60, 66, 80), 3), r.topleft)
-            for fx in range(r.x + 3, r.right - 2, 3):
-                pygame.draw.line(sc, (40, 44, 54), (fx, r.y + 2), (fx, r.bottom - 2), 1)
-            pygame.draw.rect(sc, (152, 158, 172), r, 1, border_radius=3)
-        elif kind == "cat":                              # catalytic: honeycomb
-            r = pygame.Rect(cx - 16, cy - 8, 32, 16)
-            sc.blit(self._grad_surf(r.w, r.h, (132, 138, 152), (70, 76, 90), 8), r.topleft)
-            for hx in range(r.x + 5, r.right - 3, 5):
-                for hy in range(r.y + 4, r.bottom - 2, 5):
-                    pygame.draw.circle(sc, (52, 56, 68), (hx, hy), 1)
-            pygame.draw.rect(sc, (152, 158, 172), r, 1, border_radius=8)
+            pygame.draw.rect(sc, (86, 92, 106), (r.x - 3, cy - 5, 3, 10))    # TPS pod
+        elif kind == "ic":                               # intercooler: core + end tanks
+            r = pygame.Rect(cx - 20, cy - 9, 40, 18)
+            sc.blit(self._grad_surf(r.w - 12, r.h, (150, 158, 172), (84, 92, 106), 2),
+                    (r.x + 6, r.y))
+            for k in range(-2, 7):                       # diagonal intercooler hatch
+                x0 = r.x + 6 + k * 5
+                pygame.draw.line(sc, (66, 72, 86), (x0, r.bottom - 2),
+                                 (x0 + 6, r.y + 2), 1)
+            for tx in (r.x, r.right - 6):                # cast end tanks
+                pygame.draw.rect(sc, (52, 56, 68), (tx, r.y - 1, 6, r.h + 2),
+                                 border_radius=3)
+            pygame.draw.rect(sc, (150, 156, 170), r, 1, border_radius=3)
+        elif kind == "cat":                              # catalytic: tapered capsule
+            body = [(cx - 19, cy), (cx - 13, cy - 8), (cx + 13, cy - 8),
+                    (cx + 19, cy), (cx + 13, cy + 8), (cx - 13, cy + 8)]
+            pygame.draw.polygon(sc, (108, 114, 128), body)
+            pygame.draw.polygon(sc, (140, 146, 160),  # lit upper half
+                                [(cx - 19, cy), (cx - 13, cy - 8), (cx + 13, cy - 8),
+                                 (cx + 19, cy)])
+            pygame.draw.polygon(sc, (46, 50, 60), body, 1)
+            win = pygame.Rect(cx - 8, cy - 4, 16, 8)     # honeycomb window
+            pygame.draw.rect(sc, (222, 176, 96), win, border_radius=2)
+            for hx in range(win.x + 2, win.right - 1, 4):
+                for hy in range(win.y + 2, win.bottom - 1, 4):
+                    pygame.draw.circle(sc, (150, 108, 42), (hx, hy), 1)
+            pygame.draw.line(sc, (170, 176, 190),        # heat-shield crease
+                             (cx - 12, cy - 6), (cx + 12, cy - 6), 1)
         elif kind == "dpf":                              # diesel particulate filter
             r = pygame.Rect(cx - 17, cy - 8, 34, 16)
             sc.blit(self._grad_surf(r.w, r.h, (120, 122, 130), (58, 60, 68), 6), r.topleft)
@@ -3736,30 +3762,54 @@ class App:
             sc.blit(self._grad_surf(r.w, r.h, (96, 130, 170), (40, 62, 92), 4), r.topleft)
             pygame.draw.rect(sc, (30, 44, 60), r, 1, border_radius=4)
             pygame.draw.rect(sc, (150, 200, 240), (cx - 4, r.y - 3, 8, 4), border_radius=1)
-        elif kind == "res":                              # mid resonator (small chamber)
-            r = pygame.Rect(cx - 13, cy - 6, 26, 12)
-            sc.blit(self._grad_surf(r.w, r.h, (124, 130, 144), (58, 64, 78), 6), r.topleft)
-            pygame.draw.rect(sc, (146, 152, 166), r, 1, border_radius=6)
-        elif kind == "tail":                             # rear exhaust tip
-            pygame.draw.rect(sc, (60, 64, 76), (cx - 4, cy - 5, 14, 10), border_radius=2)
-            pygame.draw.circle(sc, (18, 20, 26), (cx + 9, cy), 4)
-            pygame.draw.circle(sc, (120, 126, 140), (cx + 9, cy), 4, 1)
-        elif kind == "muf":                              # muffler / megaphone canister
-            r = pygame.Rect(cx - 18, cy - 7, 36, 14)
-            sc.blit(self._grad_surf(r.w, r.h, (130, 136, 150), (62, 68, 82), 7), r.topleft)
-            pygame.draw.rect(sc, (150, 156, 170), r, 1, border_radius=7)
-            pygame.draw.circle(sc, (20, 22, 28), (r.right - 3, cy), 3)    # tailpipe
-        elif kind == "wg":                               # wastegate: valve + actuator
-            pygame.draw.rect(sc, (96, 102, 116), (cx - 3, cy - 16, 6, 9), border_radius=2)
-            pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 9)
+        elif kind == "res":                              # mid resonator: ribbed cylinder
+            r = pygame.Rect(cx - 14, cy - 6, 28, 12)
+            sc.blit(self._grad_surf(r.w, r.h, (128, 134, 148), (58, 64, 78), 6), r.topleft)
+            for rx in (cx - 6, cx, cx + 6):              # rolled ribs
+                pygame.draw.line(sc, (84, 90, 104), (rx, r.y + 1), (rx, r.bottom - 1), 1)
+            pygame.draw.rect(sc, (150, 156, 170), r, 1, border_radius=6)
+            for ex in (r.x - 3, r.right):                # domed end caps
+                pygame.draw.rect(sc, (96, 102, 116), (ex, cy - 4, 3, 8), border_radius=2)
+        elif kind == "tail":                             # chrome slash-cut tip
+            body = [(cx - 8, cy - 6), (cx + 8, cy - 6), (cx + 13, cy + 6), (cx - 8, cy + 6)]
+            pygame.draw.polygon(sc, (150, 158, 172), body)
+            pygame.draw.polygon(sc, (216, 224, 236),    # top chrome highlight
+                                [(cx - 8, cy - 6), (cx + 8, cy - 6),
+                                 (cx + 9, cy - 3), (cx - 8, cy - 3)])
+            pygame.draw.polygon(sc, (60, 64, 76), body, 1)
+            pygame.draw.ellipse(sc, (14, 15, 19), (cx + 4, cy - 5, 8, 11))   # dark bore
+            pygame.draw.ellipse(sc, (228, 234, 244), (cx + 4, cy - 5, 8, 11), 1)
+        elif kind == "muf":                              # muffler: fat oval + stubs
+            r = pygame.Rect(cx - 21, cy - 9, 42, 18)
+            pygame.draw.line(sc, (70, 74, 86), (r.x - 6, cy + 3), (r.x, cy + 3), 4)
+            pygame.draw.line(sc, (70, 74, 86), (r.right, cy - 3), (r.right + 6, cy - 3), 4)
+            sc.blit(self._grad_surf(r.w, r.h, (136, 142, 156), (60, 66, 80), 9), r.topleft)
+            for sx in (cx - 8, cx + 8):                  # rolled body seams
+                pygame.draw.line(sc, (92, 98, 112), (sx, r.y + 1), (sx, r.bottom - 1), 1)
+            pygame.draw.line(sc, (188, 194, 208),        # long top sheen
+                             (r.x + 5, r.y + 4), (r.right - 5, r.y + 4), 1)
+            pygame.draw.rect(sc, (150, 156, 170), r, 1, border_radius=9)
+        elif kind == "wg":                               # wastegate: actuator + valve
+            pygame.draw.rect(sc, (96, 102, 116), (cx - 2, cy - 15, 4, 8))    # rod
+            pygame.draw.ellipse(sc, (76, 82, 96), (cx - 8, cy - 21, 16, 9))  # diaphragm
+            pygame.draw.ellipse(sc, (120, 126, 140), (cx - 8, cy - 21, 16, 9), 1)
+            pygame.draw.circle(sc, (122, 128, 142), (cx, cy), 9)
             pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 9, 1)
+            pygame.draw.circle(sc, (168, 174, 188), (cx - 3, cy - 3), 3)     # gloss
             pygame.draw.circle(sc, (70, 76, 90), (cx, cy), 3)
-        elif kind == "bov":                              # blow-off valve + vent
-            pygame.draw.circle(sc, (118, 124, 138), (cx, cy), 8)
+        elif kind == "bov":                              # blow-off valve + vent trumpet
+            for k, rr in enumerate((8, 6, 4)):           # stacked spring coils
+                pygame.draw.line(sc, (110, 150, 200), (cx - rr, cy - 10 - k * 3),
+                                 (cx + rr, cy - 10 - k * 3), 2)
+            pygame.draw.circle(sc, (122, 128, 142), (cx, cy), 8)
             pygame.draw.circle(sc, (40, 44, 54), (cx, cy), 8, 1)
-            pygame.draw.polygon(sc, (180, 90, 70),
-                                [(cx + 6, cy - 5), (cx + 14, cy - 7), (cx + 14, cy + 7),
+            pygame.draw.circle(sc, (170, 176, 190), (cx - 2, cy - 2), 2)
+            pygame.draw.polygon(sc, (196, 104, 78),
+                                [(cx + 6, cy - 5), (cx + 15, cy - 8), (cx + 15, cy + 8),
                                  (cx + 6, cy + 5)])      # vent trumpet
+            pygame.draw.polygon(sc, (255, 170, 130),
+                                [(cx + 6, cy - 5), (cx + 15, cy - 8), (cx + 15, cy - 4),
+                                 (cx + 6, cy - 2)])      # trumpet highlight
 
     def _pipe(self, p0, p1, rad):
         """A short straight metallic pipe (dark casing, steel body, upper-left
@@ -3836,12 +3886,19 @@ class App:
         x0, span = bay.x + 30, bay.width - 60
         step = span / max(len(items), 1)
         xs = [int(x0 + step * (i + 0.5)) for i in range(len(items))]
-        rail_y = y - 17
-        self._pipe((xs[0], rail_y), (xs[-1], rail_y), 3)        # the rail
-        self._pipe((xs[-1], rail_y - 1),                        # thicker riser to engine
-                   (xs[-1], int(self._crank_xy[1] + self._crank_h + 4)), 5)
-        for cx in xs:                                           # drop to each unit
-            self._pipe((cx, rail_y), (cx, y - 7), 2)
+        # one INLINE run at the units' own centreline — the components sit ON the
+        # pipe like a real underfloor system (the old elevated rail + drops read
+        # as parts hanging from a clothesline).
+        self._pipe((xs[0] - 12, y), (xs[-1] + 12, y), 3)
+        # riser to the engine ONLY when no coloured exhaust plumbing will connect
+        # the row anyway (aircraft etc.) — for road cars the red down-pipe / NA
+        # header exit already tells the flow story, and the old always-on riser
+        # just crossed the last unit's label.
+        has_flow_pipes = (getattr(self, "_turbo_pts", [])
+                          or getattr(self, "_exh_exit", None) is not None)
+        if not has_flow_pipes:
+            self._pipe((xs[-1] + 12, y),
+                       (xs[-1] + 12, int(self._crank_xy[1] + self._crank_h + 4)), 4)
         tps = getattr(self, "_turbo_pts", [])
         catx = next((xs[i] for i, (n, k) in enumerate(items) if k == "cat"), None)
         icx = next((xs[i] for i, (n, k) in enumerate(items) if k == "ic"), None)
@@ -3913,21 +3970,51 @@ class App:
         pygame.draw.line(sc, (150, 110, 210), (b.right, b.y + 4), (b.right + 8, b.y + 4), 2)
 
     def _draw_cooling(self, bay):
-        """A liquid-cooling radiator on the bay's front (left) edge with two cyan
-        coolant hoses running to the block."""
+        """The cooling pack on the bay's front (left) edge: a proper crossflow
+        radiator — top/bottom header tanks, filler cap, finned core that shifts
+        WARM with the live coolant temperature — plus upper/lower hoses that
+        actually reach the block."""
         sc = self.screen
-        rad = pygame.Rect(bay.x + 6, bay.centery - 32, 11, 64)
-        sc.blit(self._grad_surf(rad.w, rad.h, (88, 108, 130), (38, 54, 72), 3), rad.topleft)
-        for fy in range(rad.y + 3, rad.bottom - 2, 3):       # core fins
-            pygame.draw.line(sc, (40, 54, 70), (rad.x + 1, fy), (rad.right - 1, fy), 1)
-        pygame.draw.rect(sc, (36, 50, 66), rad, 1, border_radius=2)
+        core = pygame.Rect(bay.x + 8, bay.centery - 46, 16, 84)
+        hot = min(max((getattr(self.sim, "coolant_c", 88.0) - 60.0) / 55.0, 0.0), 1.0)
+        # header tanks (black plastic, rounded), filler cap on the top tank
+        for ty in (core.y - 10, core.bottom):
+            pygame.draw.rect(sc, (38, 41, 50), (core.x - 2, ty, core.w + 4, 10),
+                             border_radius=4)
+            pygame.draw.rect(sc, (74, 79, 92), (core.x - 2, ty, core.w + 4, 10),
+                             1, border_radius=4)
+        pygame.draw.circle(sc, (150, 156, 170), (core.centerx, core.y - 10), 4)
+        pygame.draw.circle(sc, (52, 56, 68), (core.centerx, core.y - 10), 4, 1)
+        # core: cool blue-grey that warms toward amber as the coolant heats up
+        c_hi = (88 + int(60 * hot), 108 - int(10 * hot), 130 - int(48 * hot))
+        c_lo = (38 + int(38 * hot), 54 - int(6 * hot), 72 - int(30 * hot))
+        sc.blit(self._grad_surf(core.w, core.h, c_hi, c_lo, 2), core.topleft)
+        for fy in range(core.y + 3, core.bottom - 2, 3):     # fin rows
+            pygame.draw.line(sc, (40, 50, 64), (core.x + 1, fy), (core.right - 1, fy), 1)
+        for fx in (core.x + 5, core.x + 10):                 # crossflow tubes
+            pygame.draw.line(sc, (30, 40, 52), (fx, core.y + 1), (fx, core.bottom - 1), 1)
+        pygame.draw.rect(sc, (30, 40, 54), core, 1, border_radius=2)
+        # hoses: upper (hot, from the head) and lower (cool return) — black rubber
+        # with clamps, routed with one gentle bend each to the block
         cx, cy = self._crank_xy
-        for hy in (rad.y + 8, rad.bottom - 8):               # coolant hoses (cyan)
-            self._draw_ortho_pipe([(rad.right, hy), (rad.right + 14, hy),
-                                   (rad.right + 14, int(cy))], 2,
-                                  ((16, 44, 54), (40, 120, 140), (120, 200, 220)))
-        t = self.font_small.render(self.tr("Radiator"), True, (110, 170, 190))
-        sc.blit(t, (rad.x - 2, rad.bottom + 2))
+        top_y = core.y - 5
+        bot_y = core.bottom + 5
+        self._draw_ortho_pipe([(core.right + 2, top_y), (core.right + 20, top_y),
+                               (core.right + 20, int(cy - self._crank_h - 8))], 3,
+                              ((14, 15, 19), (52, 56, 66), (96, 102, 116)))
+        self._draw_ortho_pipe([(core.right + 2, bot_y), (core.right + 12, bot_y),
+                               (core.right + 12, int(cy + self._crank_h - 2))], 3,
+                              ((14, 15, 19), (52, 56, 66), (96, 102, 116)))
+        for hx, hy in ((core.right + 3, top_y), (core.right + 3, bot_y)):
+            pygame.draw.line(sc, (150, 156, 170), (hx, hy - 4), (hx, hy + 4), 2)
+        # end FITTINGS where the hoses head into the engine circuit, so the runs
+        # terminate in hardware instead of stopping mid-air
+        for fxx, fyy in ((core.right + 20, int(cy - self._crank_h - 8)),
+                         (core.right + 12, int(cy + self._crank_h - 2))):
+            pygame.draw.circle(sc, (96, 102, 116), (fxx, fyy), 4)
+            pygame.draw.circle(sc, (40, 44, 54), (fxx, fyy), 4, 1)
+        t = self.font_small.render(self.tr("Radiator"), True, (104, 148, 168))
+        sc.blit(t, (core.x - 4, bot_y + 8))
 
     def _draw_mgu(self, cx, cy, r, label, ring_only=False):
         """An F1 motor-generator unit: a blue-glowing electric machine with copper
@@ -4035,7 +4122,11 @@ class App:
 
         def lab(text, x, y):
             t = self.font_small.render(self.tr(text), True, (150, 158, 174))
-            self.screen.blit(t, (int(x - t.get_width() // 2), int(y)))
+            # clamp inside the bay so long labels (e.g. "Parallel Twin-turbo")
+            # never run off the panel edge or under the turbo icons
+            tx = min(max(int(x - t.get_width() // 2), bay.x + 8),
+                     bay.right - 8 - t.get_width())
+            self.screen.blit(t, (tx, int(y)))
 
         thr = min(max(sim.throttle, 0.0), 1.0)
         if ind in ("roots", "centrifugal"):           # supercharger sits on top
@@ -4109,7 +4200,8 @@ class App:
                             inlet_dir=math.pi)
             self._bay_turbo(bay.right - 44, cyv + 14, 20, spin, load, electric=etb,
                             inlet_dir=math.pi)
-            lab("Parallel Twin-turbo", bay.right - 60, cyv + 36)
+            lab("Parallel Twin-turbo", bay.right - 70, cyv - 52)   # above the pair,
+            # clear of the vertical down-pipes that cross everything below it
         else:                                          # inline: single turbo, side
             self._bay_turbo(bay.right - 50, cyv, 22, spin, load, electric=etb,
                             inlet_dir=math.pi)
@@ -4696,23 +4788,27 @@ class App:
         ve = ez('ve', t['ve_pct'])
         afr = ez('afr', t['afr'])
         o2 = ez('o2', t['o2_pct'], 0.05)
-        co2 = ez('co2', t['co2_pct'], 0.05)
         db = ez('db', self._exhaust_db())
-        # (label, value-text, fraction 0..1, danger?)
+        h2o = ez('h2o', getattr(self.sim, 'coolant_c', 88.0), 0.06)
+        oil = ez('oil', getattr(self.sim, 'oil_c', 85.0), 0.06)
+        # (label, value-text, fraction 0..1, danger?)  Seven instruments — the
+        # thermal model gives us real water/oil temps, so they get REAL dials
+        # (needle sweeps 40..130 C, red past ~105/115).
         gauges = [
             ("MAP", f"{mapk:.0f}", mapk / 250.0, mapk > 200),
             ("VE", f"{ve:.0f}%", ve / 120.0, False),
             ("AFR", f"{afr:.1f}", (afr - 10.0) / 6.0, afr < 11.5),
             ("O2", f"{o2:.1f}", o2 / 21.0, False),
-            ("CO2", f"{co2:.0f}%", co2 / 16.0, False),
+            ("H2O", f"{h2o:.0f}°", (h2o - 40.0) / 90.0, h2o > 105),
+            ("OIL", f"{oil:.0f}°", (oil - 40.0) / 90.0, oil > 115),
             ("dB", f"{db:.0f}", (db - 60.0) / 60.0, db > 108),
         ]
-        r = 30
+        r = 27
         cy = top_y + r + 6
         x0 = rect.x + 16
-        gap = (rect.width - 32) / 6.0
+        gap = (rect.width - 32) / 7.0
         fi = eng.induction != "na"
-        n_gauges = 5 if fi else 6              # last slot becomes the FI visualiser
+        n_gauges = 6 if fi else 7              # last slot becomes the FI visualiser
         for k in range(n_gauges):
             lab, val, frac, danger = gauges[k]
             self._air_gauge(x0 + gap * (k + 0.5), cy, r, frac, lab, val, danger)
@@ -4725,7 +4821,7 @@ class App:
             # Forza: freeze the turbo visualiser (only pistons + dashboard move)
             spin = 0.0 if self.telemetry_mode else self.sim.crank_angle * max(ratio, 0.4)
             load = (self.sim.boost / max(eng.boost_bar, 0.05)) if eng.boost_bar else 0.0
-            fcx, fcy = x0 + gap * 5.5, cy
+            fcx, fcy = x0 + gap * 6.5, cy
             # no inline label — the rpm/boost readouts go below, clear of the wheel
             if eng.induction == "turbo":
                 self._draw_turbo(fcx, fcy, r - 2, spin, load, label=False)
