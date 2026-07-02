@@ -271,18 +271,31 @@ class App:
         # (or maximise it) and everything scales cleanly, keeping its layout.
         self._scaled = False
         if IS_ANDROID:
-            # Force GLES 2.0 context for hardware acceleration
-            os.environ["SDL_VIDEO_GL_DRIVER"] = "gles2"
+            # NOTE: do NOT set SDL_VIDEO_GL_DRIVER here.  It expects a LIBRARY
+            # PATH (e.g. "libGLESv2.so"); a bogus value like "gles2" makes SDL's
+            # GL library load fail, EVERY window-creation attempt then fails, and
+            # the app dies on launch with no traceback.  SDL already picks the
+            # right GLES driver on Android by itself.
             os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-            # SDL2 logical-size scaling: render the fixed canvas, then let
-            # the GPU scale it to FILL the phone screen with aspect ratio preserved
-            # (fixes the "tiny in the corner" bug and drops the costly per-frame CPU smoothscale).
-            try:
-                self.window = pygame.display.set_mode(
-                    (WIDTH, HEIGHT), pygame.SCALED | pygame.FULLSCREEN | pygame.DOUBLEBUF)
-                self._scaled = True
-            except Exception:
-                self.window = pygame.display.set_mode((WIDTH, HEIGHT))
+            # SDL2 logical-size scaling: render the fixed canvas, then let the
+            # GPU scale it to FILL the phone screen with aspect ratio preserved
+            # (fixes the "tiny in the corner" bug and drops the costly per-frame
+            # CPU smoothscale).  Fall back progressively — a device that rejects
+            # SCALED still gets a plain fullscreen, then a bare window; never die
+            # in display init.
+            self.window = None
+            for flags, scaled in (
+                    (pygame.SCALED | pygame.FULLSCREEN | pygame.DOUBLEBUF, True),
+                    (pygame.FULLSCREEN, False),
+                    (0, False)):
+                try:
+                    self.window = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+                    self._scaled = scaled
+                    break
+                except Exception:
+                    continue
+            if self.window is None:                    # absolute last resort
+                self.window = pygame.display.set_mode((0, 0))
         else:
             self.window = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         self.screen = pygame.Surface((WIDTH, HEIGHT))
