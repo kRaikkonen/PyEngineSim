@@ -60,6 +60,14 @@ class Drivetrain:
 
         self.c_roll = 0.014               # rolling resistance coefficient
         self.c_aero = 0.5 * 1.2 * 0.31 * 2.2   # 0.5*rho*Cd*A
+        # --- tyres: the missing link between clutch and road.  Drive force is
+        # capped by the driven axle's friction circle; anything beyond it SPINS
+        # the wheels (self.spin = wheel-surface speed above road speed), the
+        # engine unloads (revs flare), and the car only receives the (lower)
+        # kinetic-friction force until the spin dies down.
+        self.tire_mu = getattr(engine, "tire_mu", 1.05) if engine is not None else 1.05
+        self.spin = 0.0                   # m/s of wheelspin (surface - road speed)
+        self._m_drive = 40.0              # equiv. mass of wheels+driveline at the tread
         self._prop_k = 0.0
         if self.is_aircraft and engine is not None:
             # size the propeller drag so the engine settles near ~0.9 redline at
@@ -351,11 +359,14 @@ class Drivetrain:
 
     # ------------------------------------------------------------- physics
     def _engine_side_clutch_torque(self, engine_omega: float) -> float:
-        """Torque the clutch applies to the engine (negative = loads it down)."""
+        """Torque the clutch applies to the engine (negative = loads it down).
+        The wheel side turns at its SURFACE speed (road + wheelspin), so once the
+        tyres break loose the engine sees less resistance and flares — exactly
+        why an engine zings when the wheels light up."""
         ratio = self.total_ratio()
         if ratio == 0.0 or self.clutch <= 0.0:
             return 0.0
-        wheel_omega = self.v / self.wheel_radius
+        wheel_omega = (self.v + self.spin) / self.wheel_radius
         slip = engine_omega - wheel_omega * ratio
         return -self.clutch * self.clutch_capacity * math.tanh(slip / self.slip_scale)
 
@@ -382,14 +393,37 @@ class Drivetrain:
         engine_t = -self._engine_side_clutch_torque(engine_omega)  # wheel-driving
         wheel_force = (engine_t * ratio) / self.wheel_radius if ratio else 0.0
 
-        # Road load + brakes always oppose motion.
+        # --- tyre friction circle: the driven axle (~55% of weight) can only
+        # pass mu*N to the road.  Demand beyond that spins the wheels instead of
+        # pushing the car; while sliding the tread only gives ~85% of the static
+        # grip (kinetic < static, the classic breakaway), and the spin decays as
+        # the surplus disappears (grip re-hooks).
+        f_grip = self.tire_mu * 0.55 * self.mass * G
+        f_kin = 0.85 * f_grip                    # sliding (kinetic) grip < static
+        if self.spin > 0.0 or wheel_force > f_grip:
+            # SLIDING: while the tread slips, the road always receives kinetic
+            # friction (the spinning wheels' energy is what pushes the car), and
+            # the clutch-vs-road imbalance is what accelerates or bleeds the spin
+            self.spin += (wheel_force - f_kin) / self._m_drive * h
+            if self.spin <= 0.0:
+                self.spin = 0.0                  # re-hooked: static grip again
+                wheel_force = min(wheel_force, f_grip)
+            else:
+                wheel_force = f_kin
+        # braking can also lock past grip; keep it simple and cap total brake force
         road = self.c_roll * self.mass * G + self.c_aero * self.v * self.v
-        brake_force = self.brake * self.max_brake_decel * self.mass
+        brake_force = min(self.brake * self.max_brake_decel * self.mass,
+                          self.tire_mu * self.mass * G)
         net = wheel_force - (road + brake_force if self.v > 0 else 0.0)
 
         self.v += net / self.mass * h
         if self.v < 0.0:
             self.v = 0.0
+
+    def wheel_surface_speed(self) -> float:
+        """Tread speed (m/s) — road speed plus any wheelspin.  Drives the HUD's
+        spinning-wheel animation, so lighting the tyres is VISIBLE."""
+        return self.v + self.spin
 
     # ------------------------------------------------------------- display
     @property

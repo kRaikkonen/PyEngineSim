@@ -92,6 +92,12 @@ class Engine:
 
     # combustion / loss tuning ------------------------------------------------
     heat_release_k: float = 3.0      # peak combustion pressure multiplier scale
+    # Finite burn (Wiebe): the charge releases heat over a real crank-angle
+    # window instead of an instantaneous jump at TDC.  Spark fires BEFORE TDC so
+    # peak pressure lands ~15 deg after it — real pressure traces, and spark
+    # timing becomes a live, physical parameter.
+    spark_advance_deg: float = 22.0  # ignition before combustion TDC (deg)
+    burn_duration_deg: float = 55.0  # 10-90% heat release window (deg)
     # Torque-only trim for FORCED-INDUCTION cars whose open-loop boost torque runs
     # high vs the real car.  1.0 = no change.  Applied to crank torque ONLY (never
     # the audio), and BLENDED BY BOOST: full effect at peak boost, none off-boost
@@ -112,6 +118,7 @@ class Engine:
     vehicle_mass: float = 1250.0     # kg
     wheel_radius: float = 0.31       # m
     clutch_capacity: float = 340.0   # N*m the clutch can transmit
+    tire_mu: float = 1.05            # driven-tyre friction coefficient (traction cap)
     # transmission type sets the *shift feel*:
     #   "dct"    dual-clutch  -> fast, seamless, rev-matched (no kick)
     #   "single" single-clutch automated manual (Aventador ISR, F1 'box) ->

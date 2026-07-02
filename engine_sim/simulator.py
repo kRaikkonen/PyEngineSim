@@ -68,7 +68,10 @@ class Simulator:
         self._fuel_cut = False          # rev-limiter state (with hysteresis)
         self._shift_cut = False         # ignition cut during a gearshift
         self.boost = 0.0                # forced-induction boost (bar gauge)
-        self._idle_trim = engine.idle_air_base  # idle-governor air, 0..~0.3
+        # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
+        # (extra air/fuel while the block is at ambient) so a cold engine catches
+        # on the starter despite the thick-oil friction, just like a real ECU.
+        self._idle_trim = engine.idle_air_base * 1.6
         self.hybrid_on = True           # electric-motor assist enabled (hybrids)
         # Max physics sub-steps per frame.  The crank-angle integration sub-steps
         # for torque-pulse resolution; the flywheel smooths pulses at high rpm so a
@@ -82,6 +85,18 @@ class Simulator:
         self.friction_torque = 0.0
         self.motor_torque = 0.0         # electric-motor assist torque (hybrids)
         self.cylinder_pressure = np.full(engine.num_cylinders, P_ATM)
+        # Per-cylinder blowdown pressure, captured as each cylinder's exhaust
+        # valve actually opens — the audio reads THESE, so every cylinder's pulse
+        # carries its own real thermodynamic state (a limiter-cut or misfiring
+        # cylinder goes quiet by physics, not by a special case).
+        self.last_blowdown = np.full(engine.num_cylinders, P_ATM)
+        # SOFT rev limiter: cut a ROTATING subset of cylinders (the real-world
+        # "brap-brap" stutter) instead of silencing the whole engine.
+        self._cut_mask = np.zeros(engine.num_cylinders, dtype=bool)
+        self._cycle_n = 0               # 720-deg cycle counter (rotates the mask)
+        # --- thermal state (drives cold friction, fast idle and audio timbre) ---
+        self.coolant_c = 20.0           # coolant temperature (deg C, ambient start)
+        self.oil_c = 20.0               # oil temperature (lags the coolant)
 
         # precompute per-cylinder cycle offset in radians of the *cycle*
         self._offset_deg = np.array([c.cycle_offset_deg for c in engine.cylinders])
@@ -206,13 +221,19 @@ class Simulator:
         driver's foot is off the throttle (just like a real idle-air valve)."""
         eng = self.engine
         if self.throttle < 0.05 and self.ignition_on and not self._fuel_cut:
-            err = eng.idle_rpm - self.rpm
+            # FAST IDLE while cold (the ECU holds extra air until warmed through)
+            coldness = min(max((75.0 - self.coolant_c) / 55.0, 0.0), 1.0)
+            err = eng.idle_rpm * (1.0 + 0.22 * coldness) - self.rpm
             self._idle_trim += err * eng.idle_gain * h
         else:
             # Foot on the throttle: relax the trim back toward its base level.
             self._idle_trim += (eng.idle_air_base - self._idle_trim) * 3.0 * h
-        # Clamp to a sane idle-air range.
-        self._idle_trim = min(max(self._idle_trim, 0.0), 0.35)
+        # Clamp to a sane idle-air range.  0.5 max: some small engines simply
+        # need more idle air than the old 0.35 ceiling allowed to actually REACH
+        # their target idle (the EA888 sat pinned at the stop, idling at ~580
+        # against a 850 target); the integral flips sign at the target, so a
+        # higher travel limit cannot overshoot.
+        self._idle_trim = min(max(self._idle_trim, 0.0), 0.5)
 
     def _volumetric_efficiency(self) -> float:
         """How well the cylinders breathe at the current rpm (0..ve_max).
@@ -243,30 +264,41 @@ class Simulator:
         theta = (phi % 360.0) * DEG          # crank angle from TDC for kinematics
         v_now = cyl.volume(theta)
 
-        if phi < POWER:
-            # Compression stroke: adiabatic from the trapped manifold charge.
-            return p_manifold * (v_bdc / v_now) ** GAMMA
-
         if phi < EXHAUST:
-            # Power stroke: start from the compressed (and possibly burned) state
-            # at TDC, then expand adiabatically.
-            p_compressed = p_manifold * (v_bdc / cyl.clearance_volume) ** GAMMA
-            if combusting:
-                # Heat release scales with trapped charge mass (~ manifold
-                # pressure x how well the engine is breathing): a near-empty or
-                # badly-breathing cylinder barely burns, a full one makes a big
-                # pressure spike.  The charge-mass factor is CLAMPED at the NA
-                # wide-open value (1.0): boost already raises p_compressed
-                # linearly, so letting it ALSO grow this multiplier made p_peak
-                # scale with manifold pressure SQUARED — wildly overpowering
-                # forced-induction (and especially high-CR diesel) engines.
-                # Capping it keeps the physical LINEAR torque gain with boost and
-                # leaves every NA engine (ratio <= 1 at WOT) untouched.
-                k = 1.0 + self.engine.heat_release_k * (p_manifold / P_ATM) * ve
-                p_peak = min(p_compressed * k, P_PEAK_CAP)   # physical pressure ceiling
+            # Compression + power strokes share the MOTORING (no-burn) trace:
+            # adiabatic from the trapped manifold charge, for any piston position.
+            p_mot = p_manifold * (v_bdc / v_now) ** GAMMA
+            if not combusting:
+                return p_mot
+            # WIEBE finite burn: the charge releases heat over a real crank-angle
+            # window (spark BEFORE TDC, ~55 deg 10-90% burn) instead of an
+            # instantaneous pressure jump at TDC.  xb ramps 0 -> 1, and the
+            # pressure rides the motoring trace scaled by the released fraction:
+            #     p = p_mot * (1 + (k - 1) * xb)
+            # Once the burn completes (xb = 1) this is EXACTLY the old
+            # instant-burn curve, so per-car torque calibration is preserved;
+            # what changes is the (previously square) rise around TDC — peak
+            # pressure now lands ~15 deg ATDC like a real trace, pressure climbs
+            # slightly BEFORE TDC (ignition), and spark_advance_deg is a live,
+            # physical parameter.
+            eng = self.engine
+            k = 1.0 + eng.heat_release_k * (p_manifold / P_ATM) * ve
+            # Spark ADVANCE MAP: flame speed is roughly constant in TIME, so the
+            # ECU advances the spark as rpm rises (more crank-degrees pass per
+            # millisecond) and runs only ~10 deg BTDC at idle — a fixed advance
+            # would waste idle torque on pre-TDC negative work.  Burn duration in
+            # CRANK DEGREES stretches with rpm for the same reason.
+            rf = min(self.rpm / 3600.0, 1.0)
+            adv = eng.spark_advance_deg * (0.38 + 0.62 * rf)
+            dur = eng.burn_duration_deg * (0.55 + 0.45 * rf)
+            t = (phi - (COMBUSTION_TDC - adv)) / max(dur, 5.0)
+            if t <= 0.0:
+                xb = 0.0
+            elif t >= 1.0:
+                xb = 1.0
             else:
-                p_peak = p_compressed
-            return p_peak * (cyl.clearance_volume / v_now) ** GAMMA
+                xb = 1.0 - math.exp(-6.9 * t * t * t)   # Wiebe, a=6.9 m=2
+            return min(p_mot * (1.0 + (k - 1.0) * xb), P_PEAK_CAP)
 
         # Exhaust stroke: blown down to ~atmospheric (slight back-pressure).
         return 1.05 * P_ATM
@@ -280,14 +312,22 @@ class Simulator:
         eng = self.engine
         p_manifold = self._manifold_pressure()
         crank_deg = math.degrees(self.crank_angle)
-        combusting = self.ignition_on and not self._fuel_cut and not self._shift_cut
+        # Per-cylinder combustion: the soft limiter cuts only the cylinders in
+        # the rotating _cut_mask, so the rest keep firing (the "brap" stutter).
+        base_burn = self.ignition_on and not self._shift_cut
+        cutting = self._fuel_cut
         ve = self._volumetric_efficiency()
 
         total = 0.0
         for i, cyl in enumerate(eng.cylinders):
             phi = (crank_deg + self._offset_deg[i]) % 720.0
-            p = self._cylinder_pressure(cyl, phi, p_manifold, combusting, ve)
+            burn_i = base_burn and not (cutting and self._cut_mask[i])
+            p = self._cylinder_pressure(cyl, phi, p_manifold, burn_i, ve)
             self.cylinder_pressure[i] = p
+            # capture the REAL blowdown pressure as this cylinder's exhaust valve
+            # cracks open — the audio synth keys each pulse off this value
+            if EXHAUST_OPEN <= phi < EXHAUST_OPEN + 16.0:
+                self.last_blowdown[i] = p
 
             theta = (phi % 360.0) * DEG
             # Net force on the piston crown (gas above, ~atmosphere in the case).
@@ -317,8 +357,13 @@ class Simulator:
         # without fighting the idle governor.
         w_idle = eng.idle_rpm * TWO_PI / 60.0
         over_idle = max(abs(w) - w_idle, 0.0)
-        mag = (eng.friction_static
-               + eng.friction_linear * abs(w)
+        # cold oil is thick — a VISCOUS effect, so it mostly scales the
+        # omega-proportional shear term (up to +60%) and only nudges the static
+        # rub: cranking stays easy (low omega = little shear), but a cold engine
+        # feels sluggish at speed and drinks more fuel until it warms through.
+        cold = min(max((80.0 - self.oil_c) / 60.0, 0.0), 1.0)
+        mag = (eng.friction_static * (1.0 + 0.25 * cold)
+               + eng.friction_linear * (1.0 + 0.6 * cold) * abs(w)
                + eng.friction_quad * w * w
                + eng.engine_brake_k * closed * over_idle)
         return math.copysign(mag, w) if w != 0.0 else 0.0
@@ -343,6 +388,32 @@ class Simulator:
             self._fuel_cut = True
         elif rpm < eng.redline_rpm - 300.0:
             self._fuel_cut = False
+        # SOFT limiter: cut a rotating 3/4 of the cylinders (all of them if the
+        # overshoot keeps growing) — the survivors keep firing, which is the real
+        # limiter "brap-brap"; rotation spreads the heat like a real ECU.
+        n = eng.num_cylinders
+        if self._fuel_cut and n > 1:
+            if rpm > eng.redline_rpm + 160.0:
+                self._cut_mask[:] = True
+            else:
+                self._cut_mask[:] = False
+                kcut = max(1, int(round(n * 0.75)))
+                start = self._cycle_n % n
+                for j in range(kcut):
+                    self._cut_mask[(start + j) % n] = True
+        else:
+            self._cut_mask[:] = self._fuel_cut   # 1-cyl engines: plain cut
+
+        # --- thermal state: waste heat warms the coolant, the radiator +
+        # thermostat pull it back; oil chases the coolant with lag.  Drives cold
+        # friction, fast idle and the exhaust's cold timbre.
+        p_kw = max(self.gas_torque, 0.0) * max(self.omega, 0.0) / 1000.0
+        running = self.omega > eng.idle_rpm * TWO_PI / 60.0 * 0.35
+        q_in = (0.55 + min(p_kw, 27.0) / 22.0) if running else 0.0
+        q_out = 0.010 * (self.coolant_c - 20.0) + 0.10 * max(self.coolant_c - 92.0, 0.0)
+        self.coolant_c = min(max(self.coolant_c + (q_in - q_out) * dt, 15.0), 130.0)
+        oil_tgt = self.coolant_c + 6.0 * min(p_kw / 150.0, 1.0) - 4.0
+        self.oil_c += (oil_tgt - self.oil_c) * min(0.015 * dt, 1.0)   # tau ~ 1 min
 
         # During a gearshift, cut combustion and rev-match the engine to the
         # target gear (so an upshift falls instead of bouncing the limiter).
@@ -392,6 +463,8 @@ class Simulator:
             self.crank_angle += self.omega * h
             self.drivetrain.step(self.omega, h)
 
+        if self.crank_angle >= 2.0 * TWO_PI:          # completed a 720-deg cycle
+            self._cycle_n += 1                        # (rotates the limiter mask)
         self.crank_angle %= (2.0 * TWO_PI)  # keep within one 720 deg cycle
 
     # ------------------------------------------------------------ audio

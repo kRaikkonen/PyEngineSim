@@ -4136,9 +4136,11 @@ class App:
             self._oil_total_l += (sim.rpm / 60.0) / FPS * 2.2e-7 * load
         # odometer: integrate road/air speed -> total distance (km)
         self._odo_km += getattr(sim.drivetrain, "v", 0.0) / FPS / 1000.0
-        # spin the road wheel at the real wheel rate (v / wheel_radius)
+        # spin the road wheel at the TREAD rate (road speed + wheelspin), so
+        # lighting the tyres up visibly over-spins the wheel animation
         dt = sim.drivetrain
-        self._wheel_ang += (dt.v / max(dt.wheel_radius, 0.1)) / FPS
+        surf_v = dt.wheel_surface_speed() if hasattr(dt, "wheel_surface_speed") else dt.v
+        self._wheel_ang += (surf_v / max(dt.wheel_radius, 0.1)) / FPS
 
     def _draw_ignition_bank(self, x, y, w, lights=True):
         """One light per cylinder, flashing as that cylinder fires (power stroke) —
@@ -4809,10 +4811,12 @@ class App:
             ("IN AFR", f"{t['afr']:.1f}"),
             ("EX O2", f"{t['o2_pct']:.1f} %"),
             ("FUEL", f"{self._fuel_lph:.1f} L/h"),
+            ("H2O", f"{getattr(sim, 'coolant_c', 20.0):.0f} °C"),
+            ("OIL", f"{getattr(sim, 'oil_c', 20.0):.0f} °C"),
         ]
         col_lab = [24, 220]                            # local x within the block
         col_rt = [200, rect.width - 26]                # values right-aligned per column
-        fh = 3 * 18
+        fh = ((len(flow) + 1) // 2) * 18
 
         def _build_flow():
             surf = pygame.Surface((rect.width, fh), pygame.SRCALPHA)

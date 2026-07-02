@@ -594,6 +594,7 @@ class Synthesizer:
         self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
+        self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -965,10 +966,15 @@ class Synthesizer:
         omega = sim.omega
         # time_scale < 1 = slow motion (the whole engine note slows + drops)
         dps = math.degrees(omega) / self.sample_rate * self.time_scale
-        # (Step 5) cold-start: the engine warms over ~8 s of running (note brightens
-        # as it warms); it slowly re-cools when shut off.  Drives the head-LP above.
+        # (Step 5) cold-start timbre now reads the REAL coolant temperature from
+        # the physics' thermal model (was a private 8-second timer): the note
+        # stays dark until the engine has actually warmed through, and re-cools
+        # with the block when parked.  Falls back to the old timer if absent.
         dt_blk = frames / self.sample_rate
-        if sim.ignition_on and sim.rpm > 300.0:
+        cool = getattr(sim, "coolant_c", None)
+        if cool is not None:
+            self._cold = min(max((70.0 - cool) / 50.0, 0.0), 1.0)
+        elif sim.ignition_on and sim.rpm > 300.0:
             self._cold = max(0.0, self._cold - dt_blk / 8.0)
         else:
             self._cold = min(1.0, self._cold + dt_blk / 40.0)
@@ -1021,6 +1027,16 @@ class Synthesizer:
                 if use_voice:                                # geometry voicing
                     amp_j *= 1.0 + (voice.amp[j] - 1.0) * cv
                     edge_j = 1.0 + (voice.edge[j] - 1.0) * cv
+                # PHYSICS-DRIVEN per-cylinder amplitude: each pulse is scaled by
+                # the blowdown pressure the physics CAPTURED as this cylinder's
+                # exhaust valve actually opened.  A soft-limiter-cut cylinder only
+                # pumped air (no burn -> ~1/k the pressure), so it goes quiet by
+                # thermodynamics — the limiter "brap" and any per-cylinder
+                # imbalance fall out of the simulation instead of a special case.
+                lb = getattr(sim, "last_blowdown", None)
+                if lb is not None and j < len(lb):
+                    rel = lb[j] / max(p_open + 1.05 * P_ATM, 2.0 * P_ATM)
+                    amp_j *= min(max(rel, 0.06), 1.5) ** 0.8
                 phi = np.mod(crank + off + self._header_offset[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
@@ -1149,6 +1165,25 @@ class Synthesizer:
         if ov > 0.03 and dps > 1e-12:
             nz_b = self._rng.standard_normal(frames)
             sig = sig + (0.55 * ov) * np.abs(wet) * nz_b
+        # --- F1 / race-engine HIGH-RPM REGIME --------------------------------
+        # Above ~600 fires/second the discrete blowdown pulses are only ~50
+        # samples apart: they physically merge into a continuous tone, and the
+        # per-pulse model degenerates — the reason an F1 car sounded nothing
+        # like one.  Crossfade in a harmonic STACK at the firing frequency (the
+        # scream IS its harmonic series at these speeds), keeping the pulse
+        # model underneath for body.  Gated to genuine screamers (redline >=
+        # 11 krpm) so ordinary engines are untouched.
+        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0:
+            fire_hz = sim.rpm * len(self._offsets) / 120.0
+            if fire_hz > 600.0:
+                m = min((fire_hz - 600.0) / 500.0, 1.0)
+                scream = self._whine(
+                    fire_hz, frames,
+                    harmonics=[(1, 1.0), (2, 0.62), (3, 0.42), (4, 0.30),
+                               (5, 0.20), (6, 0.13), (8, 0.07)],
+                    phase_attr="_scream_phase")
+                amp = m * (0.28 + 0.55 * load)
+                sig = sig * (1.0 - 0.38 * m) + amp * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
