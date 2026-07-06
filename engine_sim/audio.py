@@ -417,16 +417,18 @@ class Synthesizer:
         # sound of a bench dyno with the mic at the header.  A car on the street
         # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 1.28,         # combustion bang level
+            "dry": 1.44,         # combustion bang level (was cut to 1.28 — too far;
+                                 #   engines lost their DRY combustion punch/fizz)
             "res1": 0.15,         # primary pipe resonance (runner)
-            "res2": 0.36,         # secondary pipe resonance (full system)
+            "res2": 0.33,         # secondary pipe resonance (full system)
             "crack": 0.12,        # attack snap (explosion punch)
             "attack_deg": 9.0,    # onset softness (deg): bigger = blunter attack
             "body": 1.60,         # thickness / low-end of each firing (浑厚)
             "drive": 0.40,        # saturation -> tight, solid 'power chord' grip
             "firing_pitch": 90.0,  # Hz, pitch of that firing body
             "pulse_tau": 22.0,    # blowdown decay (deg) -> firing timbre/brightness
-            "turbulence": 0.2,    # gas-rush noise on each firing
+            "turbulence": 0.34,   # gas-rush FIZZ gated by each firing (was 0.2 —
+                                  #   too little; engines lost their fizzy grit)
             "src_reverb": 0.48,   # reverb on the explosion itself (pre-pipe)
             "reverb": 0.4,       # spatial reverb mix (post, room)
             "intake": 0.22,       # induction roar level (was a bit windy)
@@ -439,7 +441,7 @@ class Synthesizer:
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
             "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
-            "turbo_vol": 0.45,    # turbo spool whistle + BOV (was 0.6 -> 75%)
+            "turbo_vol": 0.30,    # turbo spool whistle + BOV (0.45 was too loud)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "shear": 0.07,        # tail-pipe air-shear roar at the exit (mass-flow)
@@ -1075,10 +1077,11 @@ class Synthesizer:
                 e = chans[ci] * strength
                 noise = self._rng.standard_normal(frames)
                 chans[ci] = 0.55 * e                      # clean bang -> pipe + dry
-                # fizz: gas-rush noise GATED by the pulse; the UNGATED floor is
-                # kept tiny — a constant hiss between pulses is what reads as a
-                # dyno-cell recording instead of a car (白噪音过大).
-                fizz_chans[ci] = e * noise + 0.015 * noise
+                # fizz = gas-rush noise GATED by the pulse `e` (this is the GOOD,
+                # per-firing fizz — restored via a higher `turbulence`).  The
+                # UNGATED floor stays tiny (0.008): a constant hiss between pulses
+                # is the dyno-cell tell (白噪音), the gated fizz is the car.
+                fizz_chans[ci] = e * noise + 0.008 * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -1164,7 +1167,7 @@ class Synthesizer:
               * min(sim.rpm / max(sim.engine.idle_rpm * 1.5, 1.0), 1.0))  # not idling
         if ov > 0.03 and dps > 1e-12:
             nz_b = self._rng.standard_normal(frames)
-            sig = sig + (0.55 * ov) * np.abs(wet) * nz_b
+            sig = sig + (0.26 * ov) * np.abs(wet) * nz_b   # was 0.55 — too loud
         # --- F1 / race-engine HIGH-RPM REGIME --------------------------------
         # Above ~600 fires/second the discrete blowdown pulses are only ~50
         # samples apart: they physically merge into a continuous tone, and the
@@ -1245,8 +1248,11 @@ class Synthesizer:
             # whistly, low-rpm/high-boost goes deep and dull — they no longer sound
             # identical.  Off-boost it barely touches the note at any rpm.
             rpm_frac = min(sim.rpm / max(_eng.redline_rpm, 1.0), 1.0)
-            tcut = 9000.0 - 6600.0 * bf + 2000.0 * rpm_frac
-            tcut = min(max(tcut, 2200.0), 11000.0)   # ~2.4-4.4k boosted .. 9-11k off
+            # eased (2026-07): the turbine muffled turbo cars so hard they lost
+            # their combustion fizz/grit (r35 etc.).  Less boost pull-down + a
+            # higher floor keeps the dry rasp while still darkening on boost.
+            tcut = 9000.0 - 4800.0 * bf + 2200.0 * rpm_frac
+            tcut = min(max(tcut, 3400.0), 11500.0)   # ~3.4-6.4k boosted .. 9-11k off
             b, a = self._bw(2, tcut)
             pre_turbine = sig                        # tap BEFORE the turbine wheel
             sig, self._turbine_zi = lfilter(b, a, sig, zi=self._turbine_zi)
@@ -1687,11 +1693,11 @@ class Synthesizer:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
                     pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 3  # spiky 'tu' bursts
                     env = np.exp(-n / (sr * 0.20)) * self._bov_env
-                    out += (tv * 1.2) * noise * pulse * env
+                    out += (tv * 0.80) * noise * pulse * env   # was 1.2 — too loud
                     self._bov_env *= math.exp(-frames / (sr * 0.24))
                 else:
                     env = np.exp(-n / (sr * 0.09)) * self._bov_env
-                    out += (tv * 0.9) * noise * env      # clean 'pshhh'
+                    out += (tv * 0.60) * noise * env     # clean 'pshhh' (was 0.9)
                     self._bov_env *= math.exp(-frames / (sr * 0.13))
         self._prev_throttle = sim.throttle
 

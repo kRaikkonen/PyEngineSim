@@ -247,19 +247,20 @@ SLIDER_DEFS = [
 ]
 
 # Firing-pulse timbre presets, cycled with V.  Each sets the single-firing tone.
-# turbulence trimmed ~28% across all voices (2026-07): the gas-noise bed was
-# loud enough to read as a dyno-cell recording; relative voice character kept.
+# turbulence RESTORED (2026-07): the ungated hiss floor is now tiny (0.008 in
+# audio.py), so these gated-fizz values give per-firing grit back WITHOUT the
+# dyno-cell steady hiss the earlier blanket cut was chasing.
 FIRING_VOICES = [
-    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.52, "body": 1.05,
-                  "crack": 0.16, "firing_pitch": 105.0}),
-    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.44, "body": 0.62,
-                  "crack": 0.30, "firing_pitch": 145.0}),
-    ("Deep",     {"pulse_tau": 30.0, "turbulence": 0.50, "body": 0.95,
-                  "crack": 0.16, "firing_pitch": 75.0}),
-    ("Raspy",    {"pulse_tau": 18.0, "turbulence": 0.85, "body": 0.50,
-                  "crack": 0.30, "firing_pitch": 130.0}),
-    ("Hollow",   {"pulse_tau": 26.0, "turbulence": 0.33, "body": 0.70,
-                  "crack": 0.20, "firing_pitch": 95.0}),
+    ("Balanced", {"pulse_tau": 22.0, "turbulence": 0.66, "body": 1.05,
+                  "crack": 0.18, "firing_pitch": 105.0}),
+    ("Sharp",    {"pulse_tau": 14.0, "turbulence": 0.56, "body": 0.62,
+                  "crack": 0.32, "firing_pitch": 145.0}),
+    ("Deep",     {"pulse_tau": 30.0, "turbulence": 0.62, "body": 0.95,
+                  "crack": 0.18, "firing_pitch": 75.0}),
+    ("Raspy",    {"pulse_tau": 18.0, "turbulence": 1.05, "body": 0.50,
+                  "crack": 0.32, "firing_pitch": 130.0}),
+    ("Hollow",   {"pulse_tau": 26.0, "turbulence": 0.42, "body": 0.70,
+                  "crack": 0.22, "firing_pitch": 95.0}),
 ]
 
 
@@ -2805,9 +2806,9 @@ class App:
         sc.blit(pl, (cx - pl.get_width() // 2, cy + hub_r + 3))
 
     # manifold pipe colour sets — (dark casing, lit body, top sheen)
-    _EXH_COLS = ((54, 18, 14), (176, 62, 38), (230, 124, 86))   # hot exhaust = red
-    _EXH2_COLS = ((56, 32, 10), (200, 116, 32), (240, 176, 84))  # 2nd scroll = orange
-    _INT_COLS = ((14, 44, 24), (58, 152, 86), (138, 210, 156))  # cool intake = green
+    _EXH_COLS = ((46, 20, 16), (168, 72, 46), (238, 152, 104))  # hot exhaust = red
+    _EXH2_COLS = ((50, 32, 12), (196, 120, 40), (242, 184, 96))  # 2nd scroll = orange
+    _INT_COLS = ((16, 42, 28), (62, 146, 94), (150, 214, 170))  # cool intake = green
 
     def _draw_fuel_rail(self, ports):
         """A high-pressure fuel rail (amber) running along the intake ports with a
@@ -2888,10 +2889,7 @@ class App:
             if joint:
                 pygame.draw.circle(sc, cols[1], (int(p0[0]), int(p0[1])), rad + 1)
             return
-        pygame.draw.lines(sc, cols[0], False, pts, rad * 2 + 2)
-        pygame.draw.lines(sc, cols[1], False, pts, max(2, rad * 2))
-        hi = [(x - rad * 0.35, y - rad * 0.5) for x, y in pts]
-        pygame.draw.lines(sc, cols[2], False, hi, max(1, rad // 2))
+        self._tube_run(sc, [(int(x), int(y)) for x, y in pts], rad, cols)
         if joint:                                          # flange on a head boss
             jx, jy = int(p0[0]), int(p0[1])
             pygame.draw.circle(sc, (18, 20, 26), (jx, jy), rad + 4)   # dark mounting boss
@@ -2927,10 +2925,7 @@ class App:
             soft.append(raw[-1])
             raw = soft
         ipts = [(int(x), int(y)) for x, y in raw]
-        pygame.draw.lines(sc, cols[0], False, ipts, rad * 2 + 2)
-        pygame.draw.lines(sc, cols[1], False, ipts, max(2, rad * 2))
-        pygame.draw.lines(sc, cols[2], False, [(x - 1, y - 1) for x, y in ipts],
-                          max(1, rad // 2))
+        self._tube_run(sc, ipts, rad, cols)
         if joint:                                      # flange on a head boss
             x, y = ipts[0]
             pygame.draw.circle(sc, (18, 20, 26), (x, y), rad + 4)
@@ -2938,6 +2933,39 @@ class App:
             pygame.draw.circle(sc, cols[0], (x, y), rad + 1)
             pygame.draw.circle(sc, cols[1], (x, y), rad)
             pygame.draw.circle(sc, cols[2], (x - 1, y - 1), max(1, rad // 2))
+
+    @staticmethod
+    def _mix(c1, c2, t):
+        return (int(c1[0] + (c2[0] - c1[0]) * t), int(c1[1] + (c2[1] - c1[1]) * t),
+                int(c1[2] + (c2[2] - c1[2]) * t))
+
+    def _tube_run(self, sc, ipts, rad, cols):
+        """Draw a polyline as a glossy ROUND tube: dark casing, a body core that's
+        shaded darker on the lower flank, ROUNDED elbow joints (no mitre gaps),
+        and a thin bright specular ridge along the top — reads as a bent metal
+        pipe instead of a flat coloured ribbon."""
+        if len(ipts) < 2:
+            if ipts:
+                pygame.draw.circle(sc, cols[1], ipts[0], rad)
+            return
+        dark = self._mix(cols[0], (0, 0, 0), 0.15)
+        low = self._mix(cols[1], cols[0], 0.55)          # shaded underside flank
+        core = cols[1]
+        spec = self._mix(cols[2], (255, 255, 255), 0.15)  # crisp specular ridge
+        wid = max(2, rad * 2)
+        # casing + rounded joints (close every bend)
+        pygame.draw.lines(sc, dark, False, ipts, wid + 2)
+        for p in ipts:
+            pygame.draw.circle(sc, dark, p, rad + 1)
+        # lower flank (offset DOWN a touch) then the lit core over it
+        pygame.draw.lines(sc, low, False, [(x, y + 1) for x, y in ipts], wid)
+        pygame.draw.lines(sc, core, False, ipts, max(2, wid - 1))
+        for p in ipts:
+            pygame.draw.circle(sc, core, p, rad)
+        # specular ridge: thin, offset up toward the light (upper-left)
+        off = max(1, rad // 2)
+        pygame.draw.lines(sc, spec, False,
+                          [(x - off // 2, y - off) for x, y in ipts], max(1, rad // 2))
 
     def _collector_slug(self, pt, rad):
         """A brushed merge slug where runners join the collector."""
@@ -4039,7 +4067,7 @@ class App:
         sc.blit(t, (cx - t.get_width() // 2, cy + r + 2))
 
     # cool pre-turbo intake air (light blue) — (casing, body, sheen)
-    _COOL_COLS = ((18, 46, 64), (64, 134, 176), (150, 205, 235))
+    _COOL_COLS = ((20, 44, 60), (70, 138, 180), (162, 212, 240))  # coolant = blue
 
     def _draw_front_intake(self, bay, eng, intake_x, row_y):
         """The cold-air FRONT of the charge path: a body scoop -> air filter ->
