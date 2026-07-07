@@ -4429,10 +4429,10 @@ class App:
         sim = self.sim
         cyl = sim.engine.cylinders[0]
         p_man = sim._manifold_pressure()
-        ve = sim._volumetric_efficiency()
+        k = getattr(sim, "_k_burn", 3.0)
         burning = sim.ignition_on and not sim._fuel_cut and not sim._shift_cut
         ang = np.arange(0, 721, 8, dtype=np.float64)
-        p = np.array([sim._cylinder_pressure(cyl, a, p_man, burning, ve)
+        p = np.array([sim._cylinder_pressure(cyl, a, p_man, burning, k)
                       for a in ang])
         logp = np.log10(np.maximum(p, 1e3))
         lo, hi = math.log10(0.1 * 101325.0), max(float(logp.max()), 6.0)

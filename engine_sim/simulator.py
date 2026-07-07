@@ -29,8 +29,9 @@ from .drivetrain import Drivetrain
 from .units import rads_to_rpm
 
 try:                                    # white-box surrogate layer (VE tables);
-    from .surrogate import Surrogate    # guarded so a stripped install still runs
+    from .surrogate import Surrogate, LUT  # guarded so a stripped install still runs
     from .ve_model import build_ve_table
+    from .bmep_model import torque_target, build_boost_table
     _HAVE_SURROGATE = True
 except Exception:                       # pragma: no cover
     _HAVE_SURROGATE = False
@@ -74,6 +75,7 @@ class Simulator:
         self.external_load = 0.0        # N*m resisting torque (e.g. a dyno)
         self._fuel_cut = False          # rev-limiter state (with hysteresis)
         self._shift_cut = False         # ignition cut during a gearshift
+        self._dfco = False              # deceleration fuel cut-off (overrun)
         self.boost = 0.0                # forced-induction boost (bar gauge)
         # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
         # (extra air/fuel while the block is at ambient) so a cold engine catches
@@ -119,12 +121,29 @@ class Simulator:
         # Registered BEFORE the clutch-sizing sweep so that uses the same VE.
         self.surrogate = Surrogate() if _HAVE_SURROGATE else None
         self._ve_lut = None
+        self._boost_lut = None          # steady-boost target (turbine balance)
+        self._burn_C = None             # cycle-mean torque per unit (k-1)
+        self._burn_T0 = None            # motoring (k=1) cycle-mean torque
+        self._k_burn = 3.0              # live burn multiplier (solved per frame)
         if self.surrogate is not None:
             try:
                 self._ve_lut = build_ve_table(engine)
                 self.surrogate.register("ve", self._ve_lut)
             except Exception:
                 self._ve_lut = None     # fall back to the legacy Gaussian
+            try:
+                # calibrate the pulse model so k can be SOLVED against the
+                # physical BMEP target each frame (kills heat_release_k tuning)
+                self._calibrate_burn()
+            except Exception:
+                self._burn_C = self._burn_T0 = None
+            if engine.induction == "turbo" and engine.boost_bar > 0.0 \
+                    and self._ve_lut is not None:
+                try:
+                    self._boost_lut = build_boost_table(engine, self._ve_lut)
+                    self.surrogate.register("boost", self._boost_lut)
+                except Exception:
+                    self._boost_lut = None
 
         # Size the clutch so it can actually HOLD this engine.  A real clutch is
         # rated ABOVE peak torque; if the (boosted) engine makes more torque than
@@ -153,16 +172,73 @@ class Simulator:
         rpm = max(eng.idle_rpm, 1000.0)
         while rpm <= eng.redline_rpm:
             self.omega = rpm * TWO_PI / 60.0
+            p_man = self._manifold_pressure()
+            k = self._burn_k(rpm, p_man / P_ATM)   # physical burn at this point
             tot = 0.0
             for d in range(0, 720, 20):
                 self.crank_angle = d * DEG
-                tot += self._compute_torque()
+                tot += self._compute_torque(k=k, p_man=p_man)
             best = max(best, tot / 36.0)
             rpm += 200.0
         (self.throttle, self.boost, self.omega, self.crank_angle,
          self._fuel_cut, self._shift_cut) = saved
         self.cylinder_pressure[:] = P_ATM
+        self.last_blowdown[:] = P_ATM
         return best
+
+    def _calibrate_burn(self):
+        """Measure the crank-resolved pulse model ONCE at load: cycle-mean
+        torque is exactly linear in the burn multiplier, T(k) = T0 + (k-1)*C,
+        so two sweeps (motoring k=1, reference k=5) over an rpm x MAP grid give
+        C(rpm, map) and T0(rpm, map).  At runtime k is then SOLVED so the
+        cycle-mean torque equals the physical BMEP target — the burn strength
+        comes from energy accounting instead of a hand-tuned constant."""
+        eng = self.engine
+        saved = (self.throttle, self.boost, self.omega, self.crank_angle,
+                 self._fuel_cut, self._shift_cut)
+        self._fuel_cut = self._shift_cut = False
+        rpm_knots = np.linspace(max(eng.idle_rpm * 0.6, 300.0),
+                                eng.redline_rpm * 1.05, 5)
+        map_hi = max(1.10, 1.0 + getattr(eng, "boost_bar", 0.0) + 0.15)
+        map_knots = np.array([0.15, 0.55, 1.0, map_hi])
+        K_REF = 5.0
+
+        def cycle_mean(k, p_man):
+            tot = 0.0
+            for d in range(0, 720, 15):
+                self.crank_angle = d * DEG
+                tot += self._compute_torque(k=k, p_man=p_man)
+            return tot / 48.0
+
+        c_v = np.empty((len(rpm_knots), len(map_knots)))
+        t0_v = np.empty_like(c_v)
+        for i, r in enumerate(rpm_knots):
+            self.omega = float(r) * TWO_PI / 60.0
+            for j, m in enumerate(map_knots):
+                p_man = float(m) * P_ATM
+                t1 = cycle_mean(1.0, p_man)
+                t5 = cycle_mean(K_REF, p_man)
+                c_v[i, j] = max((t5 - t1) / (K_REF - 1.0), 1e-6)
+                t0_v[i, j] = t1
+        axes = [("rpm", rpm_knots), ("map", map_knots)]
+        self._burn_C = LUT(axes, c_v)
+        self._burn_T0 = LUT(axes, t0_v)
+        (self.throttle, self.boost, self.omega, self.crank_angle,
+         self._fuel_cut, self._shift_cut) = saved
+        self.cylinder_pressure[:] = P_ATM
+        self.last_blowdown[:] = P_ATM
+
+    def _burn_k(self, rpm, mapf):
+        """Burn multiplier solved so the pulse model's cycle-mean torque equals
+        the physical BMEP target at this operating point.  Falls back to the
+        legacy heat_release_k formula if calibration is unavailable."""
+        ve = self._volumetric_efficiency(mapf)
+        if self._burn_C is None or self._burn_T0 is None:
+            return 1.0 + self.engine.heat_release_k * mapf * ve   # legacy
+        t_tgt = torque_target(self.engine, rpm, mapf, ve)
+        c = self._burn_C.eval2(rpm, mapf)
+        t0 = self._burn_T0.eval2(rpm, mapf)
+        return min(max(1.0 + (t_tgt - t0) / c, 1.0), 14.0)
 
     # ------------------------------------------------------------------ rpm
     @property
@@ -178,10 +254,17 @@ class Simulator:
     def _manifold_pressure(self) -> float:
         """Intake-manifold absolute pressure from effective throttle.
 
-        Closed throttle -> strong vacuum; wide-open -> near atmospheric.
+        Closed throttle -> strong vacuum; wide-open -> near atmospheric.  The
+        closed-throttle floor DEEPENS with rpm: the shut throttle is a fixed
+        orifice (near-constant flow) while the engine's displacement demand
+        grows with speed, so vacuum pulls down roughly as idle_rpm/rpm — this
+        is why a real overrun shows 25+ inHg and why an engine can't sustain
+        2000 rpm against a closed plate.
         """
+        eng = self.engine
         t = self._effective_throttle()
-        idle_map = self.engine.closed_map_fraction * P_ATM
+        depth = min(1.0, eng.idle_rpm / max(self.rpm, eng.idle_rpm)) ** 0.7
+        idle_map = eng.closed_map_fraction * depth * P_ATM
         return idle_map + t * (P_ATM - idle_map) + self.boost * 1.0e5
 
     def _update_boost(self, dt: float):
@@ -208,12 +291,19 @@ class Simulator:
                 rate = min(dt / tau, 1.0)
                 self.boost += (target - self.boost) * rate
                 return
-            spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
             # A turbo spools on EXHAUST MASS-FLOW, which is high only under LOAD.
             # Free-revving in neutral makes little boost (so the car doesn't just
             # surge to the limiter the instant you blip it); in gear it spools fully.
             load_gate = 1.0 if self.drivetrain.gear > 0 else 0.3
-            target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0) * load_gate
+            if self._boost_lut is not None:
+                # steady target from the offline turbine/compressor energy
+                # balance (bmep_model.build_boost_table): onset shape follows
+                # exhaust enthalpy flow, wastegate caps at boost_bar.  The
+                # first-order lag below stays the live transient (turbo_lag).
+                target = self._boost_lut.eval2(self.rpm, thr) * load_gate
+            else:                                 # legacy linear spool ramp
+                spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
+                target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0) * load_gate
             tau = eng.turbo_lag if target > self.boost else 0.18
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate
@@ -281,11 +371,14 @@ class Simulator:
         bell = math.exp(-((self.rpm - peak) / width) ** 2)
         return eng.ve_floor + (eng.ve_max - eng.ve_floor) * bell
 
-    def _cylinder_pressure(self, cyl, phi_deg, p_manifold, combusting, ve):
+    def _cylinder_pressure(self, cyl, phi_deg, p_manifold, combusting, k):
         """Absolute gas pressure (Pa) for one cylinder at cycle angle phi (deg).
 
         `phi_deg` is taken modulo 720.  `combusting` is True when there is spark
-        + air this cycle (i.e. the charge actually burns).
+        + air this cycle.  ``k`` is the burn pressure multiplier — SOLVED each
+        frame so the cycle-mean torque hits the physical BMEP target (see
+        bmep_model.torque_target and _calibrate_burn), replacing the old
+        hand-tuned heat_release_k fudge.
         """
         phi = phi_deg % 720.0
 
@@ -316,7 +409,6 @@ class Simulator:
             # slightly BEFORE TDC (ignition), and spark_advance_deg is a live,
             # physical parameter.
             eng = self.engine
-            k = 1.0 + eng.heat_release_k * (p_manifold / P_ATM) * ve
             # Spark ADVANCE MAP: flame speed is roughly constant in TIME, so the
             # ECU advances the spark as rpm rises (more crank-degrees pass per
             # millisecond) and runs only ~10 deg BTDC at idle — a fixed advance
@@ -338,25 +430,28 @@ class Simulator:
         return 1.05 * P_ATM
 
     # --------------------------------------------------------- torque sum
-    def _compute_torque(self):
+    def _compute_torque(self, k=None, p_man=None):
         """Net gas torque on the crank (N*m) at the current crank angle.
 
-        Also refreshes ``self.cylinder_pressure`` telemetry.
+        Also refreshes ``self.cylinder_pressure`` telemetry.  ``k`` / ``p_man``
+        override the burn multiplier and manifold pressure — used by the
+        load-time burn calibration sweep; live stepping passes neither.
         """
         eng = self.engine
-        p_manifold = self._manifold_pressure()
+        p_manifold = self._manifold_pressure() if p_man is None else p_man
         crank_deg = math.degrees(self.crank_angle)
         # Per-cylinder combustion: the soft limiter cuts only the cylinders in
-        # the rotating _cut_mask, so the rest keep firing (the "brap" stutter).
-        base_burn = self.ignition_on and not self._shift_cut
+        # the rotating _cut_mask, so the rest keep firing (the "brap" stutter);
+        # DFCO kills all of them on the overrun.
+        base_burn = self.ignition_on and not self._shift_cut and not self._dfco
         cutting = self._fuel_cut
-        ve = self._volumetric_efficiency(p_manifold / P_ATM)
+        k_burn = self._k_burn if k is None else k
 
         total = 0.0
         for i, cyl in enumerate(eng.cylinders):
             phi = (crank_deg + self._offset_deg[i]) % 720.0
             burn_i = base_burn and not (cutting and self._cut_mask[i])
-            p = self._cylinder_pressure(cyl, phi, p_manifold, burn_i, ve)
+            p = self._cylinder_pressure(cyl, phi, p_manifold, burn_i, k_burn)
             self.cylinder_pressure[i] = p
             # capture the REAL blowdown pressure as this cylinder's exhaust valve
             # cracks open — the audio synth keys each pulse off this value
@@ -368,12 +463,9 @@ class Simulator:
             force = (p - P_ATM) * cyl.piston_area
             # Virtual work: torque = force * (dx/dtheta).
             total += force * cyl.d_displacement_d_theta(theta)
-        # Per-car forced-induction torque trim, BLENDED BY BOOST so it only bites
-        # on boost (off-boost/NA torque is untouched).  Audio is unaffected.
-        ts = eng.torque_scale
-        if ts != 1.0 and eng.boost_bar > 0.0:
-            bf = min(self.boost / eng.boost_bar, 1.0)
-            total *= 1.0 + (ts - 1.0) * bf
+        # (the old per-car torque_scale trim is GONE: with the burn multiplier
+        # solved against the physical BMEP target, boosted torque comes out
+        # right from energy accounting — no per-car fudge to blend in.)
         return total
 
     # ------------------------------------------------------------- losses
@@ -422,6 +514,18 @@ class Simulator:
             self._fuel_cut = True
         elif rpm < eng.redline_rpm - 300.0:
             self._fuel_cut = False
+        # DFCO — deceleration fuel cut-off, like every real ECU since the 80s:
+        # coasting with the throttle shut well above idle injects NO fuel (the
+        # engine pumps air and BRAKES on its own pumping loop); fuel resumes
+        # near idle or the instant the pedal reopens.  Without this the
+        # physical BMEP solver happily self-sustains a closed-throttle engine
+        # at 2000+ rpm on the air it still breathes — real cars don't, because
+        # of exactly this cut.
+        if self.throttle >= 0.04 or rpm < eng.idle_rpm * 1.5:
+            self._dfco = False
+        elif rpm > eng.idle_rpm * 2.0:
+            self._dfco = True
+
         # SOFT limiter: cut a rotating 3/4 of the cylinders (all of them if the
         # overshoot keeps growing) — the survivors keep firing, which is the real
         # limiter "brap-brap"; rotation spreads the heat like a real ECU.
@@ -457,6 +561,11 @@ class Simulator:
         shift_target = self.drivetrain.shift_target_omega() if rev_matching else 0.0
 
         self._update_boost(dt)
+
+        # Solve the burn multiplier ONCE per frame (it moves slowly): the
+        # crank-resolved pulses then release exactly the heat the physical
+        # BMEP target demands at this rpm/manifold point.
+        self._k_burn = self._burn_k(rpm, self._manifold_pressure() / P_ATM)
 
         # Sub-step so the crank never advances more than ~3 deg per integration
         # step; this keeps the sharp combustion torque pulse well resolved.  At high
@@ -512,17 +621,15 @@ class Simulator:
         """
         cyl = self.engine.cylinders[0]
         p_man = self._manifold_pressure()
-        ve = self._volumetric_efficiency(p_man / P_ATM)
-        combusting = self.ignition_on and not self._fuel_cut
+        combusting = (self.ignition_on and not self._fuel_cut
+                      and not self._dfco)
 
         v_bdc = cyl.clearance_volume + cyl.piston_area * cyl.stroke
         v_tdc = cyl.clearance_volume
         p_comp = p_man * (v_bdc / v_tdc) ** GAMMA
-        if combusting:
-            k = 1.0 + self.engine.heat_release_k * (p_man / P_ATM) * ve
-            p_peak = p_comp * k
-        else:
-            p_peak = p_comp
+        # the live burn multiplier — solved against the physical BMEP target,
+        # so pulse strength inherits the real energy accounting
+        p_peak = p_comp * (self._k_burn if combusting else 1.0)
         # Expand to the crank angle where the exhaust valve opens (~510 deg).
         theta = math.radians(510.0 % 360.0)
         v_open = cyl.volume(theta)
