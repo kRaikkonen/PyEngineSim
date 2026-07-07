@@ -394,7 +394,18 @@ class TruthCylinder:
         # runner + plenum + collector gas systems (per-cylinder share)
         run_len = max(getattr(eng, "intake_runner_m", 0.30), 0.05)
         a_run_i = math.pi * 0.25 * (1.1 * d_iv) ** 2
-        a_run_e = math.pi * 0.25 * (1.15 * d_ev) ** 2
+        # HEADER PRIMARY BORE: a real tuning choice, not the valve size.  A
+        # small-bore primary keeps exhaust-gas VELOCITY high -> strong inertial
+        # scavenging + low-end torque; a big bore drops backpressure for the top
+        # end.  Use the preset's explicit bore if given, else a sensible
+        # valve-derived default.  The bore drives THREE things a real header
+        # bore changes: runner volume, gas velocity (via cross-section), and the
+        # primary-out flow restriction below.
+        a_valve_default = math.pi * 0.25 * (1.15 * d_ev) ** 2
+        prim_bore = getattr(eng, "exhaust_primary_bore_m", 0.0)
+        a_run_e = (math.pi * 0.25 * prim_bore * prim_bore) if prim_bore > 0.0 \
+            else a_valve_default
+        self._a_prim_ref = a_valve_default        # reference for flow scaling
         prim_len = max(getattr(eng, "exhaust_primary_m", 0.5), 0.1)
         self.intake_runner = GasSystem(ATM, a_run_i * run_len, T_AMB, AIR_MIX,
                                        width=run_len, height=math.sqrt(a_run_i))
@@ -414,7 +425,10 @@ class TruthCylinder:
             / 0.0004719474432 * 1.4
         self.k_throttle = k_flow_from_scfm(peak_scfm)
         self.k_runner_feed = k_flow_from_scfm(peak_scfm / self.ncyl * 2.2)
-        self.k_primary_out = k_flow_from_scfm(peak_scfm / self.ncyl * 2.4)
+        # the primary-out restriction scales with the primary bore area (a wider
+        # header primary passes more into the collector -> less top-end backpressure)
+        self.k_primary_out = k_flow_from_scfm(
+            peak_scfm / self.ncyl * 2.4 * (a_run_e / self._a_prim_ref))
         self.k_outlet = k_flow_from_scfm(
             peak_scfm * (0.6 + 0.8 * getattr(eng, "exhaust_openness", 0.85)) / self.ncyl)
 
@@ -590,10 +604,18 @@ class TruthCylinder:
 
 
 def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
-                            dphi=2.0, max_cycles=10, tol=0.01):
+                            dphi=2.0, max_cycles=12, tol=0.01, min_warmup=3):
     """Run the truth model at one operating point until the cycle converges.
     Returns dict(ve, imep, torque, p_peak, T_peak, map_frac, blowdown_p,
-    exhaust_wave) — the quantities the surrogate tables are baked from."""
+    exhaust_wave) — the quantities the surrogate tables are baked from.
+
+    The chamber starts cold/empty at ambient, so the first few cycles are a
+    startup transient in which the flame may not yet catch (VE low, motoring
+    torque).  Convergence is therefore only accepted AFTER ``min_warmup``
+    cycles AND once the cycle is actually firing — otherwise the flat
+    warmup phase (two near-identical motoring cycles) would false-trigger the
+    tolerance check and return a non-firing state (the high-rpm ``-9 Nm``
+    artifact)."""
     cyl = TruthCylinder(eng, spark_advance_fn)
     rho_ref = ATM / (R * T_AMB)                # ambient molar density
     n_ideal = rho_ref * cyl.Vd                 # ideal trapped charge, mol
@@ -605,12 +627,16 @@ def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
         p_peak = 0.0
         T_peak = 0.0
         blowdown_p = 0.0
+        fired = False
         wave = []
         phi = 0.0
         while phi < 720.0:
             V0 = cyl.gas.V
             p_mid = cyl.gas.pressure()
+            was_lit = cyl.lit
             fi, fe = cyl.step(phi + dphi, dphi, rpm, throttle)
+            if cyl.lit or was_lit:
+                fired = True
             work += p_mid * (cyl.gas.V - V0)
             intake_n += fi          # NET flow: low-rpm pushback subtracts (real
             #                         long-cam VE loss), overlap reverse too
@@ -634,9 +660,13 @@ def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
             "map_frac": cyl.plenum.pressure() / ATM,
             "blowdown_p": blowdown_p,
             "exhaust_wave": wave,
-            "cycles": cycle + 1,
+            "cycles": cycle + 1, "fired": fired,
         }
-        if last_imep is not None and abs(imep - last_imep) < tol * max(abs(imep), 1e3):
+        converged = (last_imep is not None
+                     and abs(imep - last_imep) < tol * max(abs(imep), 1e3))
+        # accept only a settled, FIRING cycle (unless the engine genuinely
+        # cannot run here — then let max_cycles end it on the honest no-fire state)
+        if cycle + 1 >= min_warmup and converged and (fired or throttle < 0.05):
             break
         last_imep = imep
     return result
