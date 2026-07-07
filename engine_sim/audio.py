@@ -451,6 +451,8 @@ class Synthesizer:
             "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
             "road_noise": 0.10,   # tyre/road rumble that swells with road speed (subtle)
             "gear_grain": 1.0,    # gear-driven valvetrain whir mix (x eng.gear_grain)
+            "mech": 0.30,         # valvetrain tick layer (cam/tappet clatter)
+            "gear_mesh": 0.10,    # transmission mesh whine under load (helical, subtle)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
@@ -597,6 +599,7 @@ class Synthesizer:
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
+        self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -1180,16 +1183,35 @@ class Synthesizer:
             fire_hz = sim.rpm * len(self._offsets) / 120.0
             if fire_hz > 600.0:
                 m = min((fire_hz - 600.0) / 500.0, 1.0)
-                scream = self._whine(
-                    fire_hz, frames,
-                    harmonics=[(1, 1.0), (2, 0.62), (3, 0.42), (4, 0.30),
-                               (5, 0.20), (6, 0.13), (8, 0.07)],
-                    phase_attr="_scream_phase")
-                # REINFORCE only — never duck the real pulse signal (v1 replaced
-                # 38% of it with a plain sine stack, which read as a vacuum
-                # cleaner).  The stack rides quietly under the pulses to firm up
-                # the merged-fire fundamental; the pulse model stays the voice.
-                sig = sig + (0.10 * m * (0.4 + 0.6 * load)) * scream
+                # PHYSICS-SWEPT harmonic gains (the DDSP-without-NN move): each
+                # harmonic's level = the blowdown source spectrum (~1/k) times
+                # |H| of the ACTUAL exhaust waveguide at that frequency — the
+                # closed form of the feedback comb we synthesize with:
+                #     |H(w)| = 1 / sqrt(1 + 2 g_e cos(wD) + g_e^2),
+                # g_e = g * |one-pole LP|.  The stack now rings exactly where
+                # this car's pipe resonates instead of a hand-rolled rolloff.
+                harms = []
+                best = 1e-9
+                for hk in range(1, 9):
+                    f = hk * fire_hz
+                    if f >= self.sample_rate * 0.45:
+                        break
+                    w = 2.0 * math.pi * f / self.sample_rate
+                    lp_mag = (1.0 - lp_a) / math.sqrt(
+                        1.0 - 2.0 * lp_a * math.cos(w) + lp_a * lp_a)
+                    g_e = min(g * lp_mag, 0.995)
+                    comb = 1.0 / math.sqrt(1.0 + 2.0 * g_e * math.cos(w * D1)
+                                           + g_e * g_e)
+                    a = comb / hk
+                    harms.append((hk, a))
+                    best = max(best, a)
+                if harms:
+                    harms = [(hk, a / best) for hk, a in harms]
+                    scream = self._whine(fire_hz, frames, harms,
+                                         phase_attr="_scream_phase")
+                    # REINFORCE only — never duck the real pulse signal; the
+                    # stack rides under the pulses to firm the merged-fire tone.
+                    sig = sig + (0.11 * m * (0.4 + 0.6 * load)) * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
@@ -1535,6 +1557,22 @@ class Synthesizer:
             nz, self._inj_zi = lfilter(self._inj_bp[0], self._inj_bp[1],
                                        self._rng.standard_normal(frames), zi=self._inj_zi)
             sig = sig + ia * nz
+        # --- VALVETRAIN CLATTER: cam/tappet impact ticks, gated by the actual
+        # valve events.  With even firing the events across all cylinders are
+        # equally spaced every 720/(2n) deg, so ONE sawtooth of the live crank
+        # phase gates a sharp noise ping — the classic sewing-machine tick that
+        # dominates at idle and gets masked as combustion swells.  Radiates from
+        # the cam covers DIRECTLY (post-exhaust-chain), like the injector tick.
+        mech = P.get("mech", 0.30)
+        if mech > 1e-3 and dps > 1e-12:
+            spacing = 720.0 / max(2 * len(self._offsets), 1)
+            ph_t = np.mod(self._audio_crank + dps * np.arange(frames), spacing) \
+                / spacing
+            tick_env = np.exp(-ph_t * 13.0)               # sharp hit, fast ring-down
+            nzm = self._rng.standard_normal(frames)
+            tick = np.diff(nzm, prepend=nzm[:1]) * tick_env   # HF 'click' spectrum
+            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            sig = sig + (mech * 0.050 * (1.0 - 0.72 * rpm_frac)) * tick
         # --- cam-overlap idle CHOP + balance-shaft buzz: a slow amplitude wobble at
         # the firing rate (deep at idle for a big cam / an unbalanced no-shaft four).
         lump = getattr(self, "_cam_lump", 0.0) + getattr(self, "_balance_rough", 0.0)
@@ -1600,6 +1638,20 @@ class Synthesizer:
         gw = np.zeros(frames, dtype=np.float64)    # straight-cut gearbox whine
         sv = P["super_vol"]      # mechanical supercharger whine
         tv = P["turbo_vol"]      # turbo spool whistle + BOV
+
+        # TRANSMISSION MESH WHINE (all cars, not just dog-boxes): the input
+        # gear pair sings at tooth-mesh frequency (~21 teeth x shaft speed),
+        # amplitude follows TRANSMITTED TORQUE — silent coasting, a fine rising
+        # whine under load, exactly how a helical box behaves.
+        gm = P.get("gear_mesh", 0.10)
+        dt_ = getattr(sim, "drivetrain", None)
+        if (gm > 1e-3 and dt_ is not None and dt_.gear > 0
+                and dt_.clutch > 0.6 and rpm > 400.0):
+            f_mesh = rpm / 60.0 * 21.0
+            if f_mesh < sr * 0.42:
+                load_t = min(abs(sim.gas_torque) / 600.0, 1.0)
+                gw += (gm * 0.22 * load_t) * self._whine(
+                    f_mesh, frames, [(1, 1.0), (2, 0.28)], phase_attr="_mesh_phase")
         bfrac = min(sim.boost / max(eng.boost_bar, 0.05), 1.0) if eng.boost_bar else 0.0
 
         if sv > 1e-3 and eng.induction in ("roots", "centrifugal") and bfrac > 0.01:
