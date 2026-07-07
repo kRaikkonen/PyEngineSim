@@ -420,7 +420,9 @@ class Synthesizer:
             "dry": 1.44,         # combustion bang level (was cut to 1.28 — too far;
                                  #   engines lost their DRY combustion punch/fizz)
             "res1": 0.15,         # primary pipe resonance (runner)
-            "res2": 0.33,         # secondary pipe resonance (full system)
+            "res2": 0.26,         # secondary pipe resonance (full system)
+            "tail_rad": 0.35,     # tailpipe radiation mix: 0 = mic inside the
+                                  #   duct, up = mic behind the car (dQ/dt far field)
             "crack": 0.12,        # attack snap (explosion punch)
             "attack_deg": 9.0,    # onset softness (deg): bigger = blunter attack
             "body": 1.60,         # thickness / low-end of each firing (浑厚)
@@ -429,8 +431,11 @@ class Synthesizer:
             "pulse_tau": 22.0,    # blowdown decay (deg) -> firing timbre/brightness
             "turbulence": 0.34,   # gas-rush FIZZ gated by each firing (was 0.2 —
                                   #   too little; engines lost their fizzy grit)
-            "src_reverb": 0.48,   # reverb on the explosion itself (pre-pipe)
-            "reverb": 0.4,       # spatial reverb mix (post, room)
+            "src_reverb": 0.26,   # reverb on the explosion itself (pre-pipe) — a
+                                  #   head/port cavity is TINY; 0.48 smeared the
+                                  #   pulse transients into mush (wet complaint)
+            "reverb": 0.18,      # spatial reverb mix — an exhaust mic is OUTDOORS
+                                 #   in free field; 0.4 was a small room, far too wet
             "intake": 0.22,       # induction roar level (was a bit windy)
             "eq_low": 0.0,        # dB
             "eq_mid": 0.0,        # dB
@@ -451,7 +456,7 @@ class Synthesizer:
             "cyl_voice": 1.0,     # per-cylinder voicing amount (0 = perfectly uniform)
             "road_noise": 0.10,   # tyre/road rumble that swells with road speed (subtle)
             "gear_grain": 1.0,    # gear-driven valvetrain whir mix (x eng.gear_grain)
-            "mech": 0.30,         # valvetrain tick layer (cam/tappet clatter)
+            "mech": 0.16,         # valvetrain tick layer (cam/tappet clatter)
             "gear_mesh": 0.10,    # transmission mesh whine under load (helical, subtle)
             "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
@@ -600,6 +605,7 @@ class Synthesizer:
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
+        self._rad_prev = 0.0              # tailpipe-radiation derivative state
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -923,6 +929,17 @@ class Synthesizer:
         if self.gpf:
             self._post_fc *= 0.6
             fc *= 0.75
+        # OPEN-END RADIATION LOSS, frequency-aware: an unflanged pipe end
+        # reflects LESS as ka grows (|R| ~ 1 - (ka)^2/2) — the wave increasingly
+        # ESCAPES instead of re-ringing the comb.  Evaluated at the firing
+        # fundamental (the spectrum's energy centroid): negligible for a road
+        # car (ka ~ 0.03 at idle), decisive for an F1 firing at 1.5 kHz
+        # (ka ~ 0.5) — which is exactly why a real F1 sounds DRY and ripping,
+        # not like a ringing organ pipe.
+        fire_hz = max(self.sim.rpm, 1.0) / 120.0 * eng.num_cylinders
+        ka = 2.0 * math.pi * fire_hz * eng.exhaust_radius_m / c
+        g *= max(1.0 - 0.5 * ka * ka, 0.55)
+
         lp_a = math.exp(-2 * math.pi * fc / sr)
         # Helmholtz muffler/chamber resonance
         A, V = eng.muffler_neck_area_m2, eng.muffler_volume_m3
@@ -1467,6 +1484,24 @@ class Synthesizer:
             sig = sig + 0.16 * refl
         self._tap("reflection", sig)         # + gear-grain, round-trip echo
 
+        # --- (8a) TAILPIPE RADIATION: what a microphone BEHIND the car hears is
+        # NOT the in-duct pressure.  The pipe end radiates like a monopole whose
+        # FAR-FIELD pressure follows the DERIVATIVE of the volume outflow
+        # (p ~ dQ/dt, +6 dB/oct) while the NEAR field keeps the low-end body.
+        # Blending the derivative in moves the virtual mic from inside the pipe
+        # (where it effectively sat — the "mic at the engine" / wet complaint)
+        # out to the exhaust exit: each pulse's edge sharpens into the discrete
+        # dry puff you hear standing behind a real car (干/颗粒感).
+        rad = min(max(P.get("tail_rad", 0.35), 0.0), 0.9)
+        if rad > 1e-3:
+            ext = np.empty(frames + 1, dtype=np.float64)
+            ext[0] = self._rad_prev
+            ext[1:] = sig
+            self._rad_prev = float(sig[-1])
+            drv = np.diff(ext) * (self.sample_rate / (2.0 * math.pi * 500.0))
+            sig = (1.0 - rad) * sig + rad * drv
+        self._tap("radiation", sig)           # in-duct -> free-field derivative
+
         # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
         # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
         # This is the outermost 'whoosh' you hear standing behind the car.
@@ -1512,7 +1547,7 @@ class Synthesizer:
         # bent-stainless road car is heard bouncing off tarmac & bodywork, so it
         # carries MORE room than a dry open-header race car; the cabin adds more.
         self._reverb.mix = (P["reverb"] + (0.10 if self.cabin else 0.0)
-                            + (0.12 if self.road_pipe else 0.0))
+                            + (0.05 if self.road_pipe else 0.0))
         sig = self._reverb.process(sig)
         self._tap("cabin/room", sig)
 
@@ -1572,7 +1607,11 @@ class Synthesizer:
             nzm = self._rng.standard_normal(frames)
             tick = np.diff(nzm, prepend=nzm[:1]) * tick_env   # HF 'click' spectrum
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
-            sig = sig + (mech * 0.050 * (1.0 - 0.72 * rpm_frac)) * tick
+            # scale DOWN with cylinder count: a V12's 180 events/s would fuse
+            # into a continuous fizz at the 4-cyl level — real multi-bank
+            # valvetrains blend into a much quieter hash
+            n_sc = (4.0 / max(len(self._offsets), 1)) ** 0.5
+            sig = sig + (mech * 0.050 * n_sc * (1.0 - 0.85 * rpm_frac)) * tick
         # --- cam-overlap idle CHOP + balance-shaft buzz: a slow amplitude wobble at
         # the firing rate (deep at idle for a big cam / an unbalanced no-shaft four).
         lump = getattr(self, "_cam_lump", 0.0) + getattr(self, "_balance_rough", 0.0)
