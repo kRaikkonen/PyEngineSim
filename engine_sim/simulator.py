@@ -28,6 +28,13 @@ from .engine import Engine, P_ATM
 from .drivetrain import Drivetrain
 from .units import rads_to_rpm
 
+try:                                    # white-box surrogate layer (VE tables);
+    from .surrogate import Surrogate    # guarded so a stripped install still runs
+    from .ve_model import build_ve_table
+    _HAVE_SURROGATE = True
+except Exception:                       # pragma: no cover
+    _HAVE_SURROGATE = False
+
 GAMMA = 1.30          # ratio of specific heats for burned gas (~1.3)
 # Physical peak-cylinder-pressure ceiling (Pa).  The open-loop Otto model lets a
 # HIGH compression ratio multiply with boost into absurd peak pressures (a diesel
@@ -104,6 +111,20 @@ class Simulator:
 
         # precompute per-cylinder cycle offset in radians of the *cycle*
         self._offset_deg = np.array([c.cycle_offset_deg for c in engine.cylinders])
+
+        # --- white-box surrogate channels -----------------------------------
+        # VE(rpm, MAP) is BAKED AT LOAD from the first-principles intake model
+        # (Taylor Mach index + Helmholtz ram tuning + residual backflow) instead
+        # of the old hand-drawn Gaussian; baking a 22x12 table costs ~1 ms.
+        # Registered BEFORE the clutch-sizing sweep so that uses the same VE.
+        self.surrogate = Surrogate() if _HAVE_SURROGATE else None
+        self._ve_lut = None
+        if self.surrogate is not None:
+            try:
+                self._ve_lut = build_ve_table(engine)
+                self.surrogate.register("ve", self._ve_lut)
+            except Exception:
+                self._ve_lut = None     # fall back to the legacy Gaussian
 
         # Size the clutch so it can actually HOLD this engine.  A real clutch is
         # rated ABOVE peak torque; if the (boosted) engine makes more torque than
@@ -239,12 +260,21 @@ class Simulator:
         # higher travel limit cannot overshoot.
         self._idle_trim = min(max(self._idle_trim, 0.0), 0.5)
 
-    def _volumetric_efficiency(self) -> float:
-        """How well the cylinders breathe at the current rpm (0..ve_max).
+    def _volumetric_efficiency(self, map_frac=None) -> float:
+        """How well the cylinders breathe at the current rpm (0..~ve_max).
 
-        A bell curve peaking in the mid-range; this is what gives a real engine
-        its torque hump and the fall-off toward idle and redline.
+        Served from the baked white-box VE table (Taylor Mach-index roll-off +
+        Helmholtz ram humps + residual backflow, see ve_model.py) — real
+        geometry decides where the torque humps sit and how the top end dies.
+        Falls back to the legacy hand-drawn Gaussian if no table exists.
+        ``map_frac`` (p_man/p_atm) can be passed by callers that already know
+        it, to save recomputing the manifold pressure.
         """
+        lut = self._ve_lut
+        if lut is not None:
+            if map_frac is None:
+                map_frac = self._manifold_pressure() / P_ATM
+            return lut.eval2(self.rpm, map_frac)
         eng = self.engine
         peak = eng.ve_peak_frac * eng.redline_rpm
         width = eng.ve_width_frac * eng.redline_rpm
@@ -320,7 +350,7 @@ class Simulator:
         # the rotating _cut_mask, so the rest keep firing (the "brap" stutter).
         base_burn = self.ignition_on and not self._shift_cut
         cutting = self._fuel_cut
-        ve = self._volumetric_efficiency()
+        ve = self._volumetric_efficiency(p_manifold / P_ATM)
 
         total = 0.0
         for i, cyl in enumerate(eng.cylinders):
@@ -482,7 +512,7 @@ class Simulator:
         """
         cyl = self.engine.cylinders[0]
         p_man = self._manifold_pressure()
-        ve = self._volumetric_efficiency()
+        ve = self._volumetric_efficiency(p_man / P_ATM)
         combusting = self.ignition_on and not self._fuel_cut
 
         v_bdc = cyl.clearance_volume + cyl.piston_area * cyl.stroke
@@ -536,7 +566,7 @@ class Simulator:
     def telemetry(self) -> dict:
         """Live physical readouts (the gauges the original game shows)."""
         map_pa = self._manifold_pressure()
-        ve = self._volumetric_efficiency()
+        ve = self._volumetric_efficiency(map_pa / P_ATM)
         # Air-fuel ratio: ~stoich light, enriching toward ~12.5 at full load.
         afr = 14.7 - 2.2 * min(max(self.throttle, 0.0), 1.0)
         lam = afr / 14.7
