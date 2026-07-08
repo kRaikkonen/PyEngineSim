@@ -3067,7 +3067,8 @@ _ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
                   "clkgtr",     # Mercedes CLK GTR M120 race V12
                   "speed12",    # TVR Speed 12 AJP V12
                   "countach",   # Lamborghini Countach, 6 Weber twin-chokes
-                  "250cal"})    # Ferrari 250 Colombo V12, triple Webers
+                  "250cal",     # Ferrari 250 Colombo V12, triple Webers
+                  "e36m3"})     # BMW M3 E36 Euro S50B30 I6, 6 ITBs
 _NO_ITB = frozenset()          # exclusions from the auto straight-cut rule
 
 # Real intake-runner lengths (m) for the V10/V12 fleet — physical MEASUREMENT
@@ -3089,6 +3090,20 @@ _INTAKE_RUNNER = {
     "sl65": 0.34, "bentss": 0.36, "conti": 0.36, "db11": 0.32,
     # aero
     "merlin": 0.50,
+    # --- V8: race/high-rev NA run SHORT stacks; muscle V8s LONG torque runners;
+    #     forced-induction a plenum.  (Bore-stroke/crank-plane already set.) ----
+    "atomv8": 0.12, "f2007": 0.08, "e92m3": 0.15, "m3gtr": 0.14, "4": 0.16,
+    "gt350r": 0.18, "gts": 0.20, "audiv8": 0.18, "f355": 0.22, "918": 0.16,
+    "pro2": 0.20, "t100": 0.18,
+    "3": 0.34, "rtr": 0.34, "c7": 0.32, "chevyss": 0.32, "challenger": 0.36,
+    "charger": 0.36, "c63bs": 0.30, "gt40": 0.34, "z28": 0.32, "funco": 0.30,
+    "488": 0.24, "pista": 0.24, "e63": 0.32, "bmwv8": 0.30, "senna": 0.24,
+    "p1": 0.24, "valhalla": 0.26, "amggt": 0.30, "one1": 0.26, "f40": 0.28,
+    "r390": 0.26, "8": 0.34, "gt500": 0.32, "ct5v": 0.32, "ftype": 0.32,
+    "boneshaker": 0.34, "f450": 0.42, "titan": 0.42,
+    # --- I6: RB26/S50 short ITB stacks, 2JZ/N53 plenum, big-diesel truck long --
+    "r34": 0.15, "e36m3": 0.16, "9": 0.28, "330i": 0.30, "0": 0.26,
+    "actros": 0.50, "ironknight": 0.52, "pete": 0.55,
 }
 
 # --- detail-model lookups (audio) -------------------------------------------
