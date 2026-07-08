@@ -802,3 +802,65 @@ def exhaust_harmonic_signature(eng, rpms=(0.30, 0.55, 0.80), n_harm=20,
         peak = max(harm) or 1.0
         out.append([a / peak for a in harm])
     return grid, out
+
+
+def exhaust_pressure_pulse(eng, rf, throttle=1.0, dphi=1.0, N=128,
+                           spark_advance_fn=None, warmup=6):
+    """TIER B — bake the REAL single-firing exhaust-runner PRESSURE pulse from the
+    closed-loop gas dynamics.  Runs the truth model to a settled cycle, then
+    records that cycle's exhaust-runner (p - ATM) over the full 720 deg for the
+    representative cylinder, resampled to N points, DC-removed and peak-normalised.
+
+    That array IS the car's real blowdown SHAPE the header sees — the sharp
+    choked edge, the gas-dynamic decay and the wave-action ripple — so the runtime
+    can excite each firing with the actual solver pulse instead of the parametric
+    blow+displacement approximation (the plan's DDSP-without-NN excitation).
+
+    Offline (a few settling cycles per point).  Returns a list of N floats.
+    """
+    rpm = max(rf * eng.redline_rpm, eng.idle_rpm)
+    b_max = getattr(eng, "boost_bar", 0.0)
+    if b_max > 0.0 and throttle > 0.15:
+        spool = (rpm / max(eng.redline_rpm, 1.0)
+                 - getattr(eng, "turbo_spool_frac", 0.12)) \
+            / max(getattr(eng, "turbo_spool_width", 0.5), 1e-3)
+        boost_bar = b_max * min(max(spool, 0.0), 1.0) * min(throttle / 0.6, 1.0)
+    else:
+        boost_bar = 0.0
+    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar)
+    # settle the cycle (the chamber starts cold/empty — let it reach steady state)
+    for _ in range(warmup):
+        phi = 0.0
+        while phi < 720.0:
+            cyl.step(phi + dphi, dphi, rpm, throttle)
+            phi += dphi
+    # record ONE converged cycle of exhaust-runner pressure
+    trace = []
+    phi = 0.0
+    while phi < 720.0:
+        cyl.step(phi + dphi, dphi, rpm, throttle)
+        trace.append(cyl.exhaust_runner.pressure() - ATM)
+        phi += dphi
+    n = len(trace)
+    if n == 0:
+        return [0.0] * N
+    # resample to N points (linear), DC-remove, peak-normalise
+    out = []
+    for i in range(N):
+        x = i * (n - 1) / max(N - 1, 1)
+        i0 = int(x)
+        i1 = min(i0 + 1, n - 1)
+        out.append(trace[i0] + (trace[i1] - trace[i0]) * (x - i0))
+    dc = sum(out) / N
+    out = [v - dc for v in out]
+    peak = max(abs(v) for v in out) or 1.0
+    return [v / peak for v in out]
+
+
+def exhaust_pulse_lut(eng, rpms=(0.30, 0.55, 0.85), N=128, spark_advance_fn=None):
+    """Bake the Tier-B time-domain excitation LUT: the real exhaust pulse SHAPE at
+    a few rpm fractions.  Returns (rpm_frac_grid, pulses[n_rpm][N])."""
+    grid = list(rpms)
+    return grid, [exhaust_pressure_pulse(eng, rf, N=N,
+                                         spark_advance_fn=spark_advance_fn)
+                  for rf in grid]
