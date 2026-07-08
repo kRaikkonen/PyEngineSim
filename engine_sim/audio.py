@@ -88,6 +88,11 @@ _AUG_TRIAD = ((1.0, 1.0), (1.26, 0.5), (1.587, 0.45))     # gear whine: augmente
 _TURBO_V7 = ((0.5, 0.55), (1.0, 1.0), (1.25, 0.5), (1.5, 0.62), (1.78, 0.42))
 _BDIM_HZ = (246.94, 293.66, 349.23)                       # B - D - F  (Bdim triad)
 
+# fuel-rail pressure (bar) by injection type — the physical driver of the
+# injector-close click (see the white-box injection tick in the synth).
+_INJ_PRESSURE = {"port": 4.0, "dual": 130.0, "direct": 200.0,
+                 "piezo": 350.0, "diesel": 2000.0}
+
 # Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
 VALVE_OPEN = 505.0
 VALVE_CLOSE = 715.0
@@ -929,10 +934,15 @@ class Synthesizer:
         # CONTINUOUS variable lift (Valvetronic / MultiAir): throttleless, smoother.
         if getattr(eng, "valve_lift", "fixed") == "continuous":
             self._post_fc *= 0.97
-        # INJECTION clatter amount (idle-weighted): GDI / piezo / diesel injector tick.
-        self._inj_amt = ({"direct": 0.075, "piezo": 0.09, "dual": 0.05,
-                          "diesel": 0.11}.get(getattr(eng, "injection", "port"), 0.0)
-                         * max(1.0 - rpm_frac * 1.25, 0.22))
+        # INJECTION clatter — WHITE-BOX from the fuel-rail PRESSURE: an injector
+        # needle slamming shut against a high rail clicks hard and bright, a
+        # low-pressure port injector is inaudible.  Click energy ~ P^0.3 (impulse
+        # of the needle stopping).  Rail pressures (bar): port MPI ~4, D-4S dual
+        # ~130 (the direct side), GDI direct ~200, piezo GDI ~350, diesel common-
+        # rail ~2000.  Carb / mechanical race injection have no solenoid -> none.
+        p_rail = _INJ_PRESSURE.get(getattr(eng, "injection", "port"), 0.0)
+        amt = 0.075 * (p_rail / 200.0) ** 0.3 if p_rail > 0.0 else 0.0
+        self._inj_amt = amt * max(1.0 - rpm_frac * 1.25, 0.22)
         # BALANCE-SHAFT roughness: an I3 / I4 / 90deg-V6 with NO balance shaft buzzes.
         self._balance_rough = 0.0
         if (eng.num_cylinders in (3, 4) and not eng.is_rotary
