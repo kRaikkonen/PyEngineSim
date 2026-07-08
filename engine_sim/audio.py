@@ -93,6 +93,35 @@ _BDIM_HZ = (246.94, 293.66, 349.23)                       # B - D - F  (Bdim tri
 _INJ_PRESSURE = {"port": 4.0, "dual": 130.0, "direct": 200.0,
                  "piezo": 350.0, "diesel": 2000.0}
 
+# Exhaust-wall MATERIAL properties (Young's modulus GPa, density kg/m^3, damping
+# loss factor) — VIRTUAL ANALOG of the pipe ringing.  The wall's structural
+# resonance frequency ~ sqrt(E/rho) (material sound speed), how hard it is EXCITED
+# by the gas pulses ~ 1/rho (a light wall vibrates more), and how LONG/sharp it
+# rings ~ 1/loss (titanium sings, cast iron thuds).  Steel is the reference.
+_MATERIAL = {
+    "steel": (200.0, 7850.0, 0.0016), "mild_steel": (200.0, 7850.0, 0.0016),
+    "stainless": (193.0, 8000.0, 0.0009), "304": (193.0, 8000.0, 0.0009),
+    "321": (193.0, 8000.0, 0.0009), "321ss": (193.0, 8000.0, 0.0009),
+    "321ti": (150.0, 6200.0, 0.0006), "ss": (193.0, 8000.0, 0.0009),
+    "titanium": (116.0, 4500.0, 0.0004), "ti": (116.0, 4500.0, 0.0004),
+    "inconel": (205.0, 8440.0, 0.0020),
+    "aluminium": (69.0, 2700.0, 0.0002), "aluminum": (69.0, 2700.0, 0.0002),
+    "iron": (110.0, 7200.0, 0.0120), "cast_iron": (110.0, 7200.0, 0.0120),
+    "ceramic": (300.0, 3800.0, 0.0040), "ceramic_coated": (300.0, 3800.0, 0.0040),
+}
+_MAT_REF = (5.048, 7850.0, 0.0016)     # steel sqrt(E/rho), rho, loss (references)
+
+
+def _material_acoustics(name):
+    """(freq_factor, ring_gain, q_factor) for the wall resonance, DERIVED from
+    the material's real E / density / damping — not hand-tuned."""
+    E, rho, loss = _MATERIAL.get(name, _MATERIAL["steel"])
+    c_ref, rho_ref, loss_ref = _MAT_REF
+    mf = math.sqrt(E * 1e9 / rho) / (c_ref * 1000.0)      # wall sound-speed ratio
+    gain = (rho_ref / rho) ** 0.30                        # lighter -> excited more
+    q_fac = (loss_ref / loss) ** 0.30                     # low loss -> long sing
+    return mf, gain, q_fac
+
 # Exhaust-valve timing (deg of the 720 deg cycle) and blowdown decay.
 VALVE_OPEN = 505.0
 VALVE_CLOSE = 715.0
@@ -795,16 +824,13 @@ class Synthesizer:
             # is a touch harder/brighter than mild steel, 321 SS brighter still,
             # inconel hard & harsh, and a CERAMIC COATING insulates + damps the
             # ping (smoother, less metallic).
-            MAT = {"titanium": (1.28, 1.05), "ti": (1.28, 1.05),
-                   "321": (1.12, 1.00), "321ss": (1.12, 1.00), "321ti": (1.12, 1.00),
-                   "stainless": (1.06, 1.00), "304": (1.06, 1.00), "ss": (1.06, 1.00),
-                   "inconel": (0.96, 1.12),
-                   "steel": (1.00, 0.95), "mild_steel": (1.00, 0.95),
-                   "aluminium": (1.18, 0.90), "aluminum": (1.18, 0.90),
-                   "iron": (0.72, 0.70), "cast_iron": (0.72, 0.70),
-                   "ceramic": (0.95, 0.60), "ceramic_coated": (0.95, 0.60)}
-            mf, ring = MAT.get(getattr(eng, "wall_material", "steel"), (1.0, 0.95))
+            # VIRTUAL-ANALOG pipe material: frequency, ring gain and ring Q all
+            # DERIVED from the wall material's real E / density / damping (see
+            # _material_acoustics) — titanium sings (light + low-loss), cast iron
+            # thuds (heavy + high-loss), steel is the reference.
+            mf, ring, qf = _material_acoustics(getattr(eng, "wall_material", "steel"))
             self._wall_ring = ring
+            self._wall_q = qf
             self._wall_f1 = min(max(2300.0 * (0.024 / r) * mf, 1300.0), 4200.0)
             self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
             self._wallpk1_zi = np.zeros(2)
@@ -878,7 +904,12 @@ class Synthesizer:
         # open race system vs a restrictive stock one) is clearly audible — a
         # restrictive pipe rings much less (damped, 'plastic'), an open one holds
         # a long metallic ring.  Was 0.84+0.15x (too narrow -> voices samey).
-        g = min(0.80 + 0.20 * eng.exhaust_openness, 0.992)
+        # ...plus the WALL MATERIAL's damping: a low-loss pipe (titanium) absorbs
+        # less of the gas wave into its walls, so the whole exhaust resonance
+        # rings LONGER (the metallic 'sing'); cast iron soaks it up (dead).  This
+        # is why the pipe material changes the note so much, not just a formant.
+        qf = getattr(self, "_wall_q", 1.0)
+        g = min(0.80 + 0.20 * eng.exhaust_openness + 0.035 * (qf - 1.0), 0.994)
 
         # VARIABLE EXHAUST VALVE: it opens with rpm + throttle.  Closed (idle /
         # light load) the gas takes the long muffled path -> dark, bassy, lumpy;
@@ -1549,9 +1580,12 @@ class Synthesizer:
             f1 = self._wall_f1 * (1.0 - 0.18 * wt)
             f2 = self._wall_f2 * (1.0 - 0.22 * wt)
             ring = getattr(self, "_wall_ring", 1.0)      # material ping strength
-            bp1, ap1 = self._pk(f1, 3.4, (3.0 - 1.2 * wt) * ring)
+            qf = getattr(self, "_wall_q", 1.0)           # material ring duration/Q
+            # Q from the material damping: a low-loss wall (titanium) rings
+            # sharper/longer; cast iron is broad and dead.
+            bp1, ap1 = self._pk(f1, min(3.4 * qf, 12.0), (4.3 - 1.4 * wt) * ring)
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
-            bp2, ap2 = self._pk(f2, 4.2, (2.2 - 1.4 * wt) * ring)
+            bp2, ap2 = self._pk(f2, min(4.2 * qf, 14.0), (3.2 - 1.6 * wt) * ring)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         self._tap("metal ring", sig)          # stainless wall-resonance formants
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
