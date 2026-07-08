@@ -176,6 +176,11 @@ class Engine:
                                      #   "twincharge"  supercharger + turbo compound ->
                                      #                 blower whine low, turbo whistle top
     boost_bar: float = 0.0           # peak boost above atmospheric (bar)
+    # intercooler effectiveness (0 none .. ~0.9 great): fraction of the compressor's
+    # heat-of-compression pulled back out before the charge enters the cylinder.  A
+    # HOT charge is less dense -> less mass -> less power than its pressure implies
+    # (the hot-vs-cold air effect).  0.7 = a typical intercooled road setup.
+    intercooler_eff: float = 0.7
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
     turbo_lag: float = 0.6           # spool time constant (s) for turbo
     turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)

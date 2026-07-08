@@ -41,6 +41,9 @@ LHV = 44.0e6            # gasoline lower heating value, J/kg
 AFR_ST = 14.7           # stoichiometric AFR (air-limited heat: LHV/AFR_st per kg air)
 AFR_DIESEL = 25.0       # diesel runs lean at rated load (lambda ~ 1.7)
 R_AIR = 287.0
+T_AMB = 300.0           # ambient charge-inlet temperature (K)
+GAMMA_AIR = 1.40        # cold-air ratio for the compression heat-of-compression
+ETA_COMP = 0.70         # compressor isentropic efficiency (real wheel runs hotter)
 GAMMA_CYC = 1.30        # matches the in-cylinder model
 ETA_SHAPE = 0.68        # ONE global real-cycle factor: finite burn + wall heat +
                         # blowdown + valve-timing losses vs the ideal Otto cycle.
@@ -66,7 +69,16 @@ def torque_target(eng, rpm, mapf, ve):
     # boosted SI is knock-limited: spark retard + enrichment shave efficiency
     eta_k = 1.0 if diesel else 1.0 - KNOCK_DERATE * min(
         getattr(eng, "boost_bar", 0.0), 2.5)
-    t_man = 300.0 + 30.0 * max(mapf - 1.0, 0.0)      # intercooled charge heats a bit
+    # CHARGE-AIR TEMPERATURE (white-box hot-vs-cold): the compressor heats the
+    # intake by the real heat of compression — isentropic to (P2/P1)^((g-1)/g),
+    # divided by the compressor efficiency (a real ~70% wheel runs HOTTER) — then
+    # an intercooler pulls a fraction (effectiveness) back out.  Density
+    # rho = P/(R·T) is what makes torque, so a hot un-intercooled charge makes less
+    # power than its boost pressure implies.  NA (mapf<=1) stays at ambient.
+    PR = max(mapf, 1.0)                               # compressor pressure ratio
+    t2 = T_AMB * (1.0 + (PR ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0) / ETA_COMP)
+    eps_ic = min(max(getattr(eng, "intercooler_eff", 0.7), 0.0), 0.95)
+    t_man = t2 - eps_ic * (t2 - T_AMB)               # intercooler cools it back
     rho = mapf * P_ATM / (R_AIR * t_man)
     imep = eta_cyc * ETA_SHAPE * eta_k * q_per_air * rho * max(ve, 0.0)
     pmep = max(P_ATM - mapf * P_ATM, 0.0)            # throttled intake pumping loop

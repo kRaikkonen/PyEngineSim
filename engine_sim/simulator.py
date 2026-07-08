@@ -318,10 +318,21 @@ class Simulator:
             return
         thr = self._effective_throttle()
         rf = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
-        if ind == "roots":                       # positive-displacement: ~instant
-            target = eng.boost_bar * thr * min(max(rf / 0.25, 0.25), 1.0)
+        if ind == "roots":
+            # ROOTS positive-displacement blower (WHITE-BOX): it pumps a FIXED
+            # volume ratio to the engine every revolution, so its pressure ratio —
+            # hence boost — is RPM-INDEPENDENT: flat from just off idle (the
+            # instant-torque signature).  Belt-driven, so no turbo lag.  A recirc
+            # BYPASS bleeds it toward ambient as the throttle shuts.  boost_bar
+            # anchors the sized displacement ratio.
+            spin = min(rf / 0.10, 1.0)            # belt reaches full ratio ~10% redline
+            bypass = 0.25 + 0.75 * thr            # bypass valve bleeds off shut throttle
+            target = eng.boost_bar * spin * bypass
             rate = min(dt * 18.0, 1.0)
-        elif ind == "centrifugal":               # rises with rpm^2, ~instant
+        elif ind == "centrifugal":
+            # CENTRIFUGAL blower (WHITE-BOX): a compressor whose pressure ratio rises
+            # with impeller TIP-SPEED^2 ~ (rpm·pulley)^2, so boost builds as rpm^2 —
+            # the top-end rush.  Belt-driven -> no lag; boost_bar anchors redline.
             target = eng.boost_bar * thr * (rf * rf)
             rate = min(dt * 14.0, 1.0)
         else:                                     # turbo: spools with lag
