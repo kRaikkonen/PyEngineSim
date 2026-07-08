@@ -151,6 +151,17 @@ class Engine:
     # open), <1 small bore (darker + a whistle, more restrictive)
     tip_scale: float = 1.0
     flex_pipe: bool = False           # corrugated flex section -> a buzzy mid resonance
+    # MEGAPHONE / exit-horn flare (0 = straight pipe .. 1 = full race megaphone cone).
+    # A diverging cone impedance-matches the pipe to open air: it radiates a
+    # POWERFUL mid 'bark' around its horn cutoff and projects the upper-mid,
+    # while reflecting less low end.  The open, upswept, large-bore exits of an
+    # F1 / MotoGP / classic racer act like one — this is what makes them sound
+    # high AND massive (澎湃有力), not a thin whistle.
+    megaphone: float = 0.0
+    # WASTEGATE plumbing (turbo only): "internal" recirculates quietly (just the
+    # turbine-bypass rasp); "external" dumps to atmosphere through a screamer pipe
+    # -> a hard metallic chatter/screech when the gate cracks open at full boost.
+    wastegate: str = "internal"
 
     # forced induction -------------------------------------------------------
     # "na" naturally aspirated | "roots" positive-displacement supercharger

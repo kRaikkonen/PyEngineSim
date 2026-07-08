@@ -878,6 +878,23 @@ class Synthesizer:
             self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
             self._wallpk1_zi = np.zeros(2)
             self._wallpk2_zi = np.zeros(2)
+            # MEGAPHONE / exit-horn: a diverging cone radiates efficiently only
+            # ABOVE its cutoff f_horn = c/(2π·a_mouth) (a_mouth = flared-mouth
+            # radius), around which it projects a POWERFUL mid 'bark' (a trumpet-
+            # bell formant) while low frequencies escape poorly and the thin far-
+            # field extreme-top rolls off.  That broad mid emphasis IS the 澎湃有力
+            # midrange roar of an open F1/race exit — high AND massive, not a thin
+            # whistle.  Frequency falls out of the flare + exit bore.
+            mega = min(max(getattr(eng, "megaphone", 0.0), 0.0), 1.0)
+            self._mega_amt = mega
+            if mega > 0.02:
+                a_mouth = r * (1.0 + 1.5 * mega)              # cone opens the mouth
+                f_horn = min(max(343.0 / (2.0 * math.pi * a_mouth), 500.0), 3200.0)
+                self._mega_f = f_horn * 1.3                   # bark just above cutoff
+                self._mega_zi = np.zeros(2)
+                self._mega_hi_zi = np.zeros(2)
+            else:
+                self._mega_f = 0.0
             # (#2) HIGH-ORDER STANDING-WAVE WHINE: the odd harmonics of the pipe's
             # quarter-wave that fall in 3-7 kHz ARE the whine.  Their sharpness (Q)
             # scales with the pipe's length/diameter ratio — a long, thin, small-
@@ -1378,8 +1395,7 @@ class Synthesizer:
                 # g_e = g * |one-pole LP|.  The stack now rings exactly where
                 # this car's pipe resonates instead of a hand-rolled rolloff.
                 harms = []
-                best = 1e-9
-                for hk in range(1, 9):
+                for hk in range(1, 11):
                     f = hk * fire_hz
                     if f >= self.sample_rate * 0.45:
                         break
@@ -1389,26 +1405,31 @@ class Synthesizer:
                     g_e = min(g * lp_mag, 0.995)
                     comb = 1.0 / math.sqrt(1.0 + 2.0 * g_e * math.cos(w * D1)
                                            + g_e * g_e)
-                    a = comb / hk
+                    # A powerful brass-like scream = a STRONG fundamental anchoring
+                    # a SMOOTH harmonic rolloff.  The 'broken trumpet' was a weak
+                    # fundamental (6%!) with energy scattered into harsh high
+                    # partials — so drive a dominant fundamental + exponential
+                    # rolloff (0.66^k) and let the pipe comb only lightly COLOUR it
+                    # (^0.35), instead of a sharp comb resonance hollowing out the
+                    # core.  High AND massive (高亢澎湃有力), not a thin buzz.
+                    a = comb ** 0.35 * 0.66 ** (hk - 1)
+                    if hk == 1:
+                        a *= 1.45              # firm the anchoring fundamental note
                     harms.append((hk, a))
-                    best = max(best, a)
                 if harms:
-                    harms = [(hk, a / best) for hk, a in harms]
+                    srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
+                    harms = [(hk, a / srms) for hk, a in harms]   # unit-RMS stack
                     scream = self._whine(fire_hz, frames, harms,
                                          phase_attr="_scream_phase")
-                    # CROSSFADE, not reinforce.  At 1200-1500 fires/s the discrete
-                    # blowdown pulses are ~25 samples apart and have PHYSICALLY
-                    # fused into one continuous harmonic tone — so the per-pulse
-                    # voice underneath is now degenerate 'chuff' that made an F1
-                    # sound like a merely very fast engine, not a screaming wail.
-                    # As merge (m) grows we DUCK that chuff and hand the note to
-                    # the merged scream, keeping a little pulse texture for attack.
-                    # Level-match to the ducked voice so loudness is preserved and
-                    # only the character shifts (AGC finishes the job downstream).
-                    srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
+                    # grit: a real open-exhaust screamer is nonlinear — saturate for
+                    # raspy POWER (odd harmonics that read as force), not a pure sine.
+                    scream = np.tanh(scream * (1.3 + 1.4 * load)) * 0.85
+                    # CROSSFADE the fused pulses onto the merged scream, but DUCK
+                    # ONLY LIGHTLY — the combustion punch/body underneath IS the 有力
+                    # a real F1 keeps.  (Was 0.62 = stripped it to a comical whistle.)
                     sig_rms = math.sqrt(float(np.mean(sig * sig)) + 1e-12)
-                    duck = 0.62 * m
-                    lvl = sig_rms * (0.85 + 0.55 * load) * m / srms
+                    duck = 0.32 * m
+                    lvl = sig_rms * (1.10 + 0.50 * load) * m
                     sig = (1.0 - duck) * sig + lvl * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
@@ -1654,6 +1675,19 @@ class Synthesizer:
             bp2, ap2 = self._pk(f2, min(4.2 * qf, 14.0), (3.2 - 1.6 * wt) * ring)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         self._tap("metal ring", sig)          # stainless wall-resonance formants
+        # --- MEGAPHONE / exit-horn bark: the powerful mid formant a diverging
+        # cone radiates (see the _mega setup).  A broad peak at the horn frequency
+        # gives the massive 澎湃 midrange roar of an open race exit, and a gentle
+        # trim of the extreme top (the horn's far field concentrates power in its
+        # passband, not the thin >5 kHz hash) keeps it high AND full — the fix for
+        # an F1 sounding like a thin 'broken trumpet'.
+        if _HAVE_SCIPY and getattr(self, "_mega_f", 0.0) > 0.0:
+            bM, aM = self._pk(self._mega_f, 0.8, 7.5 * self._mega_amt)
+            sig, self._mega_zi = lfilter(bM, aM, sig, zi=self._mega_zi)
+            bH, aH = self._pk(min(self._mega_f * 2.4, self.sample_rate * 0.44),
+                              0.7, -3.5 * self._mega_amt)
+            sig, self._mega_hi_zi = lfilter(bH, aH, sig, zi=self._mega_hi_zi)
+        self._tap("megaphone", sig)           # exit-horn mid bark + top trim
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
         # under the note (so a Ferrari V12 thunders, not just screams).
         if _HAVE_SCIPY and self._thunder is not None:

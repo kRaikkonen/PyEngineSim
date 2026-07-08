@@ -330,6 +330,7 @@ def ferrari_f2004_v10() -> Engine:
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
         exhaust_channels=1, exhaust_openness=0.98, muffler_volume_m3=0.0008,
         wall_material="titanium",
+        megaphone=0.7,                           # open upswept race exit -> mid bark
         has_cat=False,                           # open race exhaust, no cat/GPF
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         gear_ratios=[3.04, 2.57, 2.20, 1.89, 1.64, 1.42, 1.24], final_drive=5.35,
@@ -1673,6 +1674,7 @@ def ferrari_f2007_v8() -> Engine:
         exhaust_primary_m=0.42, exhaust_total_m=0.65, exhaust_radius_m=0.018,
         exhaust_channels=2, exhaust_openness=0.99, muffler_volume_m3=0.0006,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
+        megaphone=0.72,                          # open upswept race exit -> mid bark
         wall_material="titanium", gear_grain=0.38, upshift_rpm=18500.0,
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         # (was too tall -> 1st hit 200 km/h without reaching the limiter).
