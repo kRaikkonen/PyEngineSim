@@ -356,6 +356,7 @@ def dodge_hellcat_v8() -> Engine:
     return Engine(
         name="Dodge Charger SRT Hellcat 6.2 SC V8",
         cylinders=cylinders,
+        block_material="cast_iron",      # 6.2 HEMI: iron block -> dull, contained
         flywheel_inertia=0.45, redline_rpm=6200, idle_rpm=720,
         heat_release_k=1.73, ve_width_frac=0.75, closed_map_fraction=0.20,
         friction_static=7.0, starter_torque=180.0,
@@ -1546,6 +1547,7 @@ def peterbilt_389_diesel() -> Engine:
     return Engine(
         name="Peterbilt 389 Cummins X15 15L diesel I6",
         cylinders=cylinders,
+        block_material="cast_iron",      # X15: huge iron block -> deep, dead thud
         flywheel_inertia=2.4, redline_rpm=2100, idle_rpm=600,
         heat_release_k=4.8,              # hard diesel knock
         ve_peak_frac=0.5, ve_width_frac=0.7, closed_map_fraction=0.20,
@@ -2196,6 +2198,8 @@ def porsche_930_turbo() -> Engine:
     """Porsche 911 Turbo 3.3 (930) — air-cooled single-turbo flat-six, big lag + whistle."""
     return _vee("Porsche 911 Turbo 3.3 (930) air-cooled flat-6", 6, 97.0, 74.4, 127.0,
                 7.0, 90.0, _FO_FLAT6, flywheel_inertia=0.2, redline_rpm=7000, idle_rpm=900,
+                block_material="magnesium",  # air-cooled crankcase: light, rings bright
+
                 heat_release_k=3.4, ve_width_frac=0.6, closed_map_fraction=0.16,
                 exhaust_tone=86.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
                 exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.78,
@@ -2503,6 +2507,8 @@ def ford_gt40_mk2() -> Engine:
     """Ford GT40 MK2 — 427 (7.0) NA OHV cross-plane V8 — the Le Mans American thunder."""
     return _vee("Ford GT40 MK2 427 7.0 V8", 8, 107.4, 96.0, 160.0, 10.5, 45.0, _FO_V8_X,
                 flywheel_inertia=0.34, redline_rpm=6500, idle_rpm=750,
+                block_material="cast_iron",  # 427 FE: iron block -> heavy thunder
+
                 heat_release_k=3.5, ve_width_frac=0.66, closed_map_fraction=0.12,
                 exhaust_tone=60.0, exhaust_primary_m=0.55, exhaust_total_m=1.7,
                 exhaust_radius_m=0.030, exhaust_channels=2, exhaust_openness=0.92,
@@ -2694,6 +2700,7 @@ def nissan_titan_warrior() -> Engine:
     """Nissan Titan Warrior — 5.0 Cummins twin-turbo V8 DIESEL — a deep oil-burner V8."""
     return _vee("Nissan Titan Warrior 5.0 Cummins TT V8 diesel", 8, 100.0, 99.0, 165.0, 16.5,
                 45.0, _FO_V8_X, flywheel_inertia=1.1, redline_rpm=4000, idle_rpm=650,
+                block_material="cast_iron",   # Cummins diesel: heavy iron block
                 heat_release_k=4.6, ve_peak_frac=0.52, ve_width_frac=0.7,
                 closed_map_fraction=0.2, friction_static=20.0, starter_torque=600.0,
                 starter_speed_rpm=240.0, exhaust_tone=50.0, exhaust_primary_m=0.65,
@@ -2710,6 +2717,7 @@ def mercedes_actros_race_truck() -> Engine:
     """Mercedes Tankpool Actros Racing Truck — OM471 12.8 turbo DIESEL I6 — race-truck roar."""
     return _inline("Mercedes-Benz Actros Tankpool OM471 12.8 diesel I6", 6, 132.0, 156.0,
                    255.0, 17.0, _FO_I6, flywheel_inertia=2.6, redline_rpm=2700, idle_rpm=560,
+                   block_material="cgi",      # modern race-truck diesel: CGI block
                    heat_release_k=4.8, ve_peak_frac=0.5, ve_width_frac=0.7,
                    closed_map_fraction=0.2, friction_static=30.0, starter_torque=1000.0,
                    starter_speed_rpm=200.0, exhaust_tone=46.0, exhaust_primary_m=0.85,
@@ -2726,6 +2734,7 @@ def volvo_iron_knight() -> Engine:
     """Volvo Iron Knight — D13 12.8 twin-turbo DIESEL I6 (record truck) — 2400 hp brute."""
     return _inline("Volvo Iron Knight D13 12.8 TT diesel I6", 6, 131.0, 158.0, 255.0, 17.0,
                    _FO_I6, flywheel_inertia=2.4, redline_rpm=2500, idle_rpm=560,
+                   block_material="cgi",      # D13 record diesel: CGI block
                    heat_release_k=5.0, ve_peak_frac=0.5, ve_width_frac=0.72,
                    closed_map_fraction=0.2, friction_static=30.0, starter_torque=1100.0,
                    starter_speed_rpm=200.0, exhaust_tone=44.0, exhaust_primary_m=0.85,

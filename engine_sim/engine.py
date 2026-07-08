@@ -251,6 +251,15 @@ class Engine:
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
     wall_material: str = "steel"     # exhaust pipe material: titanium / steel /
                                      #   aluminium / iron -> wall-resonance pitch
+    # STRUCTURE-BORNE radiation: the combustion is sealed in the block+head, so
+    # what the listener hears is radiated THROUGH the casting — CONTAINED by its
+    # mass (mass-law low-pass) and rung at its structural resonances (~sqrt(E/rho),
+    # a bigger casting rings lower).  This is what stops the note sounding like
+    # combustion in the open air.  aluminium = light, rings bright/longer (modern
+    # alloy blocks, the metallic 'clatter'); cast_iron = heavy & damped, dull &
+    # contained (muscle/diesel/vintage); cgi/magnesium in between.
+    block_material: str = "aluminium"
+    piston_material: str = "aluminium"  # forged/aluminium slap edge (cold knock)
     cat_cells_cpsi: int = 400        # catalytic cell density (cells/in^2): higher =
                                      #   denser honeycomb = more high-frequency damping
     intake_runner_m: float = 0.30    # intake runner length (m) -> per-cylinder

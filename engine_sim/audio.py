@@ -108,6 +108,8 @@ _MATERIAL = {
     "aluminium": (69.0, 2700.0, 0.0002), "aluminum": (69.0, 2700.0, 0.0002),
     "iron": (110.0, 7200.0, 0.0120), "cast_iron": (110.0, 7200.0, 0.0120),
     "ceramic": (300.0, 3800.0, 0.0040), "ceramic_coated": (300.0, 3800.0, 0.0040),
+    "cgi": (145.0, 7100.0, 0.0060), "compacted_graphite": (145.0, 7100.0, 0.0060),
+    "magnesium": (45.0, 1800.0, 0.0010), "mag": (45.0, 1800.0, 0.0010),
 }
 _MAT_REF = (5.048, 7850.0, 0.0016)     # steel sqrt(E/rho), rho, loss (references)
 
@@ -597,7 +599,7 @@ class Synthesizer:
         ]
         self._audio_stages = [
             "header", "head/port", "catalytic", "standing-wave", "muffler",
-            "induction+gears", "metal ring", "thunder", "reflection",
+            "induction+gears", "metal ring", "thunder", "reflection", "block",
             "EQ", "cabin/room", "output",
         ]
         self._cold = 1.0          # cold-start factor (1 cold .. 0 warmed up)
@@ -897,6 +899,36 @@ class Synthesizer:
                 self._mega_hi_zi = np.zeros(2)
             else:
                 self._mega_f = 0.0
+
+            # STRUCTURE-BORNE / BLOCK RADIATION: the combustion is sealed in the
+            # block + head, so the listener hears it radiated THROUGH the casting —
+            # CONTAINED by the wall mass (a mass-law low-pass; denser wall = more
+            # contained) and rung at the casting's own structural resonances
+            # (bending/panel modes ~ sqrt(E/rho)/bore — a bigger, heavier block
+            # rings LOWER; a light alloy one HIGHER and longer, the metallic
+            # 'clatter').  Adding this parallel path is what stops the note sounding
+            # like combustion in the OPEN AIR.  All derived from block material +
+            # bore; NOT sent down the exhaust pipe (it radiates off the metal).
+            bmat = getattr(eng, "block_material", "aluminium")
+            bE, brho, bloss = _MATERIAL.get(bmat, _MATERIAL["aluminium"])
+            c_struct = math.sqrt(bE * 1e9 / brho)            # casting bar-wave speed
+            bore = max(eng.cylinders[0].bore, 0.05)
+            f_blk = min(max(0.0249 * c_struct / bore, 600.0), 2400.0)
+            self._blk_f1 = f_blk
+            self._blk_f2 = min(f_blk * 2.15, sr * 0.42)      # 2nd panel mode
+            # ring Q from the damping (light alloy rings, cast iron thuds); mass-law
+            # containment cutoff falls with density (heavier block = more sealed)
+            self._blk_q = min(max((0.0016 / bloss) ** 0.30 * 1.7, 0.5), 4.5)
+            self._blk_fc = min(max(5200.0 * (2700.0 / brho) ** 0.30, 2600.0),
+                               sr * 0.44)
+            self._blk_lp = butter(2, self._blk_fc / (sr / 2), btype="low")
+            self._blk_lp_zi = np.zeros(2)
+            self._blk1_zi = np.zeros(2)
+            self._blk2_zi = np.zeros(2)
+            # a lighter, high-loss-poor alloy block radiates MORE (thin walls, less
+            # self-damping); a heavy iron block eats it.  Mix from density + loss.
+            self._blk_mix = min(max(0.22 * (2700.0 / brho) ** 0.22
+                                    * (0.0016 / bloss) ** 0.12, 0.08), 0.34)
             # (#2) HIGH-ORDER STANDING-WAVE WHINE: the odd harmonics of the pipe's
             # quarter-wave that fall in 3-7 kHz ARE the whine.  Their sharpness (Q)
             # scales with the pipe's length/diameter ratio — a long, thin, small-
@@ -1823,6 +1855,25 @@ class Synthesizer:
                     y[i] = p1
                 self._over_lp_zi = [float(p0), float(p1)]
             sig = (1.0 - over) * sig + over * y        # blend: full LP only on overrun
+
+        # --- STRUCTURE-BORNE / BLOCK RADIATION -------------------------------
+        # The combustion heard THROUGH the metal casting — a PARALLEL path (it
+        # radiates off the block surface, it does NOT travel down the exhaust
+        # pipe).  Contain the raw combustion bang by the wall mass (the mass-law
+        # low-pass) and ring it at the block's structural resonances, then mix it
+        # into the room alongside the exhaust — so the note reads as an explosion
+        # sealed INSIDE an engine, not detonating in the open air.  Material- and
+        # bore-derived (see the _blk setup); light alloy rings bright & long, cast
+        # iron is dull & contained.
+        if _HAVE_SCIPY and getattr(self, "_blk_mix", 0.0) > 0.0 and dps > 1e-12:
+            st, self._blk_lp_zi = lfilter(self._blk_lp[0], self._blk_lp[1],
+                                          bang, zi=self._blk_lp_zi)
+            b1, a1 = self._pk(self._blk_f1, self._blk_q, 6.0)
+            st, self._blk1_zi = lfilter(b1, a1, st, zi=self._blk1_zi)
+            b2, a2 = self._pk(self._blk_f2, self._blk_q * 0.8, 4.0)
+            st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
+            sig = sig + self._blk_mix * st
+        self._tap("block", sig)               # structure-borne combustion body
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
