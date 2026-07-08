@@ -412,6 +412,25 @@ class TruthCylinder:
         self.exhaust_runner = GasSystem(ATM, a_run_e * prim_len, T_AMB, AIR_MIX,
                                         width=prim_len, height=math.sqrt(a_run_e))
         self.a_run_i, self.a_run_e = a_run_i, a_run_e
+        self.prim_len = prim_len
+        # --- 1-D WAVE-ACTION primary (the header-TUNING physics) --------------
+        # The lumped runner above captures inertial scavenging but has no finite
+        # wave-propagation delay, so it can't produce the RESONANT torque peak a
+        # tuned header is famous for.  Model the primary as a travelling-wave
+        # element: the blowdown launches an overpressure wave that travels to the
+        # collector, reflects there as a RAREFACTION (area expansion, R<0) and
+        # returns to the valve after 2L/c.  When that rarefaction arrives during
+        # the exhaust/overlap window it drops the back-pressure the cylinder
+        # exhausts against -> extra scavenging -> a peak at the TUNED rpm (which
+        # scales with 1/L, exactly like a real header).  Same delay-line maths as
+        # the audio waveguide.
+        self._wave_hist = [0.0] * 4096                      # launched-wave ring
+        self._wave_i = 0
+        # collector/primary area-expansion reflection coefficient (acoustic):
+        # R = (A_prim - A_col)/(A_prim + A_col) < 0  -> returns a rarefaction
+        a_col_each = math.pi * (getattr(eng, "exhaust_radius_m", 0.03) * 1.6) ** 2
+        self._wave_R = (a_run_e - a_col_each) / (a_run_e + a_col_each)
+        self._wave_atten = 0.40        # round-trip friction/entropy loss in the tube
         plenum_v = max(eng.total_displacement * 1.2, 0.5e-3) / self.ncyl
         self.plenum = GasSystem(ATM, plenum_v, T_AMB, AIR_MIX,
                                 width=0.2, height=math.sqrt(plenum_v / 0.2))
@@ -598,7 +617,43 @@ class TruthCylinder:
         if abs(intake_flow) > 1e-12 and self.lit:
             self.lit = False                                  # C++: intake kills flame
 
+        # --- WAVE-ACTION (header tuning): the rarefaction that reflected off the
+        # collector 2L/c ago modulates the exhaust-valve SCAVENGING as it arrives
+        # at the port.  Implemented as a BOUNDED flow modulation (not an energy
+        # injection — that positive-feedback-loops and blows the gas state up):
+        # a returned rarefaction (returned<0) raises the pressure drop across the
+        # open valve -> more scavenging; a returned compression wave chokes it.
+        # The 2L/c delay makes this help only near the TUNED rpm (peak ~ 1/L, the
+        # real header behaviour).
         l_e = self.lift(phi_deg, self.exh_center, self.dur_e, self.max_lift_e)
+        c_exh = self.exhaust_runner.c()
+        if c_exh > 1.0:
+            delay = int(round((2.0 * self.prim_len / c_exh) / max(dt, 1e-9)))
+            delay = min(max(delay, 1), len(self._wave_hist) - 1)
+            past = self._wave_hist[(self._wave_i - delay) % len(self._wave_hist)]
+            returned = self._wave_R * self._wave_atten * past    # R<0 -> rarefaction
+            # the wave only couples to the cylinder while the exhaust valve is
+            # OPEN (that is when tuning acts); perturbing the runner with the
+            # valve shut only destabilises it.  Gate on valve lift, apply the
+            # returned wave as a pressure perturbation (dE = dP·V·dof/2) CLAMPED
+            # to 12% of the runner energy, and clamp the resulting pressure to a
+            # physical band so a resonant build-up can never blow the state up.
+            gate = min(l_e / (0.15 * self.max_lift_e), 1.0)
+            if gate > 0.0:
+                dE = (returned * self.exhaust_runner.V
+                      * self.exhaust_runner.dof * 0.5) * gate
+                cap = 0.12 * self.exhaust_runner.E
+                self.exhaust_runner.change_energy(min(max(dE, -cap), cap))
+                p_now = self.exhaust_runner.pressure()
+                lo, hi = 0.25 * ATM, 6.0 * ATM
+                if p_now < lo or p_now > hi:
+                    tgt = min(max(p_now, lo), hi)
+                    self.exhaust_runner.change_energy(
+                        (tgt - p_now) * self.exhaust_runner.V
+                        * self.exhaust_runner.dof * 0.5)
+            self._wave_hist[self._wave_i] = self.exhaust_runner.pressure() - ATM
+            self._wave_i = (self._wave_i + 1) % len(self._wave_hist)
+
         k_ev = self.valve_k(l_e, self.max_lift_e, self.k_exh_max)
         exhaust_flow = GasSystem.flow(k_ev, dt, self.gas, self.exhaust_runner,
                                       A0=self.A_bore, A1=self.a_run_e)
@@ -608,6 +663,7 @@ class TruthCylinder:
         GasSystem.flow(self.k_primary_out, dt, self.exhaust_runner, self.collector,
                        A0=self.a_run_e, A1=self.a_col / self.ncyl)
         self.exhaust_runner.dissipate_excess_velocity()
+
         # collector discharges against TURBINE back-pressure (== ambient when NA)
         self.collector.flow_env(self.k_outlet, dt, self.p_exh_back, T_AMB)
         self.collector.dissipate_excess_velocity()

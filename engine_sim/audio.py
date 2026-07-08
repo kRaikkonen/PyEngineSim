@@ -436,7 +436,7 @@ class Synthesizer:
                                   #   pulse transients into mush (wet complaint)
             "reverb": 0.18,      # spatial reverb mix — an exhaust mic is OUTDOORS
                                  #   in free field; 0.4 was a small room, far too wet
-            "intake": 0.22,       # induction roar level (was a bit windy)
+            "intake": 0.11,       # induction roar level (halved — was too windy)
             "eq_low": 0.0,        # dB
             "eq_mid": 0.0,        # dB
             "eq_high": 0.0,       # dB
