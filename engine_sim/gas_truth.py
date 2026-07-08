@@ -353,7 +353,7 @@ class TruthCylinder:
     """One representative cylinder + its runner gas systems + flame model —
     the CombustionChamber port, driven by prescribed crank kinematics."""
 
-    def __init__(self, eng, spark_advance_fn=None):
+    def __init__(self, eng, spark_advance_fn=None, boost_bar=0.0):
         cyl = eng.cylinders[0]
         self.bore = cyl.bore
         self.stroke = cyl.stroke
@@ -431,6 +431,26 @@ class TruthCylinder:
             peak_scfm / self.ncyl * 2.4 * (a_run_e / self._a_prim_ref))
         self.k_outlet = k_flow_from_scfm(
             peak_scfm * (0.6 + 0.8 * getattr(eng, "exhaust_openness", 0.85)) / self.ncyl)
+
+        # --- FORCED INDUCTION boundary conditions --------------------------
+        # The compressor raises the throttle-body feed pressure to (1 + boost)
+        # atm and heats the charge by isentropic compression; an intercooler
+        # removes most of that heat.  The turbine, extracting the energy to
+        # drive it, raises the EXHAUST manifold back-pressure — the pumping
+        # penalty that stops boost being free.  For an OFFLINE truth sweep the
+        # boost level is an input (the runtime picks it from the P2 turbine-
+        # balance table); here it sets the intake/exhaust env pressures.
+        self.boost_bar = max(boost_bar, 0.0)
+        pr = 1.0 + self.boost_bar / 1.01325            # compressor pressure ratio
+        self.p_intake = (1.0 + self.boost_bar) * ATM
+        # isentropic compressor outlet temp, then intercooler recovers ~75%
+        t_comp = T_AMB * pr ** ((1.4 - 1.0) / 1.4)
+        eta_ic = 0.75 if self.boost_bar > 0.0 else 0.0
+        self.t_intake = T_AMB + (t_comp - T_AMB) * (1.0 - eta_ic)
+        # turbine back-pressure: a modern turbo runs exhaust manifold pressure a
+        # bit ABOVE boost (P3/P2 ~ 1.0-1.4).  Scale gently with boost.
+        self.p_exh_back = (1.0 + 1.15 * self.boost_bar) * ATM if self.boost_bar > 0 \
+            else ATM
 
         # cylinder gas system
         self.gas = GasSystem(ATM, self.Vc + 0.5 * self.Vd, T_AMB, AIR_MIX,
@@ -558,8 +578,12 @@ class TruthCylinder:
         thr_plate = (1.0 - throttle) * 0.97
         k_thr = (math.cos(thr_plate * math.pi * 0.5) ** 4) \
             * self.k_throttle / self.ncyl
-        self.plenum.flow_env(k_thr, dt, ATM, T_AMB, self._charge_mix(throttle))
-        self.plenum.flow_env(self.k_throttle * 0.004 / self.ncyl, dt, ATM, T_AMB,
+        # throttle-body feed is at the COMPRESSOR outlet pressure/temperature
+        # under boost (self.p_intake/self.t_intake == ambient when NA)
+        self.plenum.flow_env(k_thr, dt, self.p_intake, self.t_intake,
+                             self._charge_mix(throttle))
+        self.plenum.flow_env(self.k_throttle * 0.004 / self.ncyl, dt,
+                             self.p_intake, self.t_intake,
                              self._charge_mix(1.0))          # idle bleed
         GasSystem.flow(self.k_runner_feed, dt, self.plenum, self.intake_runner,
                        A0=self.plenum.width * self.plenum.height, A1=self.a_run_i)
@@ -584,7 +608,8 @@ class TruthCylinder:
         GasSystem.flow(self.k_primary_out, dt, self.exhaust_runner, self.collector,
                        A0=self.a_run_e, A1=self.a_col / self.ncyl)
         self.exhaust_runner.dissipate_excess_velocity()
-        self.collector.flow_env(self.k_outlet, dt, ATM, T_AMB)
+        # collector discharges against TURBINE back-pressure (== ambient when NA)
+        self.collector.flow_env(self.k_outlet, dt, self.p_exh_back, T_AMB)
         self.collector.dissipate_excess_velocity()
 
         self.intake_runner.update_velocity(dt, 0.5)
@@ -604,7 +629,8 @@ class TruthCylinder:
 
 
 def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
-                            dphi=2.0, max_cycles=12, tol=0.01, min_warmup=3):
+                            dphi=2.0, max_cycles=12, tol=0.01, min_warmup=3,
+                            boost_bar=None):
     """Run the truth model at one operating point until the cycle converges.
     Returns dict(ve, imep, torque, p_peak, T_peak, map_frac, blowdown_p,
     exhaust_wave) — the quantities the surrogate tables are baked from.
@@ -616,8 +642,20 @@ def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
     warmup phase (two near-identical motoring cycles) would false-trigger the
     tolerance check and return a non-firing state (the high-rpm ``-9 Nm``
     artifact)."""
-    cyl = TruthCylinder(eng, spark_advance_fn)
-    rho_ref = ATM / (R * T_AMB)                # ambient molar density
+    # boost defaults to the engine's rated boost gated by a SPOOL ramp (a turbo
+    # makes no boost at idle and reaches full boost up top) so the truth bake
+    # isn't full-boost-at-1500rpm.  An explicit schedule can bake a 3-D table.
+    if boost_bar is None:
+        b_max = getattr(eng, "boost_bar", 0.0)
+        if b_max > 0.0 and throttle > 0.15:
+            rf = rpm / max(eng.redline_rpm, 1.0)
+            spool = (rf - getattr(eng, "turbo_spool_frac", 0.12)) \
+                / max(getattr(eng, "turbo_spool_width", 0.5), 1e-3)
+            boost_bar = b_max * min(max(spool, 0.0), 1.0) * min(throttle / 0.6, 1.0)
+        else:
+            boost_bar = 0.0
+    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar)
+    rho_ref = ATM / (R * T_AMB)                # ambient molar density (VE ref)
     n_ideal = rho_ref * cyl.Vd                 # ideal trapped charge, mol
     last_imep = None
     result = None
