@@ -841,7 +841,11 @@ class Synthesizer:
         D2 = round(2.0 * l_total * sr / c)             # low resonance (full system)
         # feedback gain from radiation + wall loss (more open -> rings longer,
         # sharper/higher-Q teeth = metallic, not a damped 'plastic' tube)
-        g = min(0.84 + 0.15 * eng.exhaust_openness, 0.992)
+        # WIDENED so the real per-car exhaust openness (a hardware CHOICE: an
+        # open race system vs a restrictive stock one) is clearly audible — a
+        # restrictive pipe rings much less (damped, 'plastic'), an open one holds
+        # a long metallic ring.  Was 0.84+0.15x (too narrow -> voices samey).
+        g = min(0.80 + 0.20 * eng.exhaust_openness, 0.992)
 
         # VARIABLE EXHAUST VALVE: it opens with rpm + throttle.  Closed (idle /
         # light load) the gas takes the long muffled path -> dark, bassy, lumpy;
@@ -867,7 +871,7 @@ class Synthesizer:
         self._flow = flow
 
         # in-loop treble damping, also scaled shut by the valve
-        fc = (2000.0 + 7000.0 * eng.exhaust_openness) * (0.4 + 0.6 * valve)
+        fc = (1200.0 + 8600.0 * eng.exhaust_openness) * (0.4 + 0.6 * valve)
         # TURBULENT wall/radiation loss grows with flow SQUARED (laminar at idle,
         # scrubbing at WOT): the resonator's Q and its top end fall away as flow
         # rises, so idle rings clean and hollow while a redline pull gets rough

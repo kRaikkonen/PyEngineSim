@@ -3101,6 +3101,16 @@ def _annotate(key, eng):
         elif key in _INLINE_TWIN:
             eng.induction_subtype = "twin"
     # --- exhaust hardware (audio) ------------------------------------------------
+    # Spread the exhaust OPENNESS around the fleet mean so genuinely different
+    # exhaust HARDWARE finally sounds different: a track/straight-cut car ends up
+    # clearly open+loud, a stock/luxury car clearly restrictive+muffled.  This is
+    # a monotonic stretch of the real per-car values (preserves each preset's
+    # intent, just widens the contrast) — the within-class differentiator that
+    # engine physics alone can't give (two 2.0T I4s are physically alike, but one
+    # may wear a loud sports exhaust and the other a quiet stock box).
+    _op = eng.exhaust_openness
+    if _op > 0.0:
+        eng.exhaust_openness = min(max(0.66 + (_op - 0.66) * 1.5, 0.30), 0.98)
     # Performance cars run straight-through ABSORPTIVE mufflers (open, broadband,
     # smooth); stock road cars keep the chambered REFLECTIVE box (default).
     if eng.muffler_type == "reflective" and (eng.straight_cut
