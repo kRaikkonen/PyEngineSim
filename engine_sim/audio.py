@@ -540,6 +540,7 @@ class Synthesizer:
         self.fire_chord = 0       # firing-body chord voicing index (hidden keys 1-6)
         self._prev_throttle = 0.0 # for blow-off-valve detection
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
+        self._bov_prev = 0.0      # stock-recirc dark-noise low-pass state
         self._lock = threading.Lock()
         self._stream = None
         self._pg_run = False          # pygame.mixer feeder thread (Android backend)
@@ -1929,28 +1930,34 @@ class Synthesizer:
             elif self._bov_env > 1e-3:
                 n = np.arange(frames)
                 noise = self._rng.standard_normal(frames)
+                # AUDIBLE base level (was tv*0.6-1.15 -> ~0.2 at tv=0.21, buried
+                # under the engine so the toggles did nothing).  A real dump valve
+                # is a LOUD lift-off event; give it its own prominence.
+                bov = 0.42 + 1.0 * tv
                 if self.ssqv:
-                    # HKS SSQV atmospheric dump: a LOUD, sharp, bright metallic
-                    # 'TSSSH' — the unmistakable aftermarket vent, far brighter and
-                    # louder than the muffled stock recirc.  HF-emphasised (the
-                    # valve's high hiss) with a quick attack + short tail.
+                    # HKS SSQV atmospheric dump: LOUD, sharp, very BRIGHT metallic
+                    # 'TSSSH' (HF-emphasised).
                     hf = np.diff(noise, prepend=noise[:1])
-                    env = np.exp(-n / (sr * 0.12)) * self._bov_env
-                    out += (tv * 1.15) * (0.55 * noise + 0.75 * hf) * env
-                    self._bov_env *= math.exp(-frames / (sr * 0.14))
+                    env = np.exp(-n / (sr * 0.13)) * self._bov_env
+                    out += (bov * 1.25) * (0.35 * noise + 1.0 * hf) * env
+                    self._bov_env *= math.exp(-frames / (sr * 0.15))
                 elif self.flutter:
                     fl = 18.0 + 12.0 * bfrac             # surge rate rises with boost
                     ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
                     if frames:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
                     pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 3  # spiky 'tu' bursts
-                    env = np.exp(-n / (sr * 0.20)) * self._bov_env
-                    out += (tv * 0.80) * noise * pulse * env   # was 1.2 — too loud
-                    self._bov_env *= math.exp(-frames / (sr * 0.24))
+                    env = np.exp(-n / (sr * 0.22)) * self._bov_env
+                    out += (bov * 1.05) * noise * pulse * env  # clearly pulsed stututu
+                    self._bov_env *= math.exp(-frames / (sr * 0.26))
                 else:
+                    # stock recirc: SOFT, DARK 'pshhh' (1-pole low-passed noise)
+                    dark = 0.5 * (noise + np.concatenate(([self._bov_prev],
+                                                          noise[:-1])))
+                    self._bov_prev = float(noise[-1])
                     env = np.exp(-n / (sr * 0.09)) * self._bov_env
-                    out += (tv * 0.60) * noise * env     # clean 'pshhh' (was 0.9)
-                    self._bov_env *= math.exp(-frames / (sr * 0.13))
+                    out += (bov * 0.55) * dark * env
+                    self._bov_env *= math.exp(-frames / (sr * 0.12))
         self._prev_throttle = sim.throttle
 
         gv = P["gearbox_vol"]
