@@ -295,7 +295,19 @@ class Simulator:
         #  closed_map_fraction.  Modelling fuel-limited diesel load is a P3 job.)
         frac = map_model.solve_map_fraction(
             t, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
-        return frac * P_ATM + boost_pa
+        if boost_pa > 0.0:
+            # COMPRESSOR-FED THROTTLE (white-box turbo / supercharger / twin-turbo
+            # intake): the plate draws from the compressor OUTLET (P_ATM + boost),
+            # NOT the atmosphere.  So the same orifice fraction scales the BOOSTED
+            # upstream — at WOT the manifold reaches full boost, at part throttle it
+            # falls toward vacuum while the compressor outlet stays high (the surge /
+            # blow-off condition), instead of the old additive 'frac·atm + boost'
+            # that wrongly kept the manifold boosted with the pedal lifted.  Anchored
+            # to the WOT fraction so the rated (WOT) boost is preserved exactly.
+            frac_wot = map_model.solve_map_fraction(
+                1.0, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+            return (frac / max(frac_wot, 0.25)) * (P_ATM + boost_pa)
+        return frac * P_ATM
 
     def _update_boost(self, dt: float):
         """Advance the forced-induction boost (bar) for the current engine."""
