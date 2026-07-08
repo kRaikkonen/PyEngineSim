@@ -1212,7 +1212,8 @@ class Synthesizer:
         # engine, soft for a low-CR one, tinted by its header wave-action — rings
         # in the tone.  Reinforce-only + load-gated (silent on the overrun).
         sig_lut = getattr(sim, "exhaust_sig", None)
-        gt_load = min(max(strength * 1.25, 0.0), 1.0)   # positive-blowdown only
+        gt_load = (min(max(strength * 1.25, 0.0), 1.0)   # positive-blowdown only
+                   if dps > 1e-12 else 0.0)              # strength unset when idle-stopped
         if sig_lut is not None and gt_load > 0.05:
             rf_gt = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             harms = self._gastruth_harmonics(sig_lut, rf_gt)

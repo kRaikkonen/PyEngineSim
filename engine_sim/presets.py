@@ -331,8 +331,8 @@ def ferrari_f2004_v10() -> Engine:
         exhaust_channels=1, exhaust_openness=0.98, muffler_volume_m3=0.0008,
         wall_material="titanium",
         has_cat=False,                           # open race exhaust, no cat/GPF
-        gear_ratios=[2.50, 1.95, 1.60, 1.36, 1.18, 1.04, 0.92],  # close F1 7-speed
-        final_drive=4.20,
+        # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
+        gear_ratios=[3.04, 2.57, 2.20, 1.89, 1.64, 1.42, 1.24], final_drive=5.35,
         vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,        gearbox_type="single",
     )
 
@@ -1674,7 +1674,9 @@ def ferrari_f2007_v8() -> Engine:
         exhaust_channels=2, exhaust_openness=0.99, muffler_volume_m3=0.0006,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         wall_material="titanium", gear_grain=0.38, upshift_rpm=18500.0,
-        gear_ratios=[3.0, 2.3, 1.85, 1.5, 1.25, 1.05, 0.9], final_drive=4.0,
+        # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
+        # (was too tall -> 1st hit 200 km/h without reaching the limiter).
+        gear_ratios=[3.08, 2.60, 2.23, 1.92, 1.66, 1.44, 1.25], final_drive=5.4,
         vehicle_mass=605.0, wheel_radius=0.33, clutch_capacity=600.0,
         gearbox_type="dct",              # F1 seamless shift (no flare)
     )
@@ -1708,7 +1710,8 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         mgu_whine=1.0, upshift_rpm=12000.0,   # loud MGU-H/K whistle; short-shifts
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         gear_grain=0.3,
-        gear_ratios=[3.2, 2.5, 2.0, 1.65, 1.35, 1.12, 0.95, 0.82], final_drive=3.7,
+        # real F1 close-ratio 8-speed: 1st redlines ~130 km/h, 8th ~350 km/h
+        gear_ratios=[2.88, 2.49, 2.16, 1.87, 1.62, 1.41, 1.22, 1.07], final_drive=5.0,
         vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=1500.0,
         gearbox_type="dct",              # F1 seamless shift (no flare)
     )
