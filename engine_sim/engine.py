@@ -194,10 +194,16 @@ class Engine:
     # An electric motor that adds torque (instant, low-end-strong) on top of the
     # combustion engine, with constant torque below hybrid_base_rpm and constant
     # power above it.  Set hybrid_kw > 0 to make the car a hybrid (e.g. 918).
-    hybrid_kw: float = 0.0           # electric motor peak power (kW)
+    hybrid_kw: float = 0.0           # MGU-K / e-motor peak DEPLOY power (kW)
     hybrid_base_rpm: float = 2200.0  # rpm below which the motor gives constant torque
     mgu_whine: float = 0.0           # F1-style power unit: prominent MGU-H (turbo)
                                      #   + MGU-K electric whine.  0 = ordinary hybrid
+    # ERS / hybrid energy store (white-box) --------------------------------------
+    regen_kw: float = 0.0            # MGU-K peak HARVEST power (regen braking); 0 -> = hybrid_kw
+    mgu_h: bool = False              # MGU-H on the turbo shaft: recovers exhaust energy
+                                     #   (charges the store) AND spins the compressor
+                                     #   electrically -> lag-free instant boost (F1 PU)
+    ers_capacity_mj: float = 0.0     # usable battery energy (MJ); 0 -> auto (F1 ~4, road big)
     upshift_rpm: float = 0.0         # auto upshift point (0 = 0.93*redline); F1 cars
                                      #   short-shift well below the redline
 

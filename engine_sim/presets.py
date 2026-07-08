@@ -1710,8 +1710,9 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         exhaust_primary_m=0.4, exhaust_total_m=0.85, exhaust_radius_m=0.027,
         exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.0018,
         induction="turbo", boost_bar=1.6, turbo_lag=0.2, turbo_spool_frac=0.06,
-        electric_turbo=True,             # MGU-H -> near-instant spool
-        hybrid_kw=120.0, hybrid_base_rpm=3000.0,
+        mgu_h=True,                      # MGU-H: lag-free spool + exhaust harvest
+        hybrid_kw=120.0, hybrid_base_rpm=3000.0, ers_capacity_mj=4.0,  # small F1 store
+        regen_kw=120.0,                  # MGU-K harvest under braking
         mgu_whine=1.0, upshift_rpm=12000.0,   # loud MGU-H/K whistle; short-shifts
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         gear_grain=0.3,

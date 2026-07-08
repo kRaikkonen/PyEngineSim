@@ -96,6 +96,22 @@ class Simulator:
         # on the starter despite the thick-oil friction, just like a real ECU.
         self._idle_trim = engine.idle_air_base * 1.6
         self.hybrid_on = True           # electric-motor assist enabled (hybrids)
+        # ERS / hybrid battery (white-box energy accounting): the store is DRAINED
+        # by MGU-K deploy and RECHARGED by MGU-K regen braking + MGU-H exhaust
+        # recovery, so deploy is finite and must be harvested back — an F1 manages a
+        # small (~4 MJ) store, a road hybrid a large one.
+        self.ers_soc = 1.0              # battery state of charge (0..1)
+        self._regen_kw = engine.regen_kw or engine.hybrid_kw   # MGU-K harvest power
+        self._mgu_h_kw = (0.4 * engine.hybrid_kw) if engine.mgu_h else 0.0
+        if engine.ers_capacity_mj > 0.0:
+            cap_mj = engine.ers_capacity_mj
+        elif engine.mgu_h:
+            cap_mj = 4.0               # F1 PU: small, deploy must be managed
+        else:
+            cap_mj = max(engine.hybrid_kw * 0.25, 2.0)   # road hybrid: big enough
+        self._ers_capacity_j = cap_mj * 1.0e6
+        self._ers_deploy_w = 0.0        # commanded MGU-K deploy power this frame
+        self._ers_regen_nm = 0.0        # commanded MGU-K regen brake torque this frame
         # Max physics sub-steps per frame.  The crank-angle integration sub-steps
         # for torque-pulse resolution; the flywheel smooths pulses at high rpm so a
         # coarser cap barely moves the rpm TRAJECTORY (and the audio runs its own
@@ -336,9 +352,12 @@ class Simulator:
             target = eng.boost_bar * thr * (rf * rf)
             rate = min(dt * 14.0, 1.0)
         else:                                     # turbo: spools with lag
-            if eng.electric_turbo:
-                # e-turbo / e-compressor: an electric motor spins the compressor,
-                # so boost is available almost instantly from low rpm, no lag.
+            # An MGU-H (F1 PU) or e-turbo electrically spins the compressor, so boost
+            # is lag-free — the MGU-H uses the store/exhaust recovery to hold the
+            # turbo on song even off-throttle (the reason a modern F1 turbo has no
+            # lag).  Gated by SoC for the MGU-H (an empty battery can't motor it).
+            e_spun = eng.electric_turbo or (eng.mgu_h and self.ers_soc > 0.05)
+            if e_spun:
                 target = eng.boost_bar * thr
                 tau = 0.05
                 rate = min(dt / tau, 1.0)
@@ -361,28 +380,55 @@ class Simulator:
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate
 
-    def _electric_motor_torque(self) -> float:
-        """Electric-motor assist torque (N*m) for a hybrid.
+    def _update_ers(self, dt: float):
+        """WHITE-BOX ERS energy management (once per frame): decide MGU-K DEPLOY vs
+        REGEN and MGU-H harvest, and integrate the battery state of charge.
 
-        Constant torque below ``hybrid_base_rpm`` (the flat low-end shove an EV
-        gives), then constant power above it.  Throttle-scaled so it adds with
-        the driver's demand.  Returns 0 for a non-hybrid or when switched off."""
+          * MGU-K deploy: motors the crank on throttle, DRAINS the store (gated on
+            SoC — deploy runs out if not harvested back).
+          * MGU-K regen: off-throttle & rolling, GENERATES (a brake torque on the
+            crank) and RECHARGES the store — the kinetic recovery.
+          * MGU-H: on the turbo shaft, recovers exhaust enthalpy under boost and
+            charges the store (and, separately, spins the compressor -> lag-free
+            boost, handled in _update_boost).
+        """
         eng = self.engine
         if eng.hybrid_kw <= 0.0 or not self.hybrid_on:
-            return 0.0
-        if self.rpm >= eng.redline_rpm or self._shift_cut:
-            return 0.0                          # no drive past the limiter / mid-shift
+            self._ers_deploy_w = 0.0
+            self._ers_regen_nm = 0.0
+            return
+        cap = self._ers_capacity_j
         thr = min(max(self.throttle, 0.0), 1.0)
-        if thr <= 0.0:
-            return 0.0
-        p_w = eng.hybrid_kw * 1000.0
-        base = max(eng.hybrid_base_rpm, 1.0) * TWO_PI / 60.0
-        peak_tq = p_w / base
-        if self.omega <= base:
-            tq = peak_tq
-        else:
-            tq = p_w / max(self.omega, 1.0)         # constant power region
-        return tq * thr
+        rolling = self.omega > eng.idle_rpm * 0.5 * TWO_PI / 60.0
+        deploy_w = 0.0
+        regen_nm = 0.0
+        # DEPLOY — throttle down, charge available, below the limiter
+        if thr > 0.08 and self.ers_soc > 0.03 and self.rpm < eng.redline_rpm \
+                and not self._shift_cut:
+            deploy_w = eng.hybrid_kw * 1000.0 * thr
+            self.ers_soc -= deploy_w * dt / cap
+        # REGEN — foot off, still rolling, store not full: MGU-K brakes & charges
+        elif thr < 0.06 and rolling and self.ers_soc < 0.995:
+            p_regen = self._regen_kw * 1000.0
+            regen_nm = min(p_regen / max(self.omega, 1.0), eng.hybrid_kw * 4.0)
+            self.ers_soc += 0.9 * regen_nm * self.omega * dt / cap   # 90% recovery
+        # MGU-H — harvest exhaust enthalpy under boost (charges the store)
+        if self._mgu_h_kw > 0.0 and self.boost > 0.05 and eng.boost_bar > 0.0:
+            p_h = self._mgu_h_kw * 1000.0 * min(self.boost / eng.boost_bar, 1.0)
+            self.ers_soc += p_h * dt / cap
+        self.ers_soc = min(max(self.ers_soc, 0.0), 1.0)
+        self._ers_deploy_w = deploy_w
+        self._ers_regen_nm = regen_nm
+
+    def _electric_motor_torque(self) -> float:
+        """MGU-K crank torque (N*m): + deploy (motor) or - regen (generator brake),
+        from the energy-managed commands set by _update_ers."""
+        if self._ers_deploy_w > 0.0:
+            base = max(self.engine.hybrid_base_rpm, 1.0) * TWO_PI / 60.0
+            if self.omega <= base:
+                return self._ers_deploy_w / base            # constant-torque floor
+            return self._ers_deploy_w / max(self.omega, 1.0)  # constant power
+        return -self._ers_regen_nm                          # regen braking
 
     def _update_idle_governor(self, h: float):
         """Integral controller that trims idle air to hold ``idle_rpm`` when the
@@ -637,6 +683,7 @@ class Simulator:
         self.oil_c += (oil_tgt - self.oil_c) * min(0.015 * dt, 1.0)   # tau ~ 1 min
 
         self._update_boost(dt)
+        self._update_ers(dt)            # MGU-K deploy/regen + MGU-H harvest -> SoC
 
         # Solve the burn multiplier ONCE per frame (it moves slowly): the
         # crank-resolved pulses then release exactly the heat the physical
