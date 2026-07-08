@@ -919,16 +919,19 @@ class Synthesizer:
             # ring Q from the damping (light alloy rings, cast iron thuds); mass-law
             # containment cutoff falls with density (heavier block = more sealed)
             self._blk_q = min(max((0.0016 / bloss) ** 0.30 * 1.7, 0.5), 4.5)
-            self._blk_fc = min(max(5200.0 * (2700.0 / brho) ** 0.30, 2600.0),
+            # the LID: mass-law transmission cutoff — a denser/heavier wall seals
+            # the combustion behind a LOWER wall, muffling more of its raw top end.
+            self._blk_fc = min(max(2800.0 * (2700.0 / brho) ** 0.34, 1500.0),
                                sr * 0.44)
             self._blk_lp = butter(2, self._blk_fc / (sr / 2), btype="low")
             self._blk_lp_zi = np.zeros(2)
             self._blk1_zi = np.zeros(2)
             self._blk2_zi = np.zeros(2)
-            # a lighter, high-loss-poor alloy block radiates MORE (thin walls, less
-            # self-damping); a heavy iron block eats it.  Mix from density + loss.
-            self._blk_mix = min(max(0.22 * (2700.0 / brho) ** 0.22
-                                    * (0.0016 / bloss) ** 0.12, 0.08), 0.34)
+            # SEAL weight = how much of the raw open combustion is replaced by the
+            # muffled-through-the-block version (the 焖煮 'lid').  Rises with the
+            # casting mass (density): a heavy iron block smothers hard, a light
+            # alloy one less (and rings brighter through the thinner walls).
+            self._blk_seal = min(max(0.52 * (brho / 2700.0) ** 0.22, 0.36), 0.70)
             # (#2) HIGH-ORDER STANDING-WAVE WHINE: the odd harmonics of the pipe's
             # quarter-wave that fall in 3-7 kHz ARE the whine.  Their sharpness (Q)
             # scales with the pipe's length/diameter ratio — a long, thin, small-
@@ -1363,11 +1366,33 @@ class Synthesizer:
             b, a = self._pk(110.0, 0.6, 10.0 * fw)
             bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
 
-        # separated fizz (own slider) + clean wet pipe resonance on top
+        # separated fizz (own slider)
         fizz = np.zeros(frames, dtype=np.float64)
         for ci in range(self._nchan):
             fizz += fizz_chans[ci]
-        sig = bang + wet + P["turbulence"] * (fizz * inv)
+
+        # --- STRUCTURE-BORNE ENCLOSURE ('焖煮' — the lid on the pot) -----------
+        # The combustion is SEALED inside the block + head + piston, so you never
+        # hear the raw open detonation.  The whole in-cylinder EVENT — the thump
+        # AND its turbulent gas-rush fizz — is MUFFLED behind the wall mass (a
+        # mass-law low-pass, the 'lid') and rung at the casting's structural
+        # resonances; only the pipe resonance `wet` stays bright, because THAT
+        # actually leaves through the open tailpipe.  Applied IN PLACE (not an
+        # added echo) so the raw open top end is genuinely SMOTHERED: a heavier
+        # block seals harder & darker, a light alloy less & brighter (the air-
+        # cooled 'clatter').  This is what stops it sounding like combustion out
+        # in the open air.
+        combustion = bang + P["turbulence"] * (fizz * inv)
+        if _HAVE_SCIPY and getattr(self, "_blk_seal", 0.0) > 0.0:
+            st, self._blk_lp_zi = lfilter(self._blk_lp[0], self._blk_lp[1],
+                                          combustion, zi=self._blk_lp_zi)  # the lid
+            b1, a1 = self._pk(self._blk_f1, self._blk_q, 5.0)
+            st, self._blk1_zi = lfilter(b1, a1, st, zi=self._blk1_zi)      # block ring
+            b2, a2 = self._pk(self._blk_f2, self._blk_q * 0.8, 3.0)
+            st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
+            combustion = (1.0 - self._blk_seal) * combustion + self._blk_seal * st
+        self._tap("block", combustion)        # sealed in-cylinder combustion event
+        sig = combustion + wet                # + the OPEN pipe resonance (tailpipe)
 
         # --- gas_truth EXHAUST SIGNATURE: colour the firing tone with the ACTUAL
         # solver's per-cylinder exhaust-pulse spectrum (the ultimate white-box
@@ -1855,25 +1880,6 @@ class Synthesizer:
                     y[i] = p1
                 self._over_lp_zi = [float(p0), float(p1)]
             sig = (1.0 - over) * sig + over * y        # blend: full LP only on overrun
-
-        # --- STRUCTURE-BORNE / BLOCK RADIATION -------------------------------
-        # The combustion heard THROUGH the metal casting — a PARALLEL path (it
-        # radiates off the block surface, it does NOT travel down the exhaust
-        # pipe).  Contain the raw combustion bang by the wall mass (the mass-law
-        # low-pass) and ring it at the block's structural resonances, then mix it
-        # into the room alongside the exhaust — so the note reads as an explosion
-        # sealed INSIDE an engine, not detonating in the open air.  Material- and
-        # bore-derived (see the _blk setup); light alloy rings bright & long, cast
-        # iron is dull & contained.
-        if _HAVE_SCIPY and getattr(self, "_blk_mix", 0.0) > 0.0 and dps > 1e-12:
-            st, self._blk_lp_zi = lfilter(self._blk_lp[0], self._blk_lp[1],
-                                          bang, zi=self._blk_lp_zi)
-            b1, a1 = self._pk(self._blk_f1, self._blk_q, 6.0)
-            st, self._blk1_zi = lfilter(b1, a1, st, zi=self._blk1_zi)
-            b2, a2 = self._pk(self._blk_f2, self._blk_q * 0.8, 4.0)
-            st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
-            sig = sig + self._blk_mix * st
-        self._tap("block", sig)               # structure-borne combustion body
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
