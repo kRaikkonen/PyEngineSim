@@ -453,6 +453,16 @@ class Synthesizer:
         _S = _Aev * 550.0 / max(_Vevo, 1e-9)
         self._bd_sharp = min(max(_S / 380.0, 0.40), 2.30)       # 380 = reference
 
+        # TIER B: the REAL gas_truth blowdown-FLOW pulse LUT (per rpm fraction) —
+        # the actual solver excitation each firing can be driven with, in place of
+        # the parametric blow+displacement.  LAZILY baked the first time the
+        # solver_pulse toggle is switched on (see the property below) so there is
+        # ZERO load cost while it is off (the default).  The flow burst sits cleanly
+        # in the audio's exhaust window (505-715 deg), so it is indexed by the
+        # per-cylinder crank angle `phi` directly.
+        self._pulse_lut = None
+        self._solver_pulse = False
+
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
         # is what gives a multi-cylinder exhaust its rich, layered waveform.
@@ -637,6 +647,40 @@ class Synthesizer:
         self.latency_ms = 0.0
         self.mode = "off"
         self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
+
+    # ------------------------------------------------------------ TIER B toggle
+    @property
+    def solver_pulse(self):
+        """Drive each firing with the REAL gas_truth blowdown-flow pulse instead of
+        the parametric blow+displacement.  OFF by default: the raw peak-normalised
+        flow burst is blowdown-dominated and loses the low-freq stroke 'body', so it
+        brightens/flattens the per-car character that Tier A's stroke/emptying-rate
+        physics already captures faithfully — an A/B toggle, not shipped on."""
+        return self._solver_pulse
+
+    @solver_pulse.setter
+    def solver_pulse(self, on):
+        on = bool(on)
+        # LAZILY bake the pulse LUT the first time it is switched on (on the caller/
+        # UI thread — a one-off ~0.3 s, never in the audio callback), so 'off' costs
+        # nothing at load.
+        if on and self._pulse_lut is None:
+            try:
+                from .gas_truth import exhaust_pulse_lut
+                pgrid, ppulses = exhaust_pulse_lut(self.sim.engine)
+                self._pulse_grid = np.array(pgrid, dtype=np.float64)
+                self._pulse_lut = np.array(ppulses, dtype=np.float64)   # [n_rpm, N]
+                n_p = self._pulse_lut.shape[1]
+                self._pulse_deg = np.arange(n_p) * (720.0 / n_p)
+                # levels anchored so the reference (Aventador) ~ its validated
+                # parametric voice; per-car SHAPE variation is the real solver's.
+                self._pulse_body = 1.15     # real blowdown-flow burst level
+                self._pulse_disp = 0.85     # parametric displacement hump (the low-end
+                                            #   body the peak-normalised flow loses)
+                self._pulse_edge = 0.34     # small analytic sub-degree crack on top
+            except Exception:
+                self._pulse_lut = None
+        self._solver_pulse = on
 
     # --------------------------------------------------------- rate-dependent
     def _build_audio(self):
@@ -1226,6 +1270,20 @@ class Synthesizer:
             voice = self._cyl_voice
             cv = self.params.get("cyl_voice", 1.0)
             use_voice = voice is not None and cv > 1e-3
+            # TIER B: the real gas_truth blowdown pulse for the CURRENT rpm
+            # (interpolated across the baked LUT once per block).
+            cur_pulse = None
+            if self._pulse_lut is not None and self.solver_pulse:
+                rf_p = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+                pg = self._pulse_grid                  # NB: not `g` (the waveguide gain)
+                if rf_p <= pg[0]:
+                    cur_pulse = self._pulse_lut[0]
+                elif rf_p >= pg[-1]:
+                    cur_pulse = self._pulse_lut[-1]
+                else:
+                    ip = int(np.searchsorted(pg, rf_p))
+                    tp = (rf_p - pg[ip - 1]) / (pg[ip] - pg[ip - 1])
+                    cur_pulse = (1.0 - tp) * self._pulse_lut[ip - 1] + tp * self._pulse_lut[ip]
             for j, off in enumerate(self._offsets):
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
@@ -1270,15 +1328,28 @@ class Synthesizer:
                 tau_disp = tau_j * 1.5
                 disp = soft * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
-                # gas-dynamic blow/displacement SPLIT: a sharp-emptying cylinder
-                # puts more of its energy into the choked blowdown snap and less
-                # into the slow piston-push hump (peaky vs woofy).  Anchored at
-                # sharp=1 -> exactly (blow + 0.7·disp), the reference's balance.
-                pk = self._bd_sharp
-                pulse = np.where(inwin,
-                                 ((0.78 + 0.22 * pk) * blow
-                                  + 0.7 * (1.22 - 0.22 * pk) * disp)
-                                 * close * amp_j, 0.0)
+                if cur_pulse is not None:
+                    # TIER B: drive this firing with the REAL gas_truth blowdown-flow
+                    # pulse, indexed by crank angle (its burst sits in the 505-715
+                    # window, aligned).  The coarse LUT smears the sub-degree edge, so
+                    # the analytic HARD EDGE is kept ON TOP for the metallic crack;
+                    # the real per-car SHAPE (gas-dynamic decay + header wave-action)
+                    # replaces the parametric blow+displacement — the plan's
+                    # DDSP-without-NN excitation, straight from the solver.
+                    baked = np.interp(phi, self._pulse_deg, cur_pulse, period=720.0)
+                    baked = np.clip(baked, 0.0, None)
+                    crack = (0.5 + 0.9 * load) * hard * np.exp(-dd / max(0.45 * tau_blow, 2.0))
+                    pulse = (self._pulse_body * baked
+                             + self._pulse_disp * disp
+                             + self._pulse_edge * crack) * close * amp_j
+                else:
+                    # parametric fallback (no gas_truth LUT): gas-dynamic
+                    # blow/displacement split, anchored at sharp=1 to blow + 0.7·disp.
+                    pk = self._bd_sharp
+                    pulse = np.where(inwin,
+                                     ((0.78 + 0.22 * pk) * blow
+                                      + 0.7 * (1.22 - 0.22 * pk) * disp)
+                                     * close * amp_j, 0.0)
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)

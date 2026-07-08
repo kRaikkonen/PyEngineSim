@@ -470,6 +470,10 @@ class App:
             # gas_truth solver exhaust-signature colour (off = pure tuned synth)
             (T("Solver"), lambda: setattr(sy, "solver_tone", not sy.solver_tone),
              lambda: sy.solver_tone, 1),
+            # TIER B: drive each firing with the REAL gas_truth blowdown pulse
+            # (lazily baked on first enable) instead of the parametric one
+            (T("SolvPulse"), lambda: setattr(sy, "solver_pulse", not sy.solver_pulse),
+             lambda: sy.solver_pulse, 1),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),

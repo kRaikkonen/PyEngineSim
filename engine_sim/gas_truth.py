@@ -834,25 +834,26 @@ def exhaust_pressure_pulse(eng, rf, throttle=1.0, dphi=1.0, N=128,
         while phi < 720.0:
             cyl.step(phi + dphi, dphi, rpm, throttle)
             phi += dphi
-    # record ONE converged cycle of exhaust-runner pressure
+    # record ONE converged cycle of exhaust FLOW (the blowdown burst leaving the
+    # cylinder into the runner) — a clean, localised positive pulse, unlike the
+    # runner PRESSURE whose wave-action can be rarefaction-dominant / sign-ambiguous
+    # and useless as a waveguide excitation.
     trace = []
     phi = 0.0
     while phi < 720.0:
-        cyl.step(phi + dphi, dphi, rpm, throttle)
-        trace.append(cyl.exhaust_runner.pressure() - ATM)
+        _fi, fe = cyl.step(phi + dphi, dphi, rpm, throttle)
+        trace.append(fe)
         phi += dphi
     n = len(trace)
     if n == 0:
         return [0.0] * N
-    # resample to N points (linear), DC-remove, peak-normalise
+    # resample to N points (linear), peak-normalise (keep the burst shape / sign)
     out = []
     for i in range(N):
         x = i * (n - 1) / max(N - 1, 1)
         i0 = int(x)
         i1 = min(i0 + 1, n - 1)
         out.append(trace[i0] + (trace[i1] - trace[i0]) * (x - i0))
-    dc = sum(out) / N
-    out = [v - dc for v in out]
     peak = max(abs(v) for v in out) or 1.0
     return [v / peak for v in out]
 
