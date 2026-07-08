@@ -453,16 +453,6 @@ class Synthesizer:
         _S = _Aev * 550.0 / max(_Vevo, 1e-9)
         self._bd_sharp = min(max(_S / 380.0, 0.40), 2.30)       # 380 = reference
 
-        # TIER B: the REAL gas_truth blowdown-FLOW pulse LUT (per rpm fraction) —
-        # the actual solver excitation each firing can be driven with, in place of
-        # the parametric blow+displacement.  LAZILY baked the first time the
-        # solver_pulse toggle is switched on (see the property below) so there is
-        # ZERO load cost while it is off (the default).  The flow burst sits cleanly
-        # in the audio's exhaust window (505-715 deg), so it is indexed by the
-        # per-cylinder crank angle `phi` directly.
-        self._pulse_lut = None
-        self._solver_pulse = False
-
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
         # is what gives a multi-cylinder exhaust its rich, layered waveform.
@@ -591,7 +581,6 @@ class Synthesizer:
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
         self.ssqv = False         # HKS SSQV atmospheric dump: loud sharp 'TSSSH'
-        self.solver_tone = True   # gas_truth exhaust-signature colour (toggle)
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         # per-stage exhaust-path waveform taps for the refresh-style stage scopes.
@@ -647,40 +636,6 @@ class Synthesizer:
         self.latency_ms = 0.0
         self.mode = "off"
         self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
-
-    # ------------------------------------------------------------ TIER B toggle
-    @property
-    def solver_pulse(self):
-        """Drive each firing with the REAL gas_truth blowdown-flow pulse instead of
-        the parametric blow+displacement.  OFF by default: the raw peak-normalised
-        flow burst is blowdown-dominated and loses the low-freq stroke 'body', so it
-        brightens/flattens the per-car character that Tier A's stroke/emptying-rate
-        physics already captures faithfully — an A/B toggle, not shipped on."""
-        return self._solver_pulse
-
-    @solver_pulse.setter
-    def solver_pulse(self, on):
-        on = bool(on)
-        # LAZILY bake the pulse LUT the first time it is switched on (on the caller/
-        # UI thread — a one-off ~0.3 s, never in the audio callback), so 'off' costs
-        # nothing at load.
-        if on and self._pulse_lut is None:
-            try:
-                from .gas_truth import exhaust_pulse_lut
-                pgrid, ppulses = exhaust_pulse_lut(self.sim.engine)
-                self._pulse_grid = np.array(pgrid, dtype=np.float64)
-                self._pulse_lut = np.array(ppulses, dtype=np.float64)   # [n_rpm, N]
-                n_p = self._pulse_lut.shape[1]
-                self._pulse_deg = np.arange(n_p) * (720.0 / n_p)
-                # levels anchored so the reference (Aventador) ~ its validated
-                # parametric voice; per-car SHAPE variation is the real solver's.
-                self._pulse_body = 1.15     # real blowdown-flow burst level
-                self._pulse_disp = 0.85     # parametric displacement hump (the low-end
-                                            #   body the peak-normalised flow loses)
-                self._pulse_edge = 0.34     # small analytic sub-degree crack on top
-            except Exception:
-                self._pulse_lut = None
-        self._solver_pulse = on
 
     # --------------------------------------------------------- rate-dependent
     def _build_audio(self):
@@ -748,7 +703,6 @@ class Synthesizer:
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
-        self._gastruth_phase = 0.0        # gas_truth exhaust-signature oscillator
         self._itb_phase = 0.0             # ITB induction-howl oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
@@ -1275,20 +1229,6 @@ class Synthesizer:
             voice = self._cyl_voice
             cv = self.params.get("cyl_voice", 1.0)
             use_voice = voice is not None and cv > 1e-3
-            # TIER B: the real gas_truth blowdown pulse for the CURRENT rpm
-            # (interpolated across the baked LUT once per block).
-            cur_pulse = None
-            if self._pulse_lut is not None and self.solver_pulse:
-                rf_p = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
-                pg = self._pulse_grid                  # NB: not `g` (the waveguide gain)
-                if rf_p <= pg[0]:
-                    cur_pulse = self._pulse_lut[0]
-                elif rf_p >= pg[-1]:
-                    cur_pulse = self._pulse_lut[-1]
-                else:
-                    ip = int(np.searchsorted(pg, rf_p))
-                    tp = (rf_p - pg[ip - 1]) / (pg[ip] - pg[ip - 1])
-                    cur_pulse = (1.0 - tp) * self._pulse_lut[ip - 1] + tp * self._pulse_lut[ip]
             for j, off in enumerate(self._offsets):
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
@@ -1333,28 +1273,15 @@ class Synthesizer:
                 tau_disp = tau_j * 1.5
                 disp = soft * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
-                if cur_pulse is not None:
-                    # TIER B: drive this firing with the REAL gas_truth blowdown-flow
-                    # pulse, indexed by crank angle (its burst sits in the 505-715
-                    # window, aligned).  The coarse LUT smears the sub-degree edge, so
-                    # the analytic HARD EDGE is kept ON TOP for the metallic crack;
-                    # the real per-car SHAPE (gas-dynamic decay + header wave-action)
-                    # replaces the parametric blow+displacement — the plan's
-                    # DDSP-without-NN excitation, straight from the solver.
-                    baked = np.interp(phi, self._pulse_deg, cur_pulse, period=720.0)
-                    baked = np.clip(baked, 0.0, None)
-                    crack = (0.5 + 0.9 * load) * hard * np.exp(-dd / max(0.45 * tau_blow, 2.0))
-                    pulse = (self._pulse_body * baked
-                             + self._pulse_disp * disp
-                             + self._pulse_edge * crack) * close * amp_j
-                else:
-                    # parametric fallback (no gas_truth LUT): gas-dynamic
-                    # blow/displacement split, anchored at sharp=1 to blow + 0.7·disp.
-                    pk = self._bd_sharp
-                    pulse = np.where(inwin,
-                                     ((0.78 + 0.22 * pk) * blow
-                                      + 0.7 * (1.22 - 0.22 * pk) * disp)
-                                     * close * amp_j, 0.0)
+                # gas-dynamic blow/displacement SPLIT: a sharp-emptying cylinder puts
+                # more of its energy into the choked blowdown snap and less into the
+                # slow piston-push hump (peaky vs woofy).  Anchored at sharp=1 ->
+                # exactly (blow + 0.7·disp), the reference's balance.
+                pk = self._bd_sharp
+                pulse = np.where(inwin,
+                                 ((0.78 + 0.22 * pk) * blow
+                                  + 0.7 * (1.22 - 0.22 * pk) * disp)
+                                 * close * amp_j, 0.0)
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)
@@ -1472,29 +1399,6 @@ class Synthesizer:
         self._tap("block", combustion)        # sealed in-cylinder combustion event
         sig = combustion + wet                # + the OPEN pipe resonance (tailpipe)
 
-        # --- gas_truth EXHAUST SIGNATURE: colour the firing tone with the ACTUAL
-        # solver's per-cylinder exhaust-pulse spectrum (the ultimate white-box
-        # source — DDSP-without-NN).  A harmonic stack at the firing frequency
-        # whose amplitudes ARE the baked gas_truth harmonics (interpolated by
-        # rpm), so each car's real blowdown SHAPE — sharp/bright for a high-CR
-        # engine, soft for a low-CR one, tinted by its header wave-action — rings
-        # in the tone.  Reinforce-only + load-gated (silent on the overrun).
-        sig_lut = getattr(sim, "exhaust_sig", None)
-        gt_load = (min(max(strength * 1.25, 0.0), 1.0)   # positive-blowdown only
-                   if dps > 1e-12 else 0.0)              # strength unset when idle-stopped
-        if sig_lut is not None and gt_load > 0.05 and self.solver_tone:
-            rf_gt = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
-            harms = self._gastruth_harmonics(sig_lut, rf_gt)
-            if harms:
-                fire_hz = sim.rpm * len(self._offsets) / 120.0
-                if 18.0 < fire_hz < self.sample_rate * 0.42:
-                    tone = self._whine(fire_hz, frames, harms,
-                                       phase_attr="_gastruth_phase")
-                    # gentle COLOUR, not an override: at 0.16 it darkened cars
-                    # away from their tuned character (Leo's reference Aventador
-                    # stopped sounding right).  0.08 keeps the solver's per-car
-                    # tint while the tuned synthesis stays the voice.
-                    sig = sig + (0.08 * gt_load) * tone
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
         # between the returning and residual gas makes pulse-synchronous chuffs.
@@ -2110,28 +2014,6 @@ class Synthesizer:
             self.last_wave = out[::step][:64].astype(np.float64).copy()
         self._tap("output", out)             # final post-master signal
         return out
-
-    def _gastruth_harmonics(self, sig_lut, rpm_frac):
-        """Interpolate the baked gas_truth exhaust-harmonic signature at the
-        current rpm and return it as _whine's [(harmonic_number, amplitude), ...]
-        list — the real per-car pulse spectrum from the solver."""
-        grid, harm = sig_lut
-        if not grid:
-            return None
-        # nearest-two linear interpolation over the (small) rpm-fraction grid
-        if rpm_frac <= grid[0]:
-            row = harm[0]
-        elif rpm_frac >= grid[-1]:
-            row = harm[-1]
-        else:
-            i = 0
-            while i < len(grid) - 1 and grid[i + 1] < rpm_frac:
-                i += 1
-            t = (rpm_frac - grid[i]) / max(grid[i + 1] - grid[i], 1e-6)
-            row = [(1.0 - t) * a + t * b for a, b in zip(harm[i], harm[i + 1])]
-        # gas_truth's fundamental is one blowdown per 720 deg = the firing period,
-        # so its cycle-harmonics map straight onto firing-frequency harmonics.
-        return [(h + 1, a) for h, a in enumerate(row) if a > 0.02]
 
     # ------------------------------------------------------------ callback
     # --------------------------------------------------- forced induction
