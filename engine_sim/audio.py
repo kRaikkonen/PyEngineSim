@@ -913,16 +913,18 @@ class Synthesizer:
             bE, brho, bloss = _MATERIAL.get(bmat, _MATERIAL["aluminium"])
             c_struct = math.sqrt(bE * 1e9 / brho)            # casting bar-wave speed
             bore = max(eng.cylinders[0].bore, 0.05)
-            f_blk = min(max(0.0249 * c_struct / bore, 600.0), 2400.0)
-            self._blk_f1 = f_blk
-            self._blk_f2 = min(f_blk * 2.15, sr * 0.42)      # 2nd panel mode
-            # ring Q from the damping (light alloy rings, cast iron thuds); mass-law
-            # containment cutoff falls with density (heavier block = more sealed)
+            f_blk = 0.0249 * c_struct / bore                 # fundamental panel mode
+            self._blk_f1 = min(max(f_blk, 600.0), 2400.0)
+            self._blk_f2 = min(self._blk_f1 * 2.15, sr * 0.42)  # 2nd panel mode
+            # ring Q from the real material damping (light alloy rings, cast iron thuds)
             self._blk_q = min(max((0.0016 / bloss) ** 0.30 * 1.7, 0.5), 4.5)
-            # the LID: mass-law transmission cutoff — a denser/heavier wall seals
-            # the combustion behind a LOWER wall, muffling more of its raw top end.
-            self._blk_fc = min(max(2800.0 * (2700.0 / brho) ** 0.34, 1500.0),
-                               sr * 0.44)
+            # the LID (white-box): a finite panel radiates its excitation efficiently
+            # only up to ~a few times its structural resonance; above that the
+            # mechanical mobility rolls off and the combustion is trapped.  So the
+            # muffle cutoff is TIED to the SAME sqrt(E/rho)/bore modes as the ring —
+            # a heavy iron block resonates AND rolls off LOWER (darker, more sealed),
+            # a light alloy higher (brighter) — not an independent hand-picked knob.
+            self._blk_fc = min(max(2.4 * f_blk, 1500.0), sr * 0.44)
             self._blk_lp = butter(2, self._blk_fc / (sr / 2), btype="low")
             self._blk_lp_zi = np.zeros(2)
             self._blk1_zi = np.zeros(2)
