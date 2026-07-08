@@ -3155,7 +3155,45 @@ def _annotate(key, eng):
         banks = {round(c.bank_angle_deg, 1) for c in eng.cylinders}
         if len(banks) >= 2:
             eng.crank_plane = "flat" if key in _FLAT_PLANE else "cross"
+    _apply_crank_plane(eng)
     return eng
+
+
+def _apply_crank_plane(eng):
+    """Make the V8 crank plane AUDIBLE (it was display-only).  A 90-deg V8's
+    GLOBAL firing is even every 90 deg either way (so crank torque is unchanged),
+    but the per-BANK exhaust timing differs:
+      * FLAT-plane  — each bank fires evenly (180 deg apart), like two inline-4s:
+        the smooth, high Ferrari/Voodoo SCREAM.
+      * CROSS-plane — each bank fires UNEVENLY (90-180-270-180): the lumpy
+        American-V8 'potato-potato' BURBLE, heard because the banks exhaust
+        separately (exhaust_channels=2).
+    We reassign the two banks' cycle offsets accordingly (same even global set,
+    so torque is untouched); the per-bank waveguides then voice the difference.
+    Without this every V8 sounded like a generic even-firing V8."""
+    if eng.num_cylinders != 8 or eng.is_rotary or not eng.crank_plane:
+        return
+    a = [i for i, c in enumerate(eng.cylinders) if c.bank_angle_deg < 0]
+    b = [i for i, c in enumerate(eng.cylinders) if c.bank_angle_deg >= 0]
+    if len(a) != 4 or len(b) != 4:
+        return                                     # not a standard 2-bank V8
+    if eng.crank_plane == "cross":
+        off_a, off_b = [0.0, 90.0, 270.0, 540.0], [180.0, 360.0, 450.0, 630.0]
+        # In a mono mix the even GLOBAL firing would recombine the two banks
+        # back to smooth, cancelling the crank-plane character.  A cross-plane
+        # V8 with a dual (bank-separate) exhaust is physically ASYMMETRIC — the
+        # two bank collectors reach the tail by different routes — so the uneven
+        # bank pulse train survives to the ear as the potato-potato BURBLE.  Give
+        # it a modest default bank offset (only if the preset hasn't set one).
+        # Flat-plane V8s stay symmetric (header_unequal_deg = 0) -> smooth scream.
+        if eng.exhaust_channels >= 2 and eng.header_unequal_deg == 0.0:
+            eng.header_unequal_deg = 18.0
+    else:                                          # flat
+        off_a, off_b = [0.0, 180.0, 360.0, 540.0], [90.0, 270.0, 450.0, 630.0]
+    for slot, i in enumerate(a):
+        eng.cylinders[i].cycle_offset_deg = off_a[slot]
+    for slot, i in enumerate(b):
+        eng.cylinders[i].cycle_offset_deg = off_b[slot]
 
 
 def _wrap(key, factory):
