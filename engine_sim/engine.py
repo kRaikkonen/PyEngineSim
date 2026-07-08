@@ -209,6 +209,14 @@ class Engine:
     # "dual" (port+direct), "piezo" (sharp high-pressure click), "carb" (none),
     # "mech" (old mechanical race injection, none), "diesel" (common-rail clatter).
     injection: str = "port"
+    # Individual throttle bodies / velocity stacks (ITB): one throttle + trumpet
+    # PER cylinder instead of a single plenum.  Each intake stroke sucks a sharp
+    # tuned pulse straight past the driver's ear -> the raw, hard INDUCTION HOWL
+    # of an RB26, an S2000 F20C, a DTM/F1 engine or a classic Weber-carb V12,
+    # completely unlike the smooth muffled roar of a single-plenum intake.  This
+    # is a big part of why two otherwise-similar engines (RB26 vs 2JZ) sound
+    # nothing alike.  Audio-only.
+    individual_throttle: bool = False
     balance_shaft: bool = False      # cancels the secondary shake of an I4 / 90deg-V6
     # Valve LIFT mechanism: "fixed", "two-stage" (VTEC/AVS-style switch -> a step),
     # "continuous" (Valvetronic/MultiAir -> throttleless, extra-smooth).  Derived

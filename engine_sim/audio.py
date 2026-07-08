@@ -394,6 +394,7 @@ class Synthesizer:
         cyls = simulator.engine.cylinders
         ncyl = len(cyls)
         self._offsets = np.array([c.cycle_offset_deg for c in cyls], dtype=np.float64)
+        self._stroke_ref = cyls[0].stroke        # blowdown-pulse depth ~ stroke
         self._audio_crank = 0.0
 
         # Fixed per-cylinder 'personality' (runner-length / build differences):
@@ -606,6 +607,7 @@ class Synthesizer:
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
+        self._itb_phase = 0.0             # ITB induction-howl oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
         self._burble_prev = 0.0          # overrun-burble low-pass state
@@ -1045,7 +1047,14 @@ class Synthesizer:
             # rpm (valve shut), where the spaced pops make each cylinder's own
             # character clearly audible -> coarse, grainy low-rpm lumpiness.
             spread = self.params["cyl_spread"] * (1.0 + 1.4 * (1.0 - self._valve))
-            base_tau = self.params["pulse_tau"]
+            # Blowdown decay from the cylinder's real STROKE (WHITE-BOX, not an
+            # EQ): the exhaust-valve blowdown empties a gas column whose height is
+            # the stroke, so the characteristic emptying time ~ stroke / c.  A
+            # long-stroke engine (2JZ 86 mm, a diesel) therefore fires a longer,
+            # DEEPER pulse; a short-stroke high-revver (RB26 74 mm, an F1) a sharp
+            # bright one.  This is what makes displacement/bore-stroke audible —
+            # the pulse SHAPE carries it, straight from geometry.
+            base_tau = self.params["pulse_tau"] * (self._stroke_ref / 0.083)
             # deterministic per-cylinder voicing (geometry-derived, no random); the
             # switch scales the deviation from 1.0, so cv=0 is perfectly uniform.
             voice = self._cyl_voice
@@ -1429,6 +1438,26 @@ class Synthesizer:
                 n, self._intake_lp_zi = lfilter(self._intake_lp[0], self._intake_lp[1],
                                                 n, zi=self._intake_lp_zi)
                 sig = sig + intake_gain * n
+
+        # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
+        # With one trumpet per cylinder, each intake stroke sucks a sharp tuned
+        # pulse straight past the driver: a hard, brassy, harmonically-rich howl
+        # at the firing frequency that RISES viciously with revs and throttle —
+        # the RB26 / S65 / F1 / 4A-GE signature.  A single-plenum intake (2JZ,
+        # 4G63, most road cars) has none of it, only the muffled roar above; so
+        # this is exactly what tells those otherwise-similar engines apart.
+        if getattr(sim.engine, "individual_throttle", False) and dps > 1e-12:
+            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            fire_hz = sim.rpm * len(self._offsets) / 120.0
+            thr = min(max(sim.throttle, 0.0), 1.0)
+            howl_gain = 0.16 * (0.15 + 0.85 * thr) * rpm_frac ** 1.5
+            if howl_gain > 1e-4 and 20.0 < fire_hz < self.sample_rate * 0.4:
+                howl = self._whine(
+                    fire_hz, frames,
+                    [(1, 1.0), (2, 0.85), (3, 0.6), (4, 0.42), (5, 0.28),
+                     (6, 0.18), (8, 0.10)],
+                    phase_attr="_itb_phase")
+                sig = sig + howl_gain * howl
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:

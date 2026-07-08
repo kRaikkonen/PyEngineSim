@@ -3049,6 +3049,18 @@ _FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
                "f40", "gt350r", "m3gtr", "one1", "p1", "pista", "senna",
                "valhalla"}
 
+# Individual throttle bodies / velocity stacks / Weber-carb stacks -> the raw
+# induction HOWL.  Explicit icons (incl. the turbo RB26 and the ITB BMW M V8s);
+# a NA straight-cut screamer (>=8600 rpm) is auto-flagged in _annotate.  Carb
+# race engines (Weber stacks) are ITB-like acoustically -> folded in there too.
+_ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
+                  "f2004", "f2007", "mp44", "sf25",   # F1
+                  "e92m3", "m3gtr",   # BMW S65 / P60 race V8, 8 ITBs
+                  "cgt",        # Carrera GT 5.7 V10, ITBs
+                  "atomv8",     # Ariel Atom Hartley race V8
+                  "ae86"})      # 4A-GE (20-valve, ITBs) — Leo's own example
+_NO_ITB = frozenset()          # exclusions from the auto straight-cut rule
+
 # --- detail-model lookups (audio) -------------------------------------------
 _CARB = frozenset({"z28", "250cal", "countach", "crs27", "930", "gt40", "w154",
                    "boneshaker", "917", "t100", "speed12", "diablo"})
@@ -3108,6 +3120,15 @@ def _annotate(key, eng):
     # intent, just widens the contrast) — the within-class differentiator that
     # engine physics alone can't give (two 2.0T I4s are physically alike, but one
     # may wear a loud sports exhaust and the other a quiet stock box).
+    # Individual throttle bodies (raw induction howl).  Flag the icons that
+    # actually run ITBs / velocity stacks (RB26 even though it's turbo, the ITB
+    # BMW M V8/V10, F1...), plus a NA race engine on straight-cut gears with a
+    # screaming redline, which almost always does too.
+    if not eng.individual_throttle:
+        eng.individual_throttle = (
+            key in _ITB
+            or (key not in _NO_ITB and eng.induction in ("na", "")
+                and eng.redline_rpm >= 8600 and eng.straight_cut))
     _op = eng.exhaust_openness
     if _op > 0.0:
         eng.exhaust_openness = min(max(0.66 + (_op - 0.66) * 1.5, 0.30), 0.98)
