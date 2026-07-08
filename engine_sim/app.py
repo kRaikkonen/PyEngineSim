@@ -467,6 +467,9 @@ class App:
             # HKS SSQV atmospheric dump valve — loud sharp 'TSSSH' on lift-off
             (T("SSQV"), lambda: setattr(sy, "ssqv", not sy.ssqv),
              lambda: sy.ssqv, 1),
+            # gas_truth solver exhaust-signature colour (off = pure tuned synth)
+            (T("Solver"), lambda: setattr(sy, "solver_tone", not sy.solver_tone),
+             lambda: sy.solver_tone, 1),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),

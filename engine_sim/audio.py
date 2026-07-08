@@ -492,6 +492,7 @@ class Synthesizer:
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
         self.ssqv = False         # HKS SSQV atmospheric dump: loud sharp 'TSSSH'
+        self.solver_tone = True   # gas_truth exhaust-signature colour (toggle)
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         # per-stage exhaust-path waveform taps for the refresh-style stage scopes.
@@ -1225,7 +1226,7 @@ class Synthesizer:
         sig_lut = getattr(sim, "exhaust_sig", None)
         gt_load = (min(max(strength * 1.25, 0.0), 1.0)   # positive-blowdown only
                    if dps > 1e-12 else 0.0)              # strength unset when idle-stopped
-        if sig_lut is not None and gt_load > 0.05:
+        if sig_lut is not None and gt_load > 0.05 and self.solver_tone:
             rf_gt = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             harms = self._gastruth_harmonics(sig_lut, rf_gt)
             if harms:
@@ -1233,7 +1234,11 @@ class Synthesizer:
                 if 18.0 < fire_hz < self.sample_rate * 0.42:
                     tone = self._whine(fire_hz, frames, harms,
                                        phase_attr="_gastruth_phase")
-                    sig = sig + (0.16 * gt_load) * tone
+                    # gentle COLOUR, not an override: at 0.16 it darkened cars
+                    # away from their tuned character (Leo's reference Aventador
+                    # stopped sounding right).  0.08 keeps the solver's per-car
+                    # tint while the tuned synthesis stays the voice.
+                    sig = sig + (0.08 * gt_load) * tone
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
         # between the returning and residual gas makes pulse-synchronous chuffs.
