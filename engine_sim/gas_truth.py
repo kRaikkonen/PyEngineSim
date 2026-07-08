@@ -764,3 +764,41 @@ def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
             break
         last_imep = imep
     return result
+
+
+def exhaust_harmonic_signature(eng, rpms=(0.30, 0.55, 0.80), n_harm=20,
+                               spark_advance_fn=None):
+    """Bake the REAL per-cylinder exhaust-pulse spectrum from the closed-loop gas
+    dynamics — the runtime-audio surrogate source (the plan's DDSP-without-NN /
+    "gas_truth waveform via LUT" path).
+
+    At each rpm fraction it runs the truth model, takes the CONVERGED cycle's
+    exhaust-flow waveform (one blowdown pulse per 720 deg for the representative
+    cylinder), and returns its normalised harmonic-magnitude vector.  That vector
+    IS the car's real exhaust pulse SHAPE — a sharp high-CR blowdown is bright
+    with strong high harmonics, a soft low-CR one dull; the header wave-action
+    tints it.  The runtime reads these (interpolated by rpm) to colour each
+    firing pulse, so the sound is shaped by the actual solver, per car.
+
+    Returns (rpm_frac_grid, harmonics[n_rpm][n_harm]) — a tiny LUT (~60 floats).
+    """
+    grid = list(rpms)
+    out = []
+    for rf in grid:
+        rpm = max(rf * eng.redline_rpm, eng.idle_rpm)
+        m = measure_operating_point(eng, rpm, 1.0, spark_advance_fn=spark_advance_fn,
+                                    dphi=2.0, max_cycles=8)
+        w = m["exhaust_wave"]
+        n = len(w)
+        # DFT magnitudes of the first n_harm cycle-harmonics (skip DC)
+        harm = []
+        for h in range(1, n_harm + 1):
+            re = im = 0.0
+            wk = 2.0 * math.pi * h / n
+            for i, x in enumerate(w):
+                re += x * math.cos(wk * i)
+                im -= x * math.sin(wk * i)
+            harm.append(math.hypot(re, im))
+        peak = max(harm) or 1.0
+        out.append([a / peak for a in harm])
+    return grid, out

@@ -607,6 +607,7 @@ class Synthesizer:
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
+        self._gastruth_phase = 0.0        # gas_truth exhaust-signature oscillator
         self._itb_phase = 0.0             # ITB induction-howl oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
@@ -1202,6 +1203,25 @@ class Synthesizer:
         for ci in range(self._nchan):
             fizz += fizz_chans[ci]
         sig = bang + wet + P["turbulence"] * (fizz * inv)
+
+        # --- gas_truth EXHAUST SIGNATURE: colour the firing tone with the ACTUAL
+        # solver's per-cylinder exhaust-pulse spectrum (the ultimate white-box
+        # source — DDSP-without-NN).  A harmonic stack at the firing frequency
+        # whose amplitudes ARE the baked gas_truth harmonics (interpolated by
+        # rpm), so each car's real blowdown SHAPE — sharp/bright for a high-CR
+        # engine, soft for a low-CR one, tinted by its header wave-action — rings
+        # in the tone.  Reinforce-only + load-gated (silent on the overrun).
+        sig_lut = getattr(sim, "exhaust_sig", None)
+        gt_load = min(max(strength * 1.25, 0.0), 1.0)   # positive-blowdown only
+        if sig_lut is not None and gt_load > 0.05:
+            rf_gt = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            harms = self._gastruth_harmonics(sig_lut, rf_gt)
+            if harms:
+                fire_hz = sim.rpm * len(self._offsets) / 120.0
+                if 18.0 < fire_hz < self.sample_rate * 0.42:
+                    tone = self._whine(fire_hz, frames, harms,
+                                       phase_attr="_gastruth_phase")
+                    sig = sig + (0.16 * gt_load) * tone
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
         # between the returning and residual gas makes pulse-synchronous chuffs.
@@ -1742,6 +1762,28 @@ class Synthesizer:
             self.last_wave = out[::step][:64].astype(np.float64).copy()
         self._tap("output", out)             # final post-master signal
         return out
+
+    def _gastruth_harmonics(self, sig_lut, rpm_frac):
+        """Interpolate the baked gas_truth exhaust-harmonic signature at the
+        current rpm and return it as _whine's [(harmonic_number, amplitude), ...]
+        list — the real per-car pulse spectrum from the solver."""
+        grid, harm = sig_lut
+        if not grid:
+            return None
+        # nearest-two linear interpolation over the (small) rpm-fraction grid
+        if rpm_frac <= grid[0]:
+            row = harm[0]
+        elif rpm_frac >= grid[-1]:
+            row = harm[-1]
+        else:
+            i = 0
+            while i < len(grid) - 1 and grid[i + 1] < rpm_frac:
+                i += 1
+            t = (rpm_frac - grid[i]) / max(grid[i + 1] - grid[i], 1e-6)
+            row = [(1.0 - t) * a + t * b for a, b in zip(harm[i], harm[i + 1])]
+        # gas_truth's fundamental is one blowdown per 720 deg = the firing period,
+        # so its cycle-harmonics map straight onto firing-frequency harmonics.
+        return [(h + 1, a) for h, a in enumerate(row) if a > 0.02]
 
     # ------------------------------------------------------------ callback
     # --------------------------------------------------- forced induction

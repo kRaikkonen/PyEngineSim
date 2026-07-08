@@ -36,6 +36,12 @@ try:                                    # white-box surrogate layer (VE tables);
 except Exception:                       # pragma: no cover
     _HAVE_SURROGATE = False
 
+try:                                    # gas_truth exhaust-signature (audio LUT)
+    from .gas_truth import exhaust_harmonic_signature
+    _HAVE_GASTRUTH = True
+except Exception:                       # pragma: no cover
+    _HAVE_GASTRUTH = False
+
 try:                                    # white-box MAP model (orifice balance)
     from . import map_model
     _HAVE_MAP_MODEL = True
@@ -88,6 +94,19 @@ class Simulator:
         self._map_idle_area = (map_model.idle_area_for(engine)
                                if _HAVE_MAP_MODEL else 0.02)
         self._map_diesel = engine.cylinders[0].compression_ratio >= 14.5
+
+        # gas_truth EXHAUST SIGNATURE: bake the REAL per-cylinder exhaust-pulse
+        # spectrum from the closed-loop gas dynamics at load (~120 ms), a tiny LUT
+        # (rpm_frac -> harmonic amplitudes) the audio reads to colour each firing
+        # pulse with the actual solver's per-car waveform (the ultimate white-box
+        # audio source, DDSP-without-NN).  None -> the audio uses its own pulse.
+        self.exhaust_sig = None
+        if _HAVE_GASTRUTH:
+            try:
+                grid, harm = exhaust_harmonic_signature(engine)
+                self.exhaust_sig = (grid, harm)
+            except Exception:
+                self.exhaust_sig = None
         self.boost = 0.0                # forced-induction boost (bar gauge)
         # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
         # (extra air/fuel while the block is at ambient) so a cold engine catches
