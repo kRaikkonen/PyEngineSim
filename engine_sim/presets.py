@@ -3115,11 +3115,16 @@ _CARB = frozenset({"z28", "250cal", "countach", "crs27", "930", "gt40", "w154",
                    "boneshaker", "917", "t100", "speed12", "diablo"})
 _MECH_INJ = frozenset({"7", "f2007", "mp44", "cgt", "r390", "clkgtr", "zonda",
                        "zondar", "mf1", "f50gt", "f40"})  # mech / slide-throttle race
-_DUAL_INJ = frozenset({"5", "lafe", "3", "rtr"})          # Toyota D-4S / Ford dual
+# dual (port + direct: Ford D-4S-style Coyote, Huracan iDS)
+_DUAL_INJ = frozenset({"3", "rtr", "hura"})
+# direct injection (GDI/DFI/FSI).  AUDITED against real fuel systems: the Lambo
+# V12s (aven/6), the Enzo F140B, the AMG M156 (c63bs) and the Ford 5.2 Voodoo/
+# Predator (gt350r/gt500) are all PORT, not direct -> removed; LaFerrari's F140FE
+# IS direct -> moved in; the LFA (5) is port and the Huracan (hura) is dual.
 _GDI = frozenset({"2", "a45", "b48", "0", "330i", "rs3", "rs5", "d8gto", "fk8",
-                  "fordgt", "raptor", "focus3", "gt350r", "gt500", "ct5v", "c7",
-                  "amggt", "c63bs", "e63", "giulia", "aven", "hura", "6", "db11",
-                  "ftype", "one1", "488", "pista", "fxxk", "enzo",
+                  "fordgt", "raptor", "focus3", "ct5v", "c7", "lafe",
+                  "amggt", "e63", "giulia", "db11",
+                  "ftype", "one1", "488", "pista", "fxxk",
                   "valhalla", "p1", "senna", "gt2rs", "918", "hoonitruck"})
 _NO_BALANCE = frozenset({"22b", "gdb", "gv", "vt15r", "evo7", "ae86", "s15",
                          "escrs", "rs200", "hoonrs", "deltas4", "p205", "focus3"})
