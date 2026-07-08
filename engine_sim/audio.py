@@ -1738,7 +1738,13 @@ class Synthesizer:
             if _HAVE_SCIPY and P["gearbox_reverb"] > 1e-3:
                 self._gear_reverb.mix = P["gearbox_reverb"]
                 gw = self._gear_reverb.process(gw)
-            sig = sig + ind + gw
+            # LIFT-OFF DUCK: when the BOV/flutter fires the driver has just LIFTED —
+            # the combustion roar collapses, so the dump 'TSSSH' / surge 'stu-tu-tu'
+            # is what you actually HEAR.  Duck the engine note by the BOV envelope so
+            # the valve event is EXPOSED instead of buried under the note (and the
+            # AGC can no longer normalise it away to the same loudness as the note).
+            duck = min(0.80 * getattr(self, "_bov_env", 0.0), 0.80)
+            sig = (1.0 - duck) * sig + ind + gw
         self._tap("induction+gears", sig)     # + intake roar, turbo, gearbox whine
 
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
@@ -2132,7 +2138,7 @@ class Synthesizer:
             #   * with no (or a shut) valve the air backs up and pulses BACKWARD
             #     through the compressor wheel again and again -> compressor
             #     surge, the rapid 'stu-tu-tu-tu' flutter.
-            if (self._prev_throttle - sim.throttle) > 0.25 and sim.boost > 0.15:
+            if (self._prev_throttle - sim.throttle) > 0.12 and sim.boost > 0.10:
                 self._bov_env = 1.0
                 self._bdim_phase = 0.0
             if self._bov_env > 1e-3 and self.o_chord:
@@ -2172,9 +2178,9 @@ class Synthesizer:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
                     # punchy 'tu' bursts: a hard gate (sin^2.5) rung with a little
                     # low-mid air body so each pulse chuffs instead of just hissing.
-                    pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 2.5
+                    pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 2.0
                     env = np.exp(-n / (sr * 0.40)) * self._bov_env
-                    agg = 0.9 + 0.9 * bfrac              # bigger boost -> louder flutter
+                    agg = 1.6 + 1.2 * bfrac              # bigger boost -> louder flutter
                     out += (bov * agg) * noise * pulse * env
                     self._bov_env *= math.exp(-frames / (sr * 0.42))  # sustains longer
                 else:
