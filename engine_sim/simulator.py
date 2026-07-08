@@ -75,7 +75,8 @@ class Simulator:
         self.external_load = 0.0        # N*m resisting torque (e.g. a dyno)
         self._fuel_cut = False          # rev-limiter state (with hysteresis)
         self._shift_cut = False         # ignition cut during a gearshift
-        self._dfco = False              # deceleration fuel cut-off (overrun)
+        self._dfco = False              # coasting indicator (no longer cuts fuel)
+        self._blip = 0.0                # downshift rev-match throttle blip (0..1)
         self.boost = 0.0                # forced-induction boost (bar gauge)
         # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
         # (extra air/fuel while the block is at ambient) so a cold engine catches
@@ -248,8 +249,11 @@ class Simulator:
     # ----------------------------------------------------- pressure model
     def _effective_throttle(self) -> float:
         """Air demand actually reaching the engine: the larger of the driver's
-        pedal and the idle governor's trim, clamped to 0..1."""
-        return min(max(self.throttle, self._idle_trim), 1.0)
+        pedal, the idle governor's trim, and any downshift rev-match BLIP,
+        clamped to 0..1.  The blip is what makes a downshift BARK: the ECU (or a
+        heel-toe driver) cracks the throttle to fire the engine up to the target
+        speed instead of dragging it up silently on the clutch."""
+        return min(max(self.throttle, self._idle_trim, self._blip), 1.0)
 
     def _manifold_pressure(self) -> float:
         """Intake-manifold absolute pressure from effective throttle.
@@ -263,7 +267,14 @@ class Simulator:
         """
         eng = self.engine
         t = self._effective_throttle()
-        depth = min(1.0, eng.idle_rpm / max(self.rpm, eng.idle_rpm)) ** 0.7
+        # Closed-throttle vacuum deepens with rpm, but only to a FLOOR: a real
+        # overrun bottoms out around 0.10-0.15 atm, it does not pull to a near
+        # vacuum.  The earlier steep law (^0.7, no floor) trapped so little air
+        # that the exhaust note collapsed on lift-off ("松油燃烧声浪降低");
+        # this gentler law (^0.4, floor 0.35) keeps ~2x the overrun charge — a
+        # live engine-braking note — while still braking the engine to idle.
+        ratio = max(eng.idle_rpm / max(self.rpm, eng.idle_rpm), 0.25)
+        depth = ratio ** 0.5
         idle_map = eng.closed_map_fraction * depth * P_ATM
         return idle_map + t * (P_ATM - idle_map) + self.boost * 1.0e5
 
@@ -443,7 +454,7 @@ class Simulator:
         # Per-cylinder combustion: the soft limiter cuts only the cylinders in
         # the rotating _cut_mask, so the rest keep firing (the "brap" stutter);
         # DFCO kills all of them on the overrun.
-        base_burn = self.ignition_on and not self._shift_cut and not self._dfco
+        base_burn = self.ignition_on and not self._shift_cut
         cutting = self._fuel_cut
         k_burn = self._k_burn if k is None else k
 
@@ -514,17 +525,38 @@ class Simulator:
             self._fuel_cut = True
         elif rpm < eng.redline_rpm - 300.0:
             self._fuel_cut = False
-        # DFCO — deceleration fuel cut-off, like every real ECU since the 80s:
-        # coasting with the throttle shut well above idle injects NO fuel (the
-        # engine pumps air and BRAKES on its own pumping loop); fuel resumes
-        # near idle or the instant the pedal reopens.  Without this the
-        # physical BMEP solver happily self-sustains a closed-throttle engine
-        # at 2000+ rpm on the air it still breathes — real cars don't, because
-        # of exactly this cut.
-        if self.throttle >= 0.04 or rpm < eng.idle_rpm * 1.5:
-            self._dfco = False
-        elif rpm > eng.idle_rpm * 2.0:
-            self._dfco = True
+
+        # Gearshift rev-match detection (computed early so DFCO can see the
+        # downshift BLIP).  UPSHIFT -> cut & let revs fall; DOWNSHIFT -> blip the
+        # throttle and keep firing so the engine barks up to the rev-match speed
+        # instead of being dragged up silently on the clutch (why an off-throttle
+        # downshift used to be near-silent even at high rpm).
+        mid_shift = self.drivetrain.mid_shift
+        rev_matching = self.drivetrain.rev_matching
+        shift_target = (self.drivetrain.shift_target_omega()
+                        if (mid_shift or rev_matching) else 0.0)
+        # a downshift on ANY gearbox (mid_shift covers single-clutch/manual too,
+        # which never set is_shifting) whose match target is meaningfully higher
+        # than the current revs -> blip up and keep firing (the bark).
+        downshift_blip = mid_shift and shift_target > self.omega * 1.03
+        if downshift_blip:
+            gap = min((shift_target - self.omega) / max(self.omega, 1.0), 1.0)
+            self._blip = min(max(0.35 + 0.9 * gap, 0.0), 1.0)
+            self._shift_cut = False
+        else:
+            self._blip = 0.0
+            self._shift_cut = self.drivetrain.is_shifting   # upshift cut (DCT/AT)
+
+        # Coasting indicator (throttle shut, well above idle).  NOTE: this used
+        # to trigger a hard DEcel Fuel Cut-Off that killed all combustion on the
+        # overrun — but that made the exhaust note collapse the instant you
+        # lifted, even at high rpm ("之前没有这个毛病").  The rpm-deepening
+        # closed-throttle MAP now traps so little air that pumping + friction
+        # brake the engine to idle on their own (verified: lift-off decel is the
+        # same with or without a fuel cut), so we KEEP FIRING on the overrun and
+        # let the note stay alive.  The flag is retained only as a coasting hint.
+        self._dfco = (self._effective_throttle() < 0.04
+                      and rpm > eng.idle_rpm * 2.0)
 
         # SOFT limiter: cut a rotating 3/4 of the cylinders (all of them if the
         # overshoot keeps growing) — the survivors keep firing, which is the real
@@ -552,13 +584,6 @@ class Simulator:
         self.coolant_c = min(max(self.coolant_c + (q_in - q_out) * dt, 15.0), 130.0)
         oil_tgt = self.coolant_c + 6.0 * min(p_kw / 150.0, 1.0) - 4.0
         self.oil_c += (oil_tgt - self.oil_c) * min(0.015 * dt, 1.0)   # tau ~ 1 min
-
-        # During a gearshift, cut combustion and rev-match the engine to the
-        # target gear (so an upshift falls instead of bouncing the limiter).
-        shifting = self.drivetrain.is_shifting
-        self._shift_cut = shifting
-        rev_matching = self.drivetrain.rev_matching
-        shift_target = self.drivetrain.shift_target_omega() if rev_matching else 0.0
 
         self._update_boost(dt)
 
@@ -621,8 +646,7 @@ class Simulator:
         """
         cyl = self.engine.cylinders[0]
         p_man = self._manifold_pressure()
-        combusting = (self.ignition_on and not self._fuel_cut
-                      and not self._dfco)
+        combusting = self.ignition_on and not self._fuel_cut
 
         v_bdc = cyl.clearance_volume + cyl.piston_area * cyl.stroke
         v_tdc = cyl.clearance_volume

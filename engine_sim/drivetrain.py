@@ -115,6 +115,13 @@ class Drivetrain:
             self._pending_gear = None
 
     @property
+    def mid_shift(self) -> bool:
+        """Raw 'a shift is physically in progress' flag (any gearbox type),
+        regardless of whether fuel is cut.  Used to fire the downshift rev-match
+        BLIP even on a single-clutch/manual box (which never sets is_shifting)."""
+        return self._shifting and self._shift_phase < 3
+
+    @property
     def is_shifting(self) -> bool:
         """Whether the simulator should CUT fuel (engine makes no torque).
 

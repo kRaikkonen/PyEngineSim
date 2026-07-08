@@ -448,7 +448,7 @@ class Synthesizer:
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
             "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
-            "turbo_vol": 0.30,    # turbo spool whistle + BOV (0.45 was too loud)
+            "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "shear": 0.07,        # tail-pipe air-shear roar at the exit (mass-flow)
