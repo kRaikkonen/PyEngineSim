@@ -3111,6 +3111,17 @@ def _annotate(key, eng):
     _op = eng.exhaust_openness
     if _op > 0.0:
         eng.exhaust_openness = min(max(0.66 + (_op - 0.66) * 1.5, 0.30), 0.98)
+    # V6 / flat-6 bank character: two banks of three fire 240 deg apart, giving a
+    # per-bank 'triple' beat — the V6 WARBLE / Porsche-boxer BURBLE that a
+    # single-bank inline-6 (smooth even 120 deg) does not have.  In a mono mix the
+    # two banks recombine to a smooth I6 note unless they're asymmetric, so give a
+    # dual-exhaust V6/flat-6 a modest bank offset (physically the two collectors
+    # differ) so the layout is AUDIBLE: I6 smooth vs V6/flat-6 warbly (why r34
+    # and r35 used to sound alike).  I6s stay single-bank/smooth.
+    if (eng.num_cylinders == 6 and eng.exhaust_channels >= 2
+            and eng.header_unequal_deg == 0.0
+            and len({round(c.bank_angle_deg, 0) for c in eng.cylinders}) >= 2):
+        eng.header_unequal_deg = 14.0
     # Performance cars run straight-through ABSORPTIVE mufflers (open, broadband,
     # smooth); stock road cars keep the chambered REFLECTIVE box (default).
     if eng.muffler_type == "reflective" and (eng.straight_cut
