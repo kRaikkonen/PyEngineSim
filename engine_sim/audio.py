@@ -420,9 +420,11 @@ class Synthesizer:
             "dry": 1.44,         # combustion bang level (was cut to 1.28 — too far;
                                  #   engines lost their DRY combustion punch/fizz)
             "res1": 0.15,         # primary pipe resonance (runner)
-            "res2": 0.26,         # secondary pipe resonance (full system)
-            "tail_rad": 0.35,     # tailpipe radiation mix: 0 = mic inside the
-                                  #   duct, up = mic behind the car (dQ/dt far field)
+            "res2": 0.30,         # secondary pipe resonance (full system) — a
+                                  #   touch back UP: the radiation made it too dry
+            "tail_rad": 0.26,     # tailpipe radiation mix: 0 = mic inside the duct,
+                                  #   up = mic behind the car (dQ/dt far field).
+                                  #   0.35 was TOO DRY — pulled back for body
             "crack": 0.12,        # attack snap (explosion punch)
             "attack_deg": 9.0,    # onset softness (deg): bigger = blunter attack
             "body": 1.60,         # thickness / low-end of each firing (浑厚)
@@ -607,6 +609,9 @@ class Synthesizer:
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
         self._burble_prev = 0.0          # overrun-burble low-pass state
+        self._comb_load = 1.0            # positive-combustion load (0 on overrun)
+        self._over_lp_zi = None          # overrun-darkening low-pass state
+        self._over_prev = 0.0            # overrun-darkening (no-scipy) state
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -1511,6 +1516,7 @@ class Synthesizer:
         # "air noise covering the engine".  Real combustion = pressure ABOVE
         # atmosphere, so gate on the positive part only.
         comb_load = min(max(strength * 1.25, 0.0), 1.0) if dps > 1e-12 else 0.0
+        self._comb_load = comb_load           # reused by the overrun darkening
         rad *= comb_load       # no combustion (overrun) -> no sharp radiation
         if rad > 1e-3:
             ext = np.empty(frames + 1, dtype=np.float64)
@@ -1538,6 +1544,34 @@ class Synthesizer:
                     shear_gain *= 0.7
                 sig = sig + shear_gain * ns_
         self._tap("tailpipe exit", sig)       # gas tearing out of the tip
+
+        # --- OVERRUN DARKENING: a motoring engine (DFCO / no combustion) has no
+        # sharp hot blowdown, so its exhaust note is physically DARK/muffled —
+        # not the bright HF hash our residual synthesis leaves on high-boost,
+        # high-rpm cars (the "wind-like white noise that covers everything" on
+        # lift-off).  Fade a gentle 1-pole low-pass in as combustion load drops,
+        # so the note darkens exactly when the fuel cuts.  Cheap and works with
+        # or without scipy (manual 1-pole).
+        over = 1.0 - self._comb_load
+        if over > 0.05 and dps > 1e-12:
+            fc_over = 5200.0 - 3400.0 * over          # 5.2 kHz on power -> 1.8 kHz overrun
+            a_lp = math.exp(-2.0 * math.pi * fc_over / self.sample_rate)
+            oma = 1.0 - a_lp
+            if self._over_lp_zi is None:
+                self._over_lp_zi = [0.0, 0.0]         # two cascaded 1-pole states
+            if _HAVE_SCIPY:                           # vectorised 2-pole cascade
+                y, z0 = lfilter([oma], [1.0, -a_lp], sig, zi=[self._over_lp_zi[0]])
+                y, z1 = lfilter([oma], [1.0, -a_lp], y, zi=[self._over_lp_zi[1]])
+                self._over_lp_zi = [float(z0[0]), float(z1[0])]
+            else:                                     # manual 2-pole cascade (no scipy)
+                y = np.empty_like(sig)
+                p0, p1 = self._over_lp_zi
+                for i in range(len(sig)):
+                    p0 = oma * sig[i] + a_lp * p0
+                    p1 = oma * p0 + a_lp * p1
+                    y[i] = p1
+                self._over_lp_zi = [float(p0), float(p1)]
+            sig = (1.0 - over) * sig + over * y        # blend: full LP only on overrun
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
         if _HAVE_SCIPY:
