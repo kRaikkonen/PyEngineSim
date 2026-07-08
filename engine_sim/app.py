@@ -464,6 +464,9 @@ class App:
              lambda: sy.road_pipe, 1),
             (T("Flutter"), lambda: setattr(sy, "flutter", not sy.flutter),
              lambda: sy.flutter, 1),
+            # HKS SSQV atmospheric dump valve — loud sharp 'TSSSH' on lift-off
+            (T("SSQV"), lambda: setattr(sy, "ssqv", not sy.ssqv),
+             lambda: sy.ssqv, 1),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),

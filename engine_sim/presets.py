@@ -3119,7 +3119,7 @@ _DUAL_INJ = frozenset({"5", "lafe", "3", "rtr"})          # Toyota D-4S / Ford d
 _GDI = frozenset({"2", "a45", "b48", "0", "330i", "rs3", "rs5", "d8gto", "fk8",
                   "fordgt", "raptor", "focus3", "gt350r", "gt500", "ct5v", "c7",
                   "amggt", "c63bs", "e63", "giulia", "aven", "hura", "6", "db11",
-                  "ftype", "one1", "r35", "488", "pista", "fxxk", "enzo",
+                  "ftype", "one1", "488", "pista", "fxxk", "enzo",
                   "valhalla", "p1", "senna", "gt2rs", "918", "hoonitruck"})
 _NO_BALANCE = frozenset({"22b", "gdb", "gv", "vt15r", "evo7", "ae86", "s15",
                          "escrs", "rs200", "hoonrs", "deltas4", "p205", "focus3"})

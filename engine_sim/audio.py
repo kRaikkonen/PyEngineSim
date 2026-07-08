@@ -486,6 +486,7 @@ class Synthesizer:
         # lift-off sound: False = clean BOV 'pshhh', True = compressor-surge
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
+        self.ssqv = False         # HKS SSQV atmospheric dump: loud sharp 'TSSSH'
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         # per-stage exhaust-path waveform taps for the refresh-style stage scopes.
@@ -929,9 +930,9 @@ class Synthesizer:
         if getattr(eng, "valve_lift", "fixed") == "continuous":
             self._post_fc *= 0.97
         # INJECTION clatter amount (idle-weighted): GDI / piezo / diesel injector tick.
-        self._inj_amt = ({"direct": 0.05, "piezo": 0.065, "dual": 0.038,
-                          "diesel": 0.10}.get(getattr(eng, "injection", "port"), 0.0)
-                         * max(1.0 - rpm_frac * 1.4, 0.16))
+        self._inj_amt = ({"direct": 0.075, "piezo": 0.09, "dual": 0.05,
+                          "diesel": 0.11}.get(getattr(eng, "injection", "port"), 0.0)
+                         * max(1.0 - rpm_frac * 1.25, 0.22))
         # BALANCE-SHAFT roughness: an I3 / I4 / 90deg-V6 with NO balance shaft buzzes.
         self._balance_rough = 0.0
         if (eng.num_cylinders in (3, 4) and not eng.is_rotary
@@ -1913,7 +1914,16 @@ class Synthesizer:
             elif self._bov_env > 1e-3:
                 n = np.arange(frames)
                 noise = self._rng.standard_normal(frames)
-                if self.flutter:
+                if self.ssqv:
+                    # HKS SSQV atmospheric dump: a LOUD, sharp, bright metallic
+                    # 'TSSSH' — the unmistakable aftermarket vent, far brighter and
+                    # louder than the muffled stock recirc.  HF-emphasised (the
+                    # valve's high hiss) with a quick attack + short tail.
+                    hf = np.diff(noise, prepend=noise[:1])
+                    env = np.exp(-n / (sr * 0.12)) * self._bov_env
+                    out += (tv * 1.15) * (0.55 * noise + 0.75 * hf) * env
+                    self._bov_env *= math.exp(-frames / (sr * 0.14))
+                elif self.flutter:
                     fl = 18.0 + 12.0 * bfrac             # surge rate rises with boost
                     ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
                     if frames:
