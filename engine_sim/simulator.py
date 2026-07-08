@@ -583,15 +583,19 @@ class Simulator:
         downshift_blip = mid_shift and shift_target > self.omega * 1.03
         if downshift_blip:
             gap = min((shift_target - self.omega) / max(self.omega, 1.0), 1.0)
-            blip_target = min(max(0.35 + 0.9 * gap, 0.0), 1.0)
+            # PROPORTIONAL rev-match: the blip is as big as the rpm gap it must close
+            # — a small downshift barks softly, a big drop hard — instead of a fixed
+            # 0.35 floor that jumps in like a 0/1 switch (Leo's "二极开关").  Only a
+            # small floor to overcome pumping/friction and actually rev.
+            blip_target = min(max(0.12 + 0.95 * gap, 0.0), 1.0)
             self._shift_cut = False
         else:
             blip_target = 0.0
             self._shift_cut = self.drivetrain.is_shifting   # upshift cut (DCT/AT)
         # EASE the blip (a real rev-match is a smooth throttle STAB — the pedal
-        # rushes open then releases, not a 0/1 switch): first-order ramp, fast in
-        # (~60 ms) so the bark still snaps, released a touch slower.
-        rate = 16.0 if blip_target > self._blip else 11.0
+        # rushes open then releases, not a step): first-order ramp, softened so it
+        # swells rather than snaps (was 16/11 -> read as a switch on a short shift).
+        rate = 11.0 if blip_target > self._blip else 8.0
         self._blip += (blip_target - self._blip) * min(rate * dt, 1.0)
 
         # Coasting indicator (throttle shut, well above idle).  NOTE: this used

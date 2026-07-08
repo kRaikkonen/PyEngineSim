@@ -1694,6 +1694,13 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             intake_gain = P["intake"] * sim.throttle * (0.25 + 0.75 * rpm_frac)
+            # BOOST mass-flow: a forced-induction engine pumps FAR more air through
+            # the intake (mass flow ~ MAP·rpm), so the induction roar swells with the
+            # compressor's boosted charge — the whoosh a turbo/blower car has that an
+            # NA one doesn't.  Scales with boost gauge / rated boost.
+            bb = getattr(sim.engine, "boost_bar", 0.0)
+            if bb > 0.0:
+                intake_gain *= 1.0 + 1.1 * min(max(sim.boost, 0.0) / bb, 1.0)
             if intake_gain > 1e-4:
                 n = self._rng.standard_normal(frames)
                 n, self._intake_bp_zi = lfilter(self._intake_bp[0], self._intake_bp[1],
