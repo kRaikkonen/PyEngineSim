@@ -2161,14 +2161,22 @@ class Synthesizer:
                     out += (bov * 1.25) * (0.35 * noise + 1.0 * hf) * env
                     self._bov_env *= math.exp(-frames / (sr * 0.15))
                 elif self.flutter:
-                    fl = 18.0 + 12.0 * bfrac             # surge rate rises with boost
+                    # JDM 爆改-turbo COMPRESSOR SURGE — the iconic 'stu-tu-tu-tu'
+                    # machine-gun flutter of trapped boost pulsing back through the
+                    # wheel (recirc / no-BOV / anti-lag).  A bigger turbo (more boost)
+                    # flutters HARDER and a touch faster, and the burst SUSTAINS for
+                    # ~0.5 s as the pressure bleeds down.
+                    fl = 13.0 + 11.0 * bfrac             # ~13-24 Hz surge rate (classic)
                     ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
                     if frames:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
-                    pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 3  # spiky 'tu' bursts
-                    env = np.exp(-n / (sr * 0.22)) * self._bov_env
-                    out += (bov * 1.05) * noise * pulse * env  # clearly pulsed stututu
-                    self._bov_env *= math.exp(-frames / (sr * 0.26))
+                    # punchy 'tu' bursts: a hard gate (sin^2.5) rung with a little
+                    # low-mid air body so each pulse chuffs instead of just hissing.
+                    pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 2.5
+                    env = np.exp(-n / (sr * 0.40)) * self._bov_env
+                    agg = 0.9 + 0.9 * bfrac              # bigger boost -> louder flutter
+                    out += (bov * agg) * noise * pulse * env
+                    self._bov_env *= math.exp(-frames / (sr * 0.42))  # sustains longer
                 else:
                     # stock recirc: SOFT, DARK 'pshhh' (1-pole low-passed noise)
                     dark = 0.5 * (noise + np.concatenate(([self._bov_prev],
