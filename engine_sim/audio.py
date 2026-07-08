@@ -592,8 +592,8 @@ class Synthesizer:
         # chain (... -> EQ -> cabin -> output).  The UI toggles between them.
         self._flow_stages = [
             "header", "head/port", "catalytic", "standing-wave", "resonator",
-            "muffler", "valve bypass", "wall de-honk", "metal ring", "thunder",
-            "reflection", "tailpipe exit",
+            "muffler", "valve bypass", "wall de-honk", "metal ring", "megaphone",
+            "thunder", "reflection", "tailpipe exit",
         ]
         self._audio_stages = [
             "header", "head/port", "catalytic", "standing-wave", "muffler",
@@ -833,6 +833,8 @@ class Synthesizer:
             self._road_sh = _peaking(3400.0, 0.7, -5.5, sr)
             self._road_lp_zi = np.zeros(2)
             self._road_sh_zi = np.zeros(2)
+            self._gpf_lp_zi = np.zeros(1)      # gasoline particulate filter soak (1-pole)
+            self._wgate_zi = np.zeros(2)       # external-wastegate screamer formant
             # tailpipe air-shear: high-pressure gas tearing into still air at the
             # exit — a broadband hiss/roar swelling with exhaust mass-flow, the
             # OUTERMOST layer you hear at the back of the car.
@@ -1508,6 +1510,16 @@ class Synthesizer:
             m = 0.28 * wg
             if m > 1e-3:
                 sig = (1.0 - m) * sig + m * pre_turbine
+            # EXTERNAL WASTEGATE (screamer pipe): an atmospheric-vent gate SCREECHES
+            # as it cracks — a hard, bright, saturated chatter (the rally/drift
+            # 'BREE'), unlike the recirculated internal gate's quiet rasp.  Driven
+            # by the same opening `wg`, band-passed to a bright dump formant and
+            # tanh-clipped for the metallic edge.
+            if getattr(_eng, "wastegate", "internal") == "external" and wg > 0.02:
+                wn = self._rng.standard_normal(frames)
+                bws, aws = self._pk(3200.0, 1.4, 9.0)
+                wn, self._wgate_zi = lfilter(bws, aws, wn, zi=self._wgate_zi)
+                sig = sig + (0.16 * wg) * np.tanh(wn * 3.0)
         self._tap("head/port", sig)
 
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
@@ -1518,6 +1530,13 @@ class Synthesizer:
                                             sig, zi=self._road_lp_zi)
             sig, self._road_sh_zi = lfilter(self._road_sh[0], self._road_sh[1],
                                             sig, zi=self._road_sh_zi)
+        # --- (4a) GASOLINE PARTICULATE FILTER: a fine wall-flow ceramic packs the
+        # stream far tighter than a cat — a strong BROADBAND absorptive soak that
+        # dulls the rasp and 'chokes' the note (the muffled, restrained sound a
+        # modern EU-emissions car has vs. its pre-GPF self).  Upstream of the muffler.
+        if self.gpf and _HAVE_SCIPY:
+            bg, ag = self._bw(1, min(4500.0, self.sample_rate * 0.45))
+            sig, self._gpf_lp_zi = lfilter(bg, ag, sig, zi=self._gpf_lp_zi)
         self._tap("catalytic", sig)
 
         # --- (4b) main-pipe HIGH-ORDER STANDING-WAVE WHINE ------------------
@@ -1545,9 +1564,14 @@ class Synthesizer:
             # crossfaded back in as the flap cracks open with rpm (below) — the
             # straight-through path around the muffler.
             bypass = sig
-            # (5) resonator: Helmholtz used as a NOTCH (Akrapovic-style: remove the
-            # drone boom, do not add yet another resonance).
-            bH, aH = self._pk(f_helm, 1.2, -4.0)
+            # (5) resonator: Helmholtz side-branch used as a NOTCH (Akrapovic-style:
+            # remove the drone boom, do not add another resonance).  Depth WHITE-BOX
+            # from the system: a quiet, closed ROAD exhaust runs a big de-drone
+            # resonator (deep notch); an OPEN race system barely any.  Anchored so a
+            # typical openness (~0.7) reproduces the known-good ~ -4 dB.
+            _op = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
+            res_depth = -(2.0 + 7.0 * (1.0 - _op))       # -2 dB open .. -7.6 dB closed
+            bH, aH = self._pk(f_helm, 1.4, res_depth)
             sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
             self._tap("resonator", sig)       # Helmholtz de-drone notch
             # (6) muffler: variable-valve expansion low-pass — muffled at idle,

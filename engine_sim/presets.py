@@ -997,6 +997,7 @@ def audi_sport_quattro_s1() -> Engine:
         cylinders=cylinders,
         straight_cut=True, has_cat=False,   # Group B rally: dog box, no cat
         bov_flutter=True,                   # no dump valve -> 'stututu' surge
+        wastegate="external",               # atmospheric screamer pipe (rally 'BREE')
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=950,
         heat_release_k=2.2, ve_width_frac=0.72, closed_map_fraction=0.24,
         ve_floor=0.72,
@@ -1891,7 +1892,7 @@ def ford_rs200_evo() -> Engine:
         exhaust_total_m=1.5, exhaust_radius_m=0.027, exhaust_channels=1,
         exhaust_openness=0.9, muffler_volume_m3=0.0009, induction="turbo",
         boost_bar=2.0, turbo_lag=0.5, turbo_spool_frac=0.18, anti_lag=True,
-        bov_flutter=True, has_cat=False, straight_cut=True,
+        bov_flutter=True, has_cat=False, straight_cut=True, wastegate="external",
         gear_ratios=[2.5, 1.8, 1.35, 1.05, 0.85], final_drive=4.2,
         vehicle_mass=1180.0, wheel_radius=0.31, clutch_capacity=520.0,
         gearbox_type="manual")
