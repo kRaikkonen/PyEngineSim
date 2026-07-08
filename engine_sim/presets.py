@@ -3104,6 +3104,7 @@ _INTAKE_RUNNER = {
     # --- I6: RB26/S50 short ITB stacks, 2JZ/N53 plenum, big-diesel truck long --
     "r34": 0.15, "e36m3": 0.16, "9": 0.28, "330i": 0.30, "0": 0.26,
     "actros": 0.50, "ironknight": 0.52, "pete": 0.55,
+    "ae86": 0.13,          # 4A-GE 20-valve velocity stacks (Leo's example)
 }
 
 # --- detail-model lookups (audio) -------------------------------------------
@@ -3188,9 +3189,20 @@ def _annotate(key, eng):
             and eng.header_unequal_deg == 0.0
             and len({round(c.bank_angle_deg, 0) for c in eng.cylinders}) >= 2):
         eng.header_unequal_deg = 14.0
-    # real per-car intake-runner length (V10/V12 scope) — physical geometry
+    # Intake-runner length: explicit real measurement where we have it, else
+    # DERIVED from intake tuning physics — short runners tune high-rpm power, long
+    # ones low-rpm torque (Helmholtz); a turbo/SC feeds a longer plenum; ITB
+    # velocity stacks are short.  So every engine gets a physical runner, not a
+    # flat default, and the sound differentiates from it (VE + induction spread).
     if key in _INTAKE_RUNNER:
         eng.intake_runner_m = _INTAKE_RUNNER[key]
+    elif abs(eng.intake_runner_m - 0.30) < 1e-6:      # untouched default -> derive
+        run = 0.46 - 0.036 * (eng.redline_rpm / 1000.0)
+        if eng.induction in ("turbo", "roots", "centrifugal"):
+            run += 0.06                                # plenum
+        if eng.individual_throttle:
+            run -= 0.06                                # velocity stacks
+        eng.intake_runner_m = min(max(run, 0.08), 0.52)
     # Performance cars run straight-through ABSORPTIVE mufflers (open, broadband,
     # smooth); stock road cars keep the chambered REFLECTIVE box (default).
     if eng.muffler_type == "reflective" and (eng.straight_cut

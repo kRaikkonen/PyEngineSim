@@ -685,9 +685,16 @@ class Synthesizer:
             self._lowboost_zi = np.zeros(2)     # low-end boost when valve is shut
             self._spatial_zi = np.zeros(2)      # spatial distance darkening
             self._helm_zi = np.zeros(2)
-            # intake / induction path: cool-air airbox resonance + roll-off
-            self._intake_bp = _peaking(150.0, 1.1, 7.0, sr)
-            self._intake_lp = butter(2, 1300.0 / (sr / 2), btype="low")
+            # intake / induction path: the runner/velocity-stack rings at its
+            # QUARTER-WAVE resonance f = c_air / (4 L) (white-box tube acoustics,
+            # c_air = 343 m/s) — a short race stack honks high, a long torque
+            # runner low.  So the real per-car intake length is what pitches the
+            # induction note, straight from geometry (was a fixed 150 Hz).
+            f_intake = min(max(343.0 / (4.0 * max(eng.intake_runner_m, 0.05)),
+                               90.0), 900.0)
+            self._intake_bp = _peaking(f_intake, 1.1, 7.0, sr)
+            self._intake_lp = butter(2, min(2.2 * f_intake + 900.0, sr * 0.45)
+                                     / (sr / 2), btype="low")
             self._intake_bp_zi = np.zeros(2)
             self._intake_lp_zi = np.zeros(max(len(self._intake_lp[0]),
                                                len(self._intake_lp[1])) - 1)
