@@ -476,6 +476,21 @@ class Synthesizer:
             "pops_reverb": 0.22,  # dedicated reverb on the overrun pops
         }
 
+        # WHITE-BOX resonance mix from exhaust geometry (transmission-line
+        # reflection physics, exhaust_tmm) — the per-car res1/res2/wall/muffler
+        # now FALL OUT of the real pipe/collector/muffler dimensions instead of a
+        # fixed hand-tuned default.  Set as the slider defaults so each car starts
+        # at its physical value (the user can still trim).
+        try:
+            from .exhaust_tmm import exhaust_acoustics
+            r1, r2, wl, mf = exhaust_acoustics(simulator.engine)
+            self.params["res1"] = r1
+            self.params["res2"] = r2
+            self.params["wall_thickness"] = wl
+            self.params["muffler"] = mf
+        except Exception:
+            pass
+
         self._build_audio()
 
         self.cabin = False        # interior (in-cabin) muffling effect
