@@ -887,6 +887,11 @@ class Synthesizer:
             self._shear_bp = _bandpass(2600.0, 0.6, sr)
             self._shear_hp = butter(2, 900.0 / (sr / 2), btype="high")
             self._shear_bp_zi = np.zeros(2)
+            # F1 scream TEARING-noise band (~3 kHz, moderate Q): the shredding-air
+            # texture that rides the tone so an F1 reads as a violent engine, not a
+            # pure electronic buzz — band-limited so it tears, not hisses.
+            self._f1tear_bp = _bandpass(3000.0, 0.9, sr)
+            self._f1tear_zi = np.zeros(2)
             self._shear_hp_zi = np.zeros(2)
             # (Step 3) cylinder-head / exhaust-port cavity: a gentle low-pass that
             # 'rounds' the raw pulse so it reads as metal, not a digital click.
@@ -1553,9 +1558,31 @@ class Synthesizer:
                     harms = [(hk, a / srms) for hk, a in harms]   # unit-RMS stack
                     scream = self._whine(fire_hz, frames, harms,
                                          phase_attr="_scream_phase")
-                    # grit: a real open-exhaust screamer is nonlinear — saturate for
-                    # raspy POWER (odd harmonics that read as force), not a pure sine.
-                    scream = np.tanh(scream * (1.3 + 1.4 * load)) * 0.85
+                    # grit: a real open-exhaust screamer is nonlinear — saturate HARD
+                    # for the raspy, torn power (dense odd harmonics), not a pure sine.
+                    scream = np.tanh(scream * (1.7 + 1.8 * load)) * 0.8
+                    # ---- DE-BUZZ: a pure periodic sine stack IS an electric-drill /
+                    # mosquito buzz.  A real F1 is a VIOLENT, TEXTURED, aperiodic
+                    # scream, so ride the tone with:
+                    #  (1) broadband TEARING noise (the shredding air at 1200-1500
+                    #      fires/s), GATED by the tone envelope so it tears WITH the
+                    #      firing instead of being a flat hiss;
+                    envn = np.abs(scream)
+                    envn = envn / (float(envn.max()) + 1e-9)
+                    tn = self._rng.standard_normal(frames)
+                    if _HAVE_SCIPY:
+                        tn, self._f1tear_zi = lfilter(self._f1tear_bp[0],
+                                                      self._f1tear_bp[1], tn,
+                                                      zi=self._f1tear_zi)
+                    else:
+                        tn = np.diff(tn, prepend=tn[:1])       # bright-ish fallback
+                    tear = tn * (0.35 + 0.65 * envn)           # gated by the tone
+                    #  (2) a slow AMPLITUDE SHIMMER (cycle-to-cycle jitter) so it
+                    #      breathes organically instead of buzzing electronically.
+                    ctrl = self._rng.standard_normal(5)
+                    jit = np.interp(np.linspace(0.0, 1.0, frames),
+                                    np.linspace(0.0, 1.0, 5), ctrl)
+                    scream = scream * (1.0 + 0.20 * m * jit) + (0.68 * m) * tear
                     # CROSSFADE the fused pulses onto the merged scream, but DUCK
                     # ONLY LIGHTLY — the combustion punch/body underneath IS the 有力
                     # a real F1 keeps.  (Was 0.62 = stripped it to a comical whistle.)
