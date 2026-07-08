@@ -606,6 +606,7 @@ class Synthesizer:
         self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
+        self._burble_prev = 0.0          # overrun-burble low-pass state
         self._wob_ph = 0.0                # cam-chop / balance-shaft wobble phase
         self._wob_w = 0.0
         self._inj_amt = self._cam_lump = self._balance_rough = 0.0
@@ -1187,7 +1188,12 @@ class Synthesizer:
               * min(sim.rpm / max(sim.engine.idle_rpm * 1.5, 1.0), 1.0))  # not idling
         if ov > 0.03 and dps > 1e-12:
             nz_b = self._rng.standard_normal(frames)
-            sig = sig + (0.26 * ov) * np.abs(wet) * nz_b   # was 0.55 — too loud
+            # DARK chuff, not bright hiss: real overrun backflow is low-frequency
+            # air pumping.  A cheap 1-pole low-pass (running mean of the noise)
+            # drops the harsh treble that read as "air noise covering the engine".
+            nz_b = 0.5 * (nz_b + np.concatenate(([self._burble_prev], nz_b[:-1])))
+            self._burble_prev = float(nz_b[-1])
+            sig = sig + (0.22 * ov) * np.abs(wet) * nz_b
         # --- F1 / race-engine HIGH-RPM REGIME --------------------------------
         # Above ~600 fires/second the discrete blowdown pulses are only ~50
         # samples apart: they physically merge into a continuous tone, and the
@@ -1493,6 +1499,19 @@ class Synthesizer:
         # out to the exhaust exit: each pulse's edge sharpens into the discrete
         # dry puff you hear standing behind a real car (干/颗粒感).
         rad = min(max(P.get("tail_rad", 0.35), 0.0), 0.9)
+        # A MOTORING engine (overrun / DFCO) has no sharp combustion blowdown to
+        # radiate — only smooth air pumping — so the +6 dB/oct derivative has no
+        # legitimate transient to sharpen and would just brighten the residual
+        # hiss into a loud "air" wash that swamps the (now quiet) engine.  Fade
+        # the radiation mix with combustion load so the overrun stays dark.
+        # combustion load for radiation = POSITIVE blowdown only.  On the overrun
+        # the cylinder is in deep VACUUM, so p_open is strongly NEGATIVE and the
+        # abs() in `load` above reads it as high load (0.5) — a sign bug that kept
+        # the HF radiation fully on and brightened the residual hiss into the
+        # "air noise covering the engine".  Real combustion = pressure ABOVE
+        # atmosphere, so gate on the positive part only.
+        comb_load = min(max(strength * 1.25, 0.0), 1.0) if dps > 1e-12 else 0.0
+        rad *= comb_load       # no combustion (overrun) -> no sharp radiation
         if rad > 1e-3:
             ext = np.empty(frames + 1, dtype=np.float64)
             ext[0] = self._rad_prev
