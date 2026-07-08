@@ -3056,10 +3056,40 @@ _FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
 _ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
                   "f2004", "f2007", "mp44", "sf25",   # F1
                   "e92m3", "m3gtr",   # BMW S65 / P60 race V8, 8 ITBs
-                  "cgt",        # Carrera GT 5.7 V10, ITBs
+                  "cgt",        # Carrera GT 5.7 V10, 10 ITBs
                   "atomv8",     # Ariel Atom Hartley race V8
-                  "ae86"})      # 4A-GE (20-valve, ITBs) — Leo's own example
+                  "ae86",       # 4A-GE 20-valve ITBs — Leo's own example
+                  # --- V10 / V12 icons that genuinely run ITBs / velocity stacks
+                  "5",          # Lexus LFA 1LR-GUE V10, 10 ITBs (the F1 howl)
+                  "e60m5",      # BMW M5 S85 V10, 10 ITBs
+                  "mf1",        # McLaren F1 BMW S70/2 V12, 12 ITBs
+                  "917",        # Porsche 917 flat-12, slide throttles
+                  "clkgtr",     # Mercedes CLK GTR M120 race V12
+                  "speed12",    # TVR Speed 12 AJP V12
+                  "countach",   # Lamborghini Countach, 6 Weber twin-chokes
+                  "250cal"})    # Ferrari 250 Colombo V12, triple Webers
 _NO_ITB = frozenset()          # exclusions from the auto straight-cut rule
+
+# Real intake-runner lengths (m) for the V10/V12 fleet — physical MEASUREMENT
+# data (short velocity-stacks on a screamer, a variable/plenum on a road exotic,
+# a long torque runner on a pushrod, a big turbo plenum), NOT audio tuning.
+# Drives the Helmholtz breathing (VE) and the per-cylinder induction spread, so
+# these engines differentiate from geometry.  Only what Leo scoped: V10 + V12.
+_INTAKE_RUNNER = {
+    # V10
+    "5": 0.10, "7": 0.08, "cgt": 0.12, "e60m5": 0.16, "hura": 0.24,
+    "viper": 0.36, "fdviper": 0.34,
+    # V12 — race / stacks (short)
+    "mf1": 0.17, "clkgtr": 0.14, "917": 0.12, "valk": 0.13, "vulcan": 0.16,
+    "speed12": 0.16, "zondar": 0.15, "f50gt": 0.13, "fxxk": 0.17, "w154": 0.20,
+    # V12 — road exotic (variable / medium)
+    "6": 0.24, "aven": 0.22, "enzo": 0.20, "lafe": 0.20, "diablo": 0.24,
+    "countach": 0.22, "250cal": 0.22, "zonda": 0.26,
+    # V12 — big turbo / GT (long plenum, torque)
+    "sl65": 0.34, "bentss": 0.36, "conti": 0.36, "db11": 0.32,
+    # aero
+    "merlin": 0.50,
+}
 
 # --- detail-model lookups (audio) -------------------------------------------
 _CARB = frozenset({"z28", "250cal", "countach", "crs27", "930", "gt40", "w154",
@@ -3143,6 +3173,9 @@ def _annotate(key, eng):
             and eng.header_unequal_deg == 0.0
             and len({round(c.bank_angle_deg, 0) for c in eng.cylinders}) >= 2):
         eng.header_unequal_deg = 14.0
+    # real per-car intake-runner length (V10/V12 scope) — physical geometry
+    if key in _INTAKE_RUNNER:
+        eng.intake_runner_m = _INTAKE_RUNNER[key]
     # Performance cars run straight-through ABSORPTIVE mufflers (open, broadband,
     # smooth); stock road cars keep the chambered REFLECTIVE box (default).
     if eng.muffler_type == "reflective" and (eng.straight_cut
