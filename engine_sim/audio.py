@@ -431,6 +431,26 @@ class Synthesizer:
         self._stroke_ref = cyls[0].stroke        # blowdown-pulse depth ~ stroke
         self._audio_crank = 0.0
 
+        # VIRTUAL-ANALOG single-firing SHAPE — gas-dynamic blowdown SHARPNESS.
+        # The single combustion's exhaust pulse is the discharge of the cylinder
+        # gas 'capacitor' (volume V_evo at valve-open) through the exhaust-valve
+        # 'orifice' (effective area A_ev) at the hot-gas sound speed c.  Its
+        # emptying RATE  S = A_ev·c / V_evo  is the physics that sets whether the
+        # blowdown is a PEAKY snap or a SOFT hump: a big-valve, small-bore,
+        # high-CR jewel (an F1: S≈2×) empties in a flash -> sharp, bright, ripping;
+        # a huge low-CR diesel cylinder (S≈0.5×) drains slowly -> soft and woofy.
+        # Normalised to the validated reference (Aventador, S≈380) so THAT car's
+        # pulse is byte-for-byte unchanged and every other car's peakiness now
+        # falls out of real bore/stroke/valve/CR geometry — replacing the fixed
+        # 0.30·tau blowdown fraction and the hand-set blow/displacement split.
+        c0 = cyls[0]
+        _vpc = getattr(simulator.engine, "valves_per_cyl", 4)
+        _dev = 0.83 * c0.bore * (0.39 if _vpc >= 4 else 0.47)   # exhaust-valve dia
+        _Aev = 0.5 * (math.pi * 0.25 * _dev * _dev)             # ~half-throat area
+        _Vevo = c0.clearance_volume + 0.9 * c0.displacement     # cyl vol at EVO (~BDC)
+        _S = _Aev * 550.0 / max(_Vevo, 1e-9)
+        self._bd_sharp = min(max(_S / 380.0, 0.40), 2.30)       # 380 = reference
+
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
         # is what gives a multi-cylinder exhaust its rich, layered waveform.
@@ -517,6 +537,29 @@ class Synthesizer:
             self.params["res2"] = r2
             self.params["wall_thickness"] = wl
             self.params["muffler"] = mf
+        except Exception:
+            pass
+
+        # WHITE-BOX firing-VOICE MIX from the physical pulse content (step 2 of the
+        # single-firing rewrite).  The three firing voices + fizz + grit are no
+        # longer mixed at fixed GLOBAL gains hand-tuned once for all 130 cars; each
+        # level now FALLS OUT of the same geometry that shapes the pulse, anchored
+        # so the validated reference (Aventador) reproduces its known-good balance
+        # and every other car varies by real physics:
+        #   crack  (edge snap)   ~ blowdown SHARPNESS  -> peaky F1 cracks, diesel dull
+        #   body   (low thunder) ~ displacement/cyl    -> big cylinder thunders, F1 thin
+        #   turbulence (fizz)    ~ mean piston speed    (gas_truth's turb = 0.5·mps)
+        #   drive  (combustion grit) ~ compression ratio -> violent burn tears more
+        # (dry — the overall bang level — stays the anchor; these colour RELATIVE
+        #  to it, and AGC normalises absolute loudness downstream.)
+        try:
+            _disp = max(c0.displacement, 1e-6)                       # m^3 / cylinder
+            _cr = max(getattr(c0, "compression_ratio", 10.5) or 10.5, 5.0)
+            _mps = 2.0 * c0.stroke * max(simulator.engine.redline_rpm, 1000.0) / 60.0
+            self.params["crack"] = min(max(0.12 * self._bd_sharp ** 0.6, 0.05), 0.28)
+            self.params["body"] = min(max(1.60 * (_disp / 5.415e-4) ** 0.30, 1.0), 2.6)
+            self.params["turbulence"] = min(max(0.34 * (_mps / 21.65) ** 0.5, 0.18), 0.5)
+            self.params["drive"] = min(max(0.40 * (_cr / 11.8) ** 0.5, 0.25), 0.6)
         except Exception:
             pass
 
@@ -1158,7 +1201,11 @@ class Synthesizer:
                 #   global treble boost (which would just hiss).
                 rise_deg = max((2.0 + 4.0 * (1.0 - load)) * dps * edge_j, 1e-4)
                 hard = np.clip(d / rise_deg, 0.0, 1.0)        # linear hard edge
-                tau_blow = max(0.30 * tau_j, 4.0)
+                # blowdown decay from the GAS-DYNAMIC emptying rate (was a fixed
+                # 0.30·tau): a sharp-emptying cylinder (F1) rings a shorter, peakier
+                # snap; a slow one (diesel) a longer, softer swell.  Anchored at
+                # sharp=1 (the reference) so that car's decay is unchanged.
+                tau_blow = max(0.30 * tau_j / self._bd_sharp ** 0.85, 2.5)
                 blow = (0.7 + 1.0 * load) * hard * np.exp(-dd / tau_blow)
                 # (2) DISPLACEMENT — the rising piston then pushes the rest out: a
                 #   soft, broad, lower, later hump (the body / low end).
@@ -1167,7 +1214,15 @@ class Synthesizer:
                 tau_disp = tau_j * 1.5
                 disp = soft * (1.0 - np.exp(-dd / (0.5 * tau_j))) * np.exp(-dd / tau_disp)
                 close = np.clip((VALVE_CLOSE - phi) / 18.0, 0.0, 1.0)
-                pulse = np.where(inwin, (blow + 0.7 * disp) * close * amp_j, 0.0)
+                # gas-dynamic blow/displacement SPLIT: a sharp-emptying cylinder
+                # puts more of its energy into the choked blowdown snap and less
+                # into the slow piston-push hump (peaky vs woofy).  Anchored at
+                # sharp=1 -> exactly (blow + 0.7·disp), the reference's balance.
+                pk = self._bd_sharp
+                pulse = np.where(inwin,
+                                 ((0.78 + 0.22 * pk) * blow
+                                  + 0.7 * (1.22 - 0.22 * pk) * disp)
+                                 * close * amp_j, 0.0)
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)
@@ -1313,8 +1368,8 @@ class Synthesizer:
         # 11 krpm) so ordinary engines are untouched.
         if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0:
             fire_hz = sim.rpm * len(self._offsets) / 120.0
-            if fire_hz > 600.0:
-                m = min((fire_hz - 600.0) / 500.0, 1.0)
+            if fire_hz > 500.0:
+                m = min((fire_hz - 500.0) / 600.0, 1.0)
                 # PHYSICS-SWEPT harmonic gains (the DDSP-without-NN move): each
                 # harmonic's level = the blowdown source spectrum (~1/k) times
                 # |H| of the ACTUAL exhaust waveguide at that frequency — the
@@ -1341,9 +1396,20 @@ class Synthesizer:
                     harms = [(hk, a / best) for hk, a in harms]
                     scream = self._whine(fire_hz, frames, harms,
                                          phase_attr="_scream_phase")
-                    # REINFORCE only — never duck the real pulse signal; the
-                    # stack rides under the pulses to firm the merged-fire tone.
-                    sig = sig + (0.11 * m * (0.4 + 0.6 * load)) * scream
+                    # CROSSFADE, not reinforce.  At 1200-1500 fires/s the discrete
+                    # blowdown pulses are ~25 samples apart and have PHYSICALLY
+                    # fused into one continuous harmonic tone — so the per-pulse
+                    # voice underneath is now degenerate 'chuff' that made an F1
+                    # sound like a merely very fast engine, not a screaming wail.
+                    # As merge (m) grows we DUCK that chuff and hand the note to
+                    # the merged scream, keeping a little pulse texture for attack.
+                    # Level-match to the ducked voice so loudness is preserved and
+                    # only the character shifts (AGC finishes the job downstream).
+                    srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
+                    sig_rms = math.sqrt(float(np.mean(sig * sig)) + 1e-12)
+                    duck = 0.62 * m
+                    lvl = sig_rms * (0.85 + 0.55 * load) * m / srms
+                    sig = (1.0 - duck) * sig + lvl * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
