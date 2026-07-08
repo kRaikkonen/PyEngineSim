@@ -577,11 +577,16 @@ class Simulator:
         downshift_blip = mid_shift and shift_target > self.omega * 1.03
         if downshift_blip:
             gap = min((shift_target - self.omega) / max(self.omega, 1.0), 1.0)
-            self._blip = min(max(0.35 + 0.9 * gap, 0.0), 1.0)
+            blip_target = min(max(0.35 + 0.9 * gap, 0.0), 1.0)
             self._shift_cut = False
         else:
-            self._blip = 0.0
+            blip_target = 0.0
             self._shift_cut = self.drivetrain.is_shifting   # upshift cut (DCT/AT)
+        # EASE the blip (a real rev-match is a smooth throttle STAB — the pedal
+        # rushes open then releases, not a 0/1 switch): first-order ramp, fast in
+        # (~60 ms) so the bark still snaps, released a touch slower.
+        rate = 16.0 if blip_target > self._blip else 11.0
+        self._blip += (blip_target - self._blip) * min(rate * dt, 1.0)
 
         # Coasting indicator (throttle shut, well above idle).  NOTE: this used
         # to trigger a hard DEcel Fuel Cut-Off that killed all combustion on the
