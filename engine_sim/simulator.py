@@ -36,6 +36,12 @@ try:                                    # white-box surrogate layer (VE tables);
 except Exception:                       # pragma: no cover
     _HAVE_SURROGATE = False
 
+try:                                    # white-box MAP model (orifice balance)
+    from . import map_model
+    _HAVE_MAP_MODEL = True
+except Exception:                       # pragma: no cover
+    _HAVE_MAP_MODEL = False
+
 GAMMA = 1.30          # ratio of specific heats for burned gas (~1.3)
 # Physical peak-cylinder-pressure ceiling (Pa).  The open-loop Otto model lets a
 # HIGH compression ratio multiply with boost into absurd peak pressures (a diesel
@@ -77,6 +83,11 @@ class Simulator:
         self._shift_cut = False         # ignition cut during a gearshift
         self._dfco = False              # coasting indicator (no longer cuts fuel)
         self._blip = 0.0                # downshift rev-match throttle blip (0..1)
+        # white-box MAP: idle throttle-plate bleed area + diesel flag (diesels
+        # are UNTHROTTLED — load is set by fuel, so their MAP stays ~atmospheric)
+        self._map_idle_area = (map_model.idle_area_for(engine)
+                               if _HAVE_MAP_MODEL else 0.02)
+        self._map_diesel = engine.cylinders[0].compression_ratio >= 14.5
         self.boost = 0.0                # forced-induction boost (bar gauge)
         # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
         # (extra air/fuel while the block is at ambient) so a cold engine catches
@@ -267,16 +278,22 @@ class Simulator:
         """
         eng = self.engine
         t = self._effective_throttle()
-        # Closed-throttle vacuum deepens with rpm, but only to a FLOOR: a real
-        # overrun bottoms out around 0.10-0.15 atm, it does not pull to a near
-        # vacuum.  The earlier steep law (^0.7, no floor) trapped so little air
-        # that the exhaust note collapsed on lift-off ("松油燃烧声浪降低");
-        # this gentler law (^0.4, floor 0.35) keeps ~2x the overrun charge — a
-        # live engine-braking note — while still braking the engine to idle.
-        ratio = max(eng.idle_rpm / max(self.rpm, eng.idle_rpm), 0.25)
-        depth = ratio ** 0.5
-        idle_map = eng.closed_map_fraction * depth * P_ATM
-        return idle_map + t * (P_ATM - idle_map) + self.boost * 1.0e5
+        boost_pa = self.boost * 1.0e5
+        if not _HAVE_MAP_MODEL:                 # legacy fallback (stripped install)
+            ratio = max(eng.idle_rpm / max(self.rpm, eng.idle_rpm), 0.25) ** 0.5
+            idle_map = eng.closed_map_fraction * ratio * P_ATM
+            return idle_map + t * (P_ATM - idle_map) + boost_pa
+        # WHITE-BOX MAP: steady-state balance of throttle-orifice inflow against
+        # cylinder pumping (see map_model).  No tuned exponent — the part-throttle
+        # vacuum and its rpm-deepening fall out of the orifice physics.  A nominal
+        # VE keeps the solve one-way (MAP -> VE -> torque, no circularity).
+        # (A real diesel is unthrottled — fuel-metered — but our combustion tracks
+        #  air, so we keep the throttle->MAP path for all engines: the diesel's
+        #  pedal then meters charge exactly as the old model did, idle anchored by
+        #  closed_map_fraction.  Modelling fuel-limited diesel load is a P3 job.)
+        frac = map_model.solve_map_fraction(
+            t, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+        return frac * P_ATM + boost_pa
 
     def _update_boost(self, dt: float):
         """Advance the forced-induction boost (bar) for the current engine."""
