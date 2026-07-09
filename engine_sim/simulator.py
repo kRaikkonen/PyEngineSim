@@ -314,8 +314,21 @@ class Simulator:
         #  air, so we keep the throttle->MAP path for all engines: the diesel's
         #  pedal then meters charge exactly as the old model did, idle anchored by
         #  closed_map_fraction.  Modelling fuel-limited diesel load is a P3 job.)
+        # COUPLE breathing <-> intake: solve the MAP with the ACTUAL VE (ve_model),
+        # not a fixed nominal — better breathing draws more air, pulling the manifold
+        # DOWN at a given throttle, so intake and breathing now co-determine each
+        # other (one fixed-point pass: nominal -> VE at that MAP -> re-solve).  Blend
+        # toward nominal near idle so the closed_map_fraction idle anchor is preserved
+        # (the coupling matters up top, where VE deviates most from 0.85).
+        ve = 0.85
+        if self._ve_lut is not None:
+            m0 = map_model.solve_map_fraction(
+                t, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+            ve_act = self._ve_lut.eval2(self.rpm, m0)
+            w = min(max((self.rpm - eng.idle_rpm * 1.5) / 2500.0, 0.0), 1.0)
+            ve = 0.85 + (ve_act - 0.85) * w
         frac = map_model.solve_map_fraction(
-            t, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+            t, self.rpm, eng.redline_rpm, ve, self._map_idle_area)
         if boost_pa > 0.0:
             # COMPRESSOR-FED THROTTLE (white-box turbo / supercharger / twin-turbo
             # intake): the plate draws from the compressor OUTLET (P_ATM + boost),
@@ -326,7 +339,7 @@ class Simulator:
             # that wrongly kept the manifold boosted with the pedal lifted.  Anchored
             # to the WOT fraction so the rated (WOT) boost is preserved exactly.
             frac_wot = map_model.solve_map_fraction(
-                1.0, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+                1.0, self.rpm, eng.redline_rpm, ve, self._map_idle_area)
             return (frac / max(frac_wot, 0.25)) * (P_ATM + boost_pa)
         return frac * P_ATM
 

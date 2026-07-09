@@ -49,8 +49,9 @@ ETA_SHAPE = 0.68        # ONE global real-cycle factor: finite burn + wall heat 
                         # blowdown + valve-timing losses vs the ideal Otto cycle.
                         # Calibrated ONCE against the 12-car REF set (mean -> 1.0);
                         # never per-car.
-KNOCK_DERATE = 0.08     # boosted SI runs knock-limited retard + enrichment:
-                        # efficiency falls ~8%/bar of design boost (one global law)
+KNOCK_DERATE = 0.24     # SI knock-limited retard + enrichment per unit of the
+                        # cycle KNOCK INDEX (charge-temp x compression); anchored so
+                        # a typical intercooled 1-bar turbo lands ~the old 8%/bar
 P_ATM = 101325.0
 
 
@@ -66,20 +67,31 @@ def torque_target(eng, rpm, mapf, ve):
     eta_cyc = 1.0 - cr ** (1.0 - GAMMA_CYC)
     diesel = _is_diesel(eng)
     q_per_air = LHV / (AFR_DIESEL if diesel else AFR_ST)
-    # boosted SI is knock-limited: spark retard + enrichment shave efficiency
-    eta_k = 1.0 if diesel else 1.0 - KNOCK_DERATE * min(
-        getattr(eng, "boost_bar", 0.0), 2.5)
     # CHARGE-AIR TEMPERATURE (white-box hot-vs-cold): the compressor heats the
     # intake by the real heat of compression — isentropic to (P2/P1)^((g-1)/g),
     # divided by the compressor efficiency (a real ~70% wheel runs HOTTER) — then
     # an intercooler pulls a fraction (effectiveness) back out.  Density
     # rho = P/(R·T) is what makes torque, so a hot un-intercooled charge makes less
     # power than its boost pressure implies.  NA (mapf<=1) stays at ambient.
+    # Computed FIRST because both the density AND the knock tendency depend on it.
     PR = max(mapf, 1.0)                               # compressor pressure ratio
     t2 = T_AMB * (1.0 + (PR ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0) / ETA_COMP)
     eps_ic = min(max(getattr(eng, "intercooler_eff", 0.7), 0.0), 0.95)
+    # an intercooler cools LESS at high mass flow (less residence time in the core),
+    # so the charge runs HOTTER as boost/rpm climb — the real 'running out of
+    # intercooler' at high load a fixed effectiveness misses (and it then feeds MORE
+    # knock, since eta_k reads this same t_man).
+    eps_ic *= 1.0 - 0.22 * min(max(mapf - 1.0, 0.0), 1.6)
     t_man = t2 - eps_ic * (t2 - T_AMB)               # intercooler cools it back
     rho = mapf * P_ATM / (R_AIR * t_man)
+    # KNOCK (white-box, COUPLED to the real cycle — was boost alone): the end-gas
+    # auto-ignites from the peak COMPRESSION STATE, so the knock index ~
+    # (T_charge/T_amb)·(CR·MAP)^(g-1) — a HOT (un-intercooled) charge, a HIGH CR, or
+    # high boost ALL raise it; a good intercooler or a low CR lower it.  So a high-CR
+    # NA can knock with no boost, and an intercooled turbo knocks LESS than a hot-
+    # charge one at the same boost.  Diesel is compression-ignition -> no derate.
+    ki = (t_man / T_AMB) * (cr * min(mapf, cr) / 10.0) ** (GAMMA_CYC - 1.0)
+    eta_k = 1.0 if diesel else 1.0 - KNOCK_DERATE * min(max(ki - 1.0, 0.0), 2.2)
     imep = eta_cyc * ETA_SHAPE * eta_k * q_per_air * rho * max(ve, 0.0)
     pmep = max(P_ATM - mapf * P_ATM, 0.0)            # throttled intake pumping loop
     vd = eng.total_displacement
@@ -97,10 +109,15 @@ def build_boost_table(eng, ve_lut, n_rpm=20, n_thr=7):
     b_max = eng.boost_bar
 
     def flow(rpm, boost):
-        """Exhaust enthalpy-flow proxy: rpm x charge density x VE."""
+        """Exhaust ENTHALPY flow that drives the turbine = mass flow x TEMPERATURE.
+        mass ~ rpm x charge density (mapf) x VE; the exhaust-gas TEMP rises with
+        load/boost (more fuel burned -> hotter exhaust) -> the turbine gets hotter
+        AS it spools, a positive feedback that makes boost come on HARD once lit
+        (then the wastegate caps it).  Couples the turbine hot-side to combustion."""
         mapf = 1.0 + boost
         ve = ve_lut.eval2(rpm, mapf) if ve_lut is not None else 0.9
-        return (rpm / redline) * mapf * ve
+        egt = 0.85 + 0.35 * min(boost / max(b_max, 0.3), 1.0)   # exhaust enthalpy temp
+        return (rpm / redline) * mapf * ve * egt
 
     # anchor: at the preset's historical full-boost speed (WOT) the balance
     # must just reach the wastegate cap
