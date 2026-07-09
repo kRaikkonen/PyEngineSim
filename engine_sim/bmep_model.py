@@ -123,7 +123,12 @@ def build_boost_table(eng, ve_lut, n_rpm=20, n_thr=7):
         (then the wastegate caps it).  Couples the turbine hot-side to combustion."""
         mapf = 1.0 + boost
         ve = ve_lut.eval2(rpm, mapf) if ve_lut is not None else 0.9
-        egt = 0.85 + 0.35 * min(boost / max(b_max, 0.3), 1.0)   # exhaust enthalpy temp
+        # exhaust-gas TEMPERATURE using the SAME combustion-load form as
+        # Simulator.exhaust_gas_temp (0.42 + 0.58·load) so the turbine hot-side and
+        # the note-pitch EGT are consistent; the CR/expansion factor is per-engine
+        # constant and normalised out by kappa, so only the LOAD shape matters here.
+        load = min(boost / max(b_max, 0.3), 1.0)
+        egt = 0.42 + 0.58 * load
         return (rpm / redline) * mapf * ve * egt
 
     # anchor: at the preset's historical full-boost speed (WOT) the balance
