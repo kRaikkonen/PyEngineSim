@@ -400,7 +400,20 @@ class Simulator:
             else:                                 # legacy linear spool ramp
                 spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
                 target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0) * load_gate
-            tau = eng.turbo_lag if target > self.boost else 0.18
+            # WHITE-BOX SPOOL TRANSIENT: the boost lags because the turbo SHAFT
+            # (inertia) must spin UP, driven by exhaust enthalpy —
+            #     tau_spool ~ J_turbo / exhaust_power.
+            # J_turbo (the turbo's size/inertia, the ONE design number that says how
+            # laggy it is) is turbo_lag; exhaust power ~ rpm x charge, tiny down low
+            # and large up top.  So the SAME turbo is laggy off-boost/low-rpm and
+            # snappy up top — the F40's huge lag now FALLS OUT of its big turbo +
+            # small-displacement low-end exhaust energy, no spool_frac/width curve
+            # needed.  Anchored at exh_power=0.35 -> tau == turbo_lag.
+            if target > self.boost:
+                exh_power = max(rf * (1.0 + max(self.boost, 0.0)), 0.06)
+                tau = min(max(eng.turbo_lag * (0.35 / exh_power), 0.05), 4.0)
+            else:
+                tau = 0.18                        # boost bleeds off fast on a lift
             rate = min(dt / max(tau, 0.02), 1.0)
         self.boost += (target - self.boost) * rate
 
