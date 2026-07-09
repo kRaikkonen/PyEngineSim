@@ -627,6 +627,7 @@ class Synthesizer:
         self._bdim_phase = 0.0    # Bdim blow-off oscillator phase
         self.fire_chord = 0       # firing-body chord voicing index (hidden keys 1-6)
         self._prev_throttle = 0.0 # for blow-off-valve detection
+        self._thr_ref = 0.0       # slowly-decaying recent-throttle peak (lift detect)
         self._bov_env = 0.0       # blow-off-valve 'pshhh' envelope
         self._bov_prev = 0.0      # stock-recirc dark-noise low-pass state
         self._lock = threading.Lock()
@@ -2138,7 +2139,15 @@ class Synthesizer:
             #   * with no (or a shut) valve the air backs up and pulses BACKWARD
             #     through the compressor wheel again and again -> compressor
             #     surge, the rapid 'stu-tu-tu-tu' flutter.
-            if (self._prev_throttle - sim.throttle) > 0.12 and sim.boost > 0.10:
+            # ROBUST LIFT detection: a real pedal is RAMPED (the app smooths it), so
+            # a per-block delta almost never exceeds a snap threshold -> the old
+            # trigger never fired in game.  Instead track a slowly-decaying peak of
+            # recent throttle; a blow-off fires when the pedal has dropped well BELOW
+            # where it recently was, while still on boost — an edge-guard stops it
+            # re-firing every block while the flutter is already sounding.
+            self._thr_ref = max(sim.throttle, self._thr_ref * 0.96)
+            if (self._thr_ref - sim.throttle) > 0.30 and sim.boost > 0.10 \
+                    and self._bov_env < 0.5:
                 self._bov_env = 1.0
                 self._bdim_phase = 0.0
             if self._bov_env > 1e-3 and self.o_chord:
