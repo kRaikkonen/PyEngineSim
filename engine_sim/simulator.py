@@ -31,7 +31,7 @@ from .units import rads_to_rpm
 try:                                    # white-box surrogate layer (VE tables);
     from .surrogate import Surrogate, LUT  # guarded so a stripped install still runs
     from .ve_model import build_ve_table
-    from .bmep_model import torque_target, build_boost_table
+    from .bmep_model import torque_target, build_boost_table, charge_temp
     _HAVE_SURROGATE = True
 except Exception:                       # pragma: no cover
     _HAVE_SURROGATE = False
@@ -145,6 +145,12 @@ class Simulator:
         # load, cool off when parked); set these to ~20 for a true cold start.
         self.coolant_c = 88.0           # coolant temperature (deg C)
         self.oil_c = 85.0               # oil temperature (lags the coolant)
+        # intercooler HEAT-SOAK (0 cool .. 1 fully soaked): the core warms under
+        # sustained boost (charge-air heat load) and cools with ambient airflow when
+        # off-boost, so a fixed effectiveness drops over time -> the 5th WOT pull
+        # makes less power (hotter charge -> less dense + more knock).
+        self.ic_soak = 0.0
+        self._soak_factor = 1.0         # live torque derate from heat-soak
 
         # precompute per-cylinder cycle offset in radians of the *cycle*
         self._offset_deg = np.array([c.cycle_offset_deg for c in engine.cylinders])
@@ -438,6 +444,29 @@ class Simulator:
         self._ers_deploy_w = deploy_w
         self._ers_regen_nm = regen_nm
 
+    def _update_heat_soak(self, dt: float):
+        """Intercooler core heat-soak (white-box dynamic).  The core warms with the
+        charge-air heat LOAD (~ boost) and cools with ambient airflow when off-boost;
+        as it soaks, its effective cooling falls -> a hotter, less-dense charge ->
+        LESS torque (and more knock).  Only an intercooled forced-induction engine
+        has a core to soak."""
+        eng = self.engine
+        if eng.induction == "na" or eng.boost_bar <= 0.0 \
+                or getattr(eng, "intercooler_eff", 0.7) <= 0.05:
+            self.ic_soak = 0.0
+            self._soak_factor = 1.0
+            return
+        bf = min(max(self.boost, 0.0) / max(eng.boost_bar, 0.1), 1.0)
+        if bf > 0.15:
+            target, tau = bf, 22.0          # heats over ~20 s of sustained boost
+        else:
+            target, tau = 0.0, 12.0         # cools with ambient airflow off-boost
+        self.ic_soak += (target - self.ic_soak) * min(dt / tau, 1.0)
+        self.ic_soak = min(max(self.ic_soak, 0.0), 1.0)
+        # hotter soaked charge: up to ~12% torque loss when fully soaked, scaled by
+        # how intercooled the car is (a big front-mount holds out longer than none).
+        self._soak_factor = 1.0 - 0.12 * self.ic_soak * getattr(eng, "intercooler_eff", 0.7)
+
     def _electric_motor_torque(self) -> float:
         """MGU-K crank torque (N*m): + deploy (motor) or - regen (generator brake),
         from the energy-managed commands set by _update_ers."""
@@ -702,6 +731,7 @@ class Simulator:
 
         self._update_boost(dt)
         self._update_ers(dt)            # MGU-K deploy/regen + MGU-H harvest -> SoC
+        self._update_heat_soak(dt)      # intercooler core heat -> torque derate
 
         # Solve the burn multiplier ONCE per frame (it moves slowly): the
         # crank-resolved pulses then release exactly the heat the physical
@@ -723,7 +753,7 @@ class Simulator:
 
         for _ in range(n):
             self._update_idle_governor(h)
-            self.gas_torque = self._compute_torque()
+            self.gas_torque = self._compute_torque() * self._soak_factor
             self.friction_torque = self._loss_torque()
             self.motor_torque = self._electric_motor_torque()
             starter = self._starter_torque()
@@ -786,10 +816,15 @@ class Simulator:
         cr = min(max(eng.cylinders[0].compression_ratio, 6.0), 24.0)
         load = self._effective_throttle()
         rpm_frac = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
-        # 1) charge temp entering compression: ambient + compressor heat of
-        #    compression under boost (same physics as bmep_model's charge temp)
-        pr = 1.0 + max(self.boost, 0.0)                    # compressor pressure ratio
-        t_charge = 300.0 * (1.0 + (pr ** 0.2857 - 1.0) / 0.70)
+        # 1) charge temp entering compression — the SHARED white-box charge_temp
+        #    (compressor heat + intercooler + flow + heat-soak), so this MATCHES the
+        #    torque/knock models exactly.  A heat-soaked charge is hotter -> hotter
+        #    exhaust -> the note pitch shifts, all from one source of truth.
+        mapf = 1.0 + max(self.boost, 0.0)
+        if _HAVE_SURROGATE:
+            t_charge = charge_temp(eng, mapf, self.ic_soak)
+        else:
+            t_charge = 300.0 * (1.0 + (mapf ** 0.2857 - 1.0) / 0.70)
         # 2) adiabatic compression to TDC
         t_comp = t_charge * cr ** (GAMMA - 1.0)
         # 3) combustion heat release (q/cv rise), scaled by fuelling completeness —

@@ -59,6 +59,20 @@ def _is_diesel(eng):
     return eng.cylinders[0].compression_ratio >= 14.5
 
 
+def charge_temp(eng, mapf, ic_soak=0.0):
+    """WHITE-BOX charge-air temperature (K) entering the cylinder — the SINGLE source
+    of truth shared by the torque model AND the exhaust-gas-temp / knock models so
+    they always MATCH.  Compressor heat of compression (isentropic / eta_comp) then
+    an intercooler whose effectiveness falls with mass flow (less residence) and with
+    HEAT-SOAK (a warmed core cools less)."""
+    PR = max(mapf, 1.0)                               # compressor pressure ratio
+    t2 = T_AMB * (1.0 + (PR ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0) / ETA_COMP)
+    eps = min(max(getattr(eng, "intercooler_eff", 0.7), 0.0), 0.95)
+    eps *= 1.0 - 0.22 * min(max(mapf - 1.0, 0.0), 1.6)   # flow-dependent
+    eps *= 1.0 - 0.12 * min(max(ic_soak, 0.0), 1.0)      # heat-soak
+    return t2 - eps * (t2 - T_AMB)                    # NA (mapf<=1) stays ambient
+
+
 def torque_target(eng, rpm, mapf, ve):
     """Physical cycle-mean crank torque (N*m) at manifold fraction ``mapf``
     (p_man/p_atm) with volumetric efficiency ``ve`` (from the P1 white-box
@@ -74,15 +88,8 @@ def torque_target(eng, rpm, mapf, ve):
     # rho = P/(R·T) is what makes torque, so a hot un-intercooled charge makes less
     # power than its boost pressure implies.  NA (mapf<=1) stays at ambient.
     # Computed FIRST because both the density AND the knock tendency depend on it.
-    PR = max(mapf, 1.0)                               # compressor pressure ratio
-    t2 = T_AMB * (1.0 + (PR ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0) / ETA_COMP)
-    eps_ic = min(max(getattr(eng, "intercooler_eff", 0.7), 0.0), 0.95)
-    # an intercooler cools LESS at high mass flow (less residence time in the core),
-    # so the charge runs HOTTER as boost/rpm climb — the real 'running out of
-    # intercooler' at high load a fixed effectiveness misses (and it then feeds MORE
-    # knock, since eta_k reads this same t_man).
-    eps_ic *= 1.0 - 0.22 * min(max(mapf - 1.0, 0.0), 1.6)
-    t_man = t2 - eps_ic * (t2 - T_AMB)               # intercooler cools it back
+    # (Shared charge_temp() — the same formula exhaust_gas_temp / knock read.)
+    t_man = charge_temp(eng, mapf)
     rho = mapf * P_ATM / (R_AIR * t_man)
     # KNOCK (white-box, COUPLED to the real cycle — was boost alone): the end-gas
     # auto-ignites from the peak COMPRESSION STATE, so the knock index ~
