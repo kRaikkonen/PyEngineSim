@@ -583,6 +583,7 @@ class Synthesizer:
         self.ssqv = False         # HKS SSQV atmospheric dump: loud sharp 'TSSSH'
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
+        self.last_combustion = np.zeros(64)  # decimated REAL combustion voice (analyzer)
         # per-stage exhaust-path waveform taps for the refresh-style stage scopes.
         # Only captured while the UI overlay is open (scope_enabled) to keep the
         # audio callback cheap otherwise.
@@ -1398,6 +1399,12 @@ class Synthesizer:
             st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
             combustion = (1.0 - self._blk_seal) * combustion + self._blk_seal * st
         self._tap("block", combustion)        # sealed in-cylinder combustion event
+        # keep a decimated copy of the REAL combustion voice for the analyzer's
+        # 'firing pulses' scope — the actual non-linear waveform (tanh-saturated
+        # bang, sharp blowdown edges, gated fizz) instead of an idealised hump.
+        if frames:
+            cstep = max(1, frames // 64)
+            self.last_combustion = combustion[::cstep][:64].astype(np.float64).copy()
         sig = combustion + wet                # + the OPEN pipe resonance (tailpipe)
 
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow

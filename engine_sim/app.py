@@ -4778,8 +4778,15 @@ class App:
         rh = (rect.bottom - pad - rowy - gap) / 2.0
         cx = [x0, x0 + cw + gap, x0 + 2 * (cw + gap)]
         # --- row 2: firing pulses · exhaust flow · valve lift -------------------
-        self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
-                     [(comb, (255, 150, 70))])
+        # REAL non-linear combustion voice (tanh-saturated bang + sharp edges) when
+        # the audio is running; the analytic per-cylinder hump is only the fallback.
+        rc = getattr(self.synth, "last_combustion", None) if self.synth else None
+        if rc is not None and len(rc) > 1 and np.any(rc):
+            self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
+                         [(self._stabilize(rc), (255, 150, 70))], bipolar=True)
+        else:
+            self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
+                         [(comb, (255, 150, 70))])
         self._ascope(cx[1], rowy, cw, rh, "EXHAUST FLOW · system pressure",
                      [(exh, (255, 165, 70))])
         self._ascope(cx[2], rowy, cw, rh, "VALVE LIFT · intake / exhaust",
