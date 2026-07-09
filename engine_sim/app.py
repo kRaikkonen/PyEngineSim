@@ -1176,6 +1176,12 @@ class App:
                     self._flash("♪ V7" if self.synth.o_chord else "")
                 elif e.key == pygame.K_p:                # hidden: test the BOV sound
                     self.synth._bov_env = 1.0
+                    # give the test jet a REAL trapped pressure (the white-box vent
+                    # derives pitch/loudness/duration from it — without this it
+                    # inherited whatever the last real lift left behind)
+                    self.synth._bov_pr0 = max(
+                        self.sim.boost,
+                        getattr(self.sim.engine, "boost_bar", 0.0), 0.8)
                     self.synth._bdim_phase = 0.0
                 elif e.key == pygame.K_b:                # POV: chase cam <-> cockpit
                     self.synth.cabin = not self.synth.cabin

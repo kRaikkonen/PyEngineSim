@@ -864,7 +864,10 @@ class Synthesizer:
             # F1 scream TEARING-noise band (~3 kHz, moderate Q): the shredding-air
             # texture that rides the tone so an F1 reads as a violent engine, not a
             # pure electronic buzz — band-limited so it tears, not hisses.
-            self._f1tear_bp = _bandpass(3000.0, 0.9, sr)
+            # air-shear SIZZLE band: the tearing rides ABOVE the harmonic stack
+            # (8 kHz+), NOT at 3 kHz — a 3 kHz gated band IS the electric-drill
+            # spectrum and made the buzz worse, not better.
+            self._f1tear_bp = _bandpass(min(8000.0, sr * 0.36), 0.7, sr)
             self._f1tear_zi = np.zeros(2)
             self._shear_hp_zi = np.zeros(2)
             # (Step 3) cylinder-head / exhaust-port cavity: a gentle low-pass that
@@ -1233,22 +1236,34 @@ class Synthesizer:
             # (eng.cabin_nr_db): ~20+ dB a sealed luxury saloon, ~13 dB a thin-
             # shelled sports car (mid-engine: the bay is right behind your head),
             # ~6 dB a stripped/open race shell (an F1 cockpit is barely enclosed).
-            nr = getattr(eng, "cabin_nr_db", 0.0) or (6.0 if race else 13.0)
-            a_fw = min(10.0 ** (-nr / 20.0), 0.7)
+            # NR defaults are SPORTS-car numbers, not saloon NVH targets: this
+            # roster is supercars/race cars whose makers pipe the sound IN on
+            # purpose (sound symposers, induction ducts at the cowl, the bay
+            # right behind a mid-engine driver's head) — ~8 dB effective.  A
+            # stripped/open race shell barely attenuates at all (~3 dB).  A
+            # sealed luxury saloon can still set eng.cabin_nr_db ~ 20+.
+            # racing-game cockpit reference = the driver's HELMET EAR in a car
+            # whose maker WANTS the engine heard (symposer ducts, mid-engine bay
+            # at the bulkhead, race shells with no trim at all): effective
+            # engine-band NR ~5 dB sports / ~2 dB race once every flanking path
+            # (windows, vents, structure) is summed.
+            nr = getattr(eng, "cabin_nr_db", 0.0) or (2.0 if race else 5.0)
+            a_fw = min(10.0 ** (-nr / 20.0), 0.9)
             m_fw = 6.3 if race else 11.0                          # firewall panel
             m_rr, a_rr = (6.3 if race else 13.0), a_fw * 0.95     # floor + bulkhead
-            # STRUCTURE-BORNE mount path — the DOMINANT in-cabin path in real
-            # cars: the engine shakes the shell through its mounts and the body
-            # panels re-radiate inside.  Transmissibility above the mount
-            # resonance: soft elastomer mounts isolate ~20 dB (x0.10), race
-            # solid mounts only ~10 dB (x0.30); the shell re-radiates the
-            # low-mid band (2nd-order rolloff above ~800 Hz panel response).
+            # STRUCTURE-BORNE path — the DOMINANT in-cabin path in real cars:
+            # engine mounts + driveline + exhaust hangers all shake the shell,
+            # and the panels re-radiate INSIDE.  Summed over every mount point
+            # the structure-borne contribution rivals the airborne one below
+            # ~500 Hz (classic vehicle-NVH result): ~-9 dB net (x0.35) with
+            # elastomer mounts, ~-6 dB (x0.50) solid race mounts; the shell
+            # re-radiates up to ~1.2 kHz (2nd-order above the panel response).
             geo = dict(
                 g_bay=1.0, g_tail=r_bay / r_tail,
                 d_bay=0, d_tail=int((r_tail - r_bay) / c * sr),
                 bay_alpha=a_fw, bay_fc=fc_mass(m_fw),
                 tail_alpha=a_rr, tail_fc=fc_mass(m_rr),
-                struct=(0.30 if race else 0.10), struct_fc=800.0,
+                struct=(0.55 if race else 0.40), struct_fc=2000.0,
                 boom_f=c / (2.0 * 2.4), ground=None)
         else:                                    # chase cam behind the car
             d, hs, hr, car = 6.0, 0.3, 1.2, 4.5  # cam 6 m back, tailpipe 0.3 m up
@@ -1611,7 +1626,17 @@ class Synthesizer:
                 if harms:
                     srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
                     harms = [(hk, a / srms) for hk, a in harms]   # unit-RMS stack
-                    scream = self._whine(fire_hz, frames, harms,
+                    # HARMONIC LINE BROADENING (the real de-buzz): a perfectly
+                    # periodic stack IS an electric drill — every line is a
+                    # delta.  A real engine scatters each cycle's combustion
+                    # phase (turbulence, +-0.5-1 deg ignition jitter), which
+                    # broadens every harmonic line into a narrow band — the
+                    # 'wall of sound'.  Model: slow random-walk detune of the
+                    # whole stack (~0.4 % sigma), smoothed so it breathes.
+                    dtn = getattr(self, "_scr_jit", 0.0)
+                    dtn += 0.35 * (float(self._rng.standard_normal()) * 0.004 - dtn)
+                    self._scr_jit = dtn
+                    scream = self._whine(fire_hz * (1.0 + dtn), frames, harms,
                                          phase_attr="_scream_phase")
                     # grit: a real open-exhaust screamer is nonlinear — saturate HARD
                     # for the raspy, torn power (dense odd harmonics), not a pure sine.
@@ -1637,7 +1662,9 @@ class Synthesizer:
                     ctrl = self._rng.standard_normal(5)
                     jit = np.interp(np.linspace(0.0, 1.0, frames),
                                     np.linspace(0.0, 1.0, 5), ctrl)
-                    scream = scream * (1.0 + 0.20 * m * jit) + (0.68 * m) * tear
+                    # sizzle RIDES the scream (8 kHz air shear), it must not
+                    # dominate — at 0.68 in the old 3 kHz band it WAS the drill
+                    scream = scream * (1.0 + 0.20 * m * jit) + (0.40 * m) * tear
                     # CROSSFADE the fused pulses onto the merged scream, but DUCK
                     # ONLY LIGHTLY — the combustion punch/body underneath IS the 有力
                     # a real F1 keeps.  (Was 0.62 = stripped it to a comical whistle.)
@@ -2120,7 +2147,16 @@ class Synthesizer:
             dg, rg = geo["ground"]
             if dg > 0:                        # tarmac reflection -> outdoor comb
                 sig = sig + rg * self._pov_delay(sig, "gnd", dg)
-        if geo["boom_f"] > 0.0 and _HAVE_SCIPY:   # cabin standing-wave boom
+        if geo["boom_f"] > 0.0 and _HAVE_SCIPY:
+            # STIFFNESS region: below the first panel resonance (~90 Hz) the
+            # partition is stiffness-controlled and TL RISES as f falls — deep
+            # LF does NOT flood the cabin.  Without this the sub-bass passed at
+            # 0 dB, drowned the AGC and left the cockpit quiet AND muffled.
+            bhp, ahp = self._bw(1, 90.0, btype="high")
+            if not hasattr(self, "_stiff_zi"):
+                self._stiff_zi = np.zeros(1)
+            sig, self._stiff_zi = lfilter(bhp, ahp, sig, zi=self._stiff_zi)
+            # ...and the cabin standing-wave boom re-peaks what DOES get in
             bbm, abm = self._pk(geo["boom_f"], 2.2, 5.0)
             sig, self._boom_zi = lfilter(bbm, abm, sig, zi=self._boom_zi)
 
@@ -2129,7 +2165,9 @@ class Synthesizer:
         # the per-component reverbs above are source-local (port/spool), this
         # is where the LISTENER is.
         if self.pov == "cockpit":
-            self._cab_verb.mix = P["reverb"]
+            # heavily-absorbent trimmed cavity: little reverberant energy (a wet
+            # short room was part of the '闷' feel)
+            self._cab_verb.mix = 0.6 * P["reverb"]
             sig = self._cab_verb.process(sig)
         else:
             self._reverb.mix = P["reverb"] + (0.05 if self.road_pipe else 0.0)
@@ -2186,6 +2224,13 @@ class Synthesizer:
         if _HAVE_SCIPY:
             rf = min(sim.rpm / 13000.0, 1.0)
             target = min(16500.0 - 7200.0 * rf, self.sample_rate * 0.46)
+            # SCREAMERS ARE EXEMPT: an F1's identity lives at 8-16 kHz — cutting
+            # the mix to ~9.3 kHz at speed left only the 1-5 kHz periodic core,
+            # i.e. the electric drill.  Their harmonic stack is additive (band-
+            # limited by construction), so the fold-over this LP guards against
+            # barely applies; keep the top end open.
+            if sim.engine.redline_rpm >= 11000.0:
+                target = max(target, min(15500.0, self.sample_rate * 0.46))
             self._aa_cut = getattr(self, "_aa_cut", target)
             self._aa_cut += (target - self._aa_cut) * 0.08
             b, a = butter(2, self._aa_cut / (self.sample_rate / 2), btype="low")
@@ -2395,16 +2440,38 @@ class Synthesizer:
                     jet = 0.5 * (noise + np.concatenate(([self._bov_prev],
                                                          noise[:-1])))
                     self._bov_prev = float(noise[-1])
-                amp = bov * (u ** 4) * 3.2               # Lighthill U^8 power
+                amp = bov * (u ** 4) * 3.2               # Lighthill U^8 (quadrupole)
                 if self.ssqv:
                     out += (amp * 1.25) * jet
                 elif self.flutter:
+                    # SURGE is not a steady jet: each cycle is a bulk FLOW
+                    # REVERSAL — a MONOPOLE volume pulse at the big inlet mouth
+                    # (velocity there = throat flow spread over the inlet area,
+                    # u_mouth = u*A/(pi/4*D^2) -> Strouhal puts its energy LOW:
+                    # the meaty 'tu' thump), radiating ~ u^2 (monopole), plus
+                    # the bright throat hiss (quadrupole u^4) on top.  Both
+                    # gated by the deep-surge cycle.
                     fl = 13.0 + 11.0 * bfrac             # deep-surge cycle rate
                     ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
                     if frames:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
                     pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 2.0
-                    out += (amp * (1.9 + 1.2 * bfrac)) * jet * pulse
+                    u_mouth = u * C0 * A / (0.785 * D * D)   # m/s at the inlet
+                    f_lo = min(max(0.2 * u_mouth / D, 45.0), 400.0)
+                    if _HAVE_SCIPY:
+                        bl_, al_ = _bandpass(f_lo, 0.8, sr)
+                        thump, self._bovlo_zi = lfilter(
+                            bl_, al_, noise, zi=getattr(self, "_bovlo_zi",
+                                                        np.zeros(2)))
+                    else:
+                        thump = 0.5 * (noise + np.concatenate(([self._bov_prev],
+                                                               noise[:-1])))
+                        thump = 0.5 * (thump + np.concatenate(([self._bov_prev],
+                                                               thump[:-1])))
+                        self._bov_prev = float(noise[-1])
+                    mono = bov * (u * u) * 2.6           # monopole ~ u^2: the body
+                    out += ((mono * (1.6 + 0.9 * bfrac)) * thump
+                            + (amp * 0.7) * jet) * pulse
                 else:                                    # recirc: darkened by the
                     drk = 0.5 * (jet + np.concatenate(([self._bov_prev],
                                                        jet[:-1])))   # intake pipe run
