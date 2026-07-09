@@ -4644,6 +4644,28 @@ class App:
         return res
 
     @staticmethod
+    def _cam_state(eng, rpm):
+        """REAL valve events for THIS engine at THIS rpm — feeds the VALVE LIFT,
+        EXHAUST FLOW and timing scopes so none of them is a fixed curve:
+          * duration from cam_profile (mild -> race breathe wider),
+          * VTEC/two-stage: a lift + duration STEP as rpm crosses vtec_rpm,
+          * VANOS/continuous: the intake cam phases (advances) with rpm.
+        Returns (intake_open_deg, intake_dur, intake_lift, exh_open_deg, exh_dur)."""
+        prof = {"mild": 208.0, "stock": 228.0, "hot": 256.0, "race": 282.0}
+        dur_i = prof.get(getattr(eng, "cam_profile", "stock"), 228.0)
+        lift_i, ic = 1.0, 818.0                     # intake centre ~100 deg ATDC-overlap
+        vl = getattr(eng, "valve_lift", "fixed")
+        if vl == "two-stage":
+            xr = getattr(eng, "vtec_rpm", 0.0) or 0.62 * eng.redline_rpm
+            w = 1.0 / (1.0 + math.exp(-(rpm - xr) / max(0.013 * eng.redline_rpm, 45.0)))
+            dur_i = 196.0 + 92.0 * w                # economy lobe -> power lobe
+            lift_i = 0.60 + 0.40 * w                # the VTEC lift STEP
+        elif vl == "continuous":
+            ic -= 22.0 * min(rpm / max(eng.redline_rpm, 1.0), 1.0)   # VANOS phasing
+        dur_e = 0.94 * dur_i
+        return ic - dur_i / 2.0, dur_i, lift_i, 620.0 - dur_e / 2.0, dur_e
+
+    @staticmethod
     def _cycle_pressure(ang, cyl, load, thr):
         """Single-cylinder in-cylinder pressure (Pa) across one 720-deg cycle:
         intake (manifold) -> adiabatic compression -> combustion peak + expansion
@@ -4678,11 +4700,16 @@ class App:
 
         def px(deg):
             return int(x + 6 + (deg % 720) / 720.0 * (w - 12))
-        rpmf = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
-        adv = 15.0 + 22.0 * rpmf
-        events = [("IGN", 360 - adv, (255, 90, 90)), ("EVO", 500, (120, 180, 255)),
-                  ("EVC", 10, (120, 180, 255)), ("IVO", 700, (110, 220, 130)),
-                  ("IVC", 220, (110, 220, 130))]
+        eng = sim.engine
+        # REAL spark map (matches the cylinder-pressure Wiebe model) + REAL cam
+        # events for this engine (duration by profile, VTEC/VANOS shift) — not fixed.
+        adv = eng.spark_advance_deg * (0.38 + 0.62 * min(sim.rpm / 3600.0, 1.0))
+        ivo, dur_i, _lift, evo, dur_e = self._cam_state(eng, sim.rpm)
+        events = [("IGN", (360 - adv) % 720, (255, 90, 90)),
+                  ("EVO", evo % 720, (120, 180, 255)),
+                  ("EVC", (evo + dur_e) % 720, (120, 180, 255)),
+                  ("IVO", ivo % 720, (110, 220, 130)),
+                  ("IVC", (ivo + dur_i) % 720, (110, 220, 130))]
         for j, (lab, deg, col) in enumerate(events):
             xx = px(deg)
             pygame.draw.line(self.screen, col, (xx, y + 30), (xx, axy), 1)
@@ -4720,28 +4747,43 @@ class App:
         load = min(max((sim.blowdown_pressure() - PATM) / (0.9 * PATM), 0.25), 1.1)
         thr = min(max(sim.throttle, 0.0), 1.0)
         cyl = eng.cylinders[0]
-        Pcyl = self._cycle_pressure(ang, cyl, load, thr)
+        # VALVE LIFT — the REAL cam for THIS engine at THIS rpm (duration by profile,
+        # VTEC lift+duration STEP at vtec_rpm, VANOS phasing).  Not a fixed curve.
+        ivo, dur_i, lift_i, evo, dur_e = self._cam_state(eng, sim.rpm)
+        ivl = self._valve_lift(ang, ivo, dur_i) * lift_i
+        evl = self._valve_lift(ang, evo, dur_e)
+        # CYLINDER PRESSURE — the ACTUAL Wiebe finite-burn trace the engine runs
+        # (live burn multiplier k, real spark advance + burn duration, peak cap),
+        # sampled over the cycle; NOT a separate display curve.
+        p_man = sim._manifold_pressure()
+        combusting = getattr(sim, "ignition_on", True) and not getattr(sim, "_fuel_cut", False)
+        kb = getattr(sim, "_k_burn", 1.0)
+        Pcyl = np.array([sim._cylinder_pressure(cyl, float(a), p_man, combusting, kb)
+                         for a in ang])
         arm = cyl.piston_area * np.array(
             [cyl.d_displacement_d_theta(math.radians(a % 360.0)) for a in ang])
         g = (Pcyl - PATM) * arm
+        # EXHAUST FLOW — REAL: mass flow past the exhaust valve = curtain area
+        # (proportional to exhaust lift) x gas velocity.  At EVO the cylinder is
+        # still near peak pressure -> a choked BLOWDOWN burst proportional to
+        # sqrt(P_cyl - P_exh); then the piston displaces the rest at low pressure.
+        # Driven by the REAL cyl pressure + REAL exhaust cam, so it tracks load,
+        # rpm, spark and VTEC instead of a hardcoded lin-rise/exp-decay window.
+        blow = np.sqrt(np.maximum(Pcyl - 1.05 * PATM, 0.0) / PATM)
+        eflow = evl * (blow + 0.30)          # blowdown burst + displacement while open
         dC = ang - 360.0
         cbase = np.where((dC >= -6) & (dC < 150),
                          np.clip((dC + 6) / 8.0, 0, 1) * np.exp(-np.clip(dC, 0, None) / 45.0), 0.0)
-        dE = ang - 505.0
-        ebase = np.where((dE >= 0) & (dE < 140),
-                         np.clip(dE / 4.0, 0, 1) * np.exp(-dE / 22.0), 0.0)
         torque = np.zeros(W); comb = np.zeros(W); exh = np.zeros(W)
         for s in shifts:
             torque += np.roll(g, -s)
             comb += np.roll(cbase, -s)
-            exh += np.roll(ebase, -s)
-        # amplitude tracks BOTH load and throttle so opening the throttle visibly
-        # grows the combustion/exhaust pulses (not just the rpm)
+            exh += np.roll(eflow, -s)
+        # combustion-pulse fallback amplitude tracks load+throttle (exhaust flow
+        # already scales with load through the real cylinder pressure)
         drive = 0.15 + 0.85 * (0.45 * load + 0.55 * thr)
         comb *= drive
-        exh = self._smooth(exh * drive, max(3, int(W * 0.05)))
-        ivl = self._valve_lift(ang, 700.0, 240.0)
-        evl = self._valve_lift(ang, 500.0, 230.0)
+        exh = self._smooth(exh, max(3, int(W * 0.04)))
         aud = getattr(self.synth, "last_wave", None) if self.synth else None
 
         # torque & horsepower curves vs RPM (a live dyno chart) ------------------
@@ -4767,7 +4809,9 @@ class App:
         hp_n = (hp_curve * thr_scale) / hp_ref
         rpmfrac = float(np.clip((sim.rpm - rlo) / max(rl - rlo, 1.0), 0, 1))
         # spark-advance timing: ignition spike vs the valve-event reference ------
-        adv = 15.0 + 22.0 * min(sim.rpm / max(rl, 1.0), 1.0)
+        # REAL map — identical to the Wiebe model in _cylinder_pressure (advance
+        # grows with rpm, saturating ~3600, off the live physical spark_advance_deg).
+        adv = eng.spark_advance_deg * (0.38 + 0.62 * min(sim.rpm / 3600.0, 1.0))
         dS = ((ang - (360.0 - adv) + 360.0) % 720.0) - 360.0
         ign = np.exp(-(dS / 9.0) ** 2)
         vref = np.maximum(ivl, evl) * 0.7
