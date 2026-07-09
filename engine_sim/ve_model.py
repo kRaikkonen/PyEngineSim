@@ -104,6 +104,13 @@ def ve_truth(eng, rpm, mapf):
     rpm = max(rpm, 1.0)
     cam_knee, cam_pen, cam_fade = _cam_params(eng, rpm)
 
+    # INDIVIDUAL THROTTLE BODIES: one throttle per cylinder on a short dedicated
+    # runner removes the shared-plenum throttling/robbing loss, so the top-end
+    # breathing knee extends — an ITB engine keeps filling up top where a single-
+    # plenum one is already choking.
+    if getattr(eng, "individual_throttle", False):
+        cam_knee *= 1.05
+
     # 1) Taylor Mach-index roll-off (top-end breathing limit)
     sp = 2.0 * stroke * rpm / 60.0                    # mean piston speed
     z = (a_p * sp) / (a_v * C_INTAKE)
@@ -115,10 +122,24 @@ def ve_truth(eng, rpm, mapf):
     b2 = math.exp(-((rpm - 0.5 * n_tuned) / (0.25 * n_tuned)) ** 2)
     bump = 1.0 + ram * (0.13 * b1 + 0.06 * b2)
 
-    # 3) residual-gas backflow at part throttle
-    pr = 1.08 / max(mapf, 0.15)                       # exhaust/manifold pressure
+    # 3) residual-gas backflow: burned gas is trapped when the exhaust back-pressure
+    #    exceeds the manifold pressure.  A TURBINE dams the exhaust, so a turbo's
+    #    exhaust-manifold back-pressure RISES with boost (the turbine needs a
+    #    pressure ratio ~ tracking the compressor to spin) -> more trapped residual,
+    #    worse scavenging at overlap, and the real VE penalty a turbo pays vs an NA
+    #    or belt-supercharged engine at the SAME manifold pressure.
+    p_exh = 1.08
+    if getattr(eng, "induction", "na") == "turbo":
+        bp = min(max(getattr(eng, "backpressure_coupling", 0.55), 0.0), 1.2)
+        # turbine back-pressure grows with exhaust MASS FLOW (~ rpm x charge): so it
+        # bites hardest OFF-boost / high-rpm-low-load (the trapped-residual, laggy-
+        # breathing penalty), while at WOT boost the manifold pressure overcomes it
+        # and scavenging stays good — exactly the real turbo behaviour.
+        rf = min(rpm / max(eng.redline_rpm, 1.0), 1.0)
+        p_exh = 1.08 + bp * rf * max(mapf, 0.30)
+    pr = p_exh / max(mapf, 0.15)                      # exhaust/manifold pressure
     x_r = pr ** (1.0 / GAMMA_EX) / cr
-    x_r0 = 1.08 ** (1.0 / GAMMA_EX) / cr              # residual at full throttle
+    x_r0 = 1.08 ** (1.0 / GAMMA_EX) / cr              # residual at NA full throttle
     res = 1.0 - 1.4 * max(x_r - x_r0, 0.0)
 
     # cam overlap penalty at low rpm (the hot-cam idle lope, thermo side)
