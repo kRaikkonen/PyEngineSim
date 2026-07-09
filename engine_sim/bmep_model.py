@@ -45,10 +45,13 @@ T_AMB = 300.0           # ambient charge-inlet temperature (K)
 GAMMA_AIR = 1.40        # cold-air ratio for the compression heat-of-compression
 ETA_COMP = 0.70         # compressor isentropic efficiency (real wheel runs hotter)
 GAMMA_CYC = 1.30        # matches the in-cylinder model
-ETA_SHAPE = 0.68        # ONE global real-cycle factor: finite burn + wall heat +
-                        # blowdown + valve-timing losses vs the ideal Otto cycle.
-                        # Calibrated ONCE against the 12-car REF set (mean -> 1.0);
-                        # never per-car.
+ETA_SHAPE = 0.82        # ONE global real-cycle factor: gross indicated work vs the
+                        # ideal Otto cycle (finite burn + wall heat + blowdown +
+                        # valve-timing losses, offset by WOT power-enrichment).  The
+                        # real gross-indicated / ideal-Otto ratio is ~0.80-0.85 for a
+                        # performance engine at WOT; calibrated ONCE so the acceptance
+                        # reference (Aventador) makes its rated ~700 hp / ~690 Nm and
+                        # the docstring-spec fleet centres on 1.0.  NEVER per-car.
 KNOCK_DERATE = 0.24     # SI knock-limited retard + enrichment per unit of the
                         # cycle KNOCK INDEX (charge-temp x compression); anchored so
                         # a typical intercooled 1-bar turbo lands ~the old 8%/bar

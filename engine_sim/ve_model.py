@@ -43,6 +43,17 @@ from .surrogate import LUT
 C_INTAKE = 340.0        # speed of sound in warm intake air (~292 K), m/s
 GAMMA_EX = 1.30         # burned-gas gamma for the residual backflow term
 
+# --- global breathing-shape constants (calibrated ONCE against the acceptance
+# reference, never per-car) --------------------------------------------------
+# TUNE_DIV: Engelman primary tuned engine speed N = 60*f_h / TUNE_DIV.  Sets WHERE
+#   the mid-range ram torque hump sits; lower -> the hump moves UP the rev range.
+# ROLL_KNEE / ROLL_EXP: Taylor Mach-index roll-off  1/(1+(z/(ROLL_KNEE*cam_knee))^ROLL_EXP).
+#   A higher knee / lower exponent lets a good head keep BREATHING toward redline
+#   (peak power near redline) instead of the VE dying in the mid-range.
+TUNE_DIV = 1.65
+ROLL_KNEE = 0.75
+ROLL_EXP = 2.9
+
 
 def _geometry(eng):
     """Effective intake-flow geometry estimated from real engine dimensions."""
@@ -59,7 +70,7 @@ def _geometry(eng):
     a_runner = math.pi * 0.25 * (1.10 * d_v) ** 2
     v_eff = cyl.displacement * 0.5 + cyl.clearance_volume
     f_h = (C_INTAKE / (2.0 * math.pi)) * math.sqrt(a_runner / (length * v_eff))
-    n_tuned = 60.0 * f_h / 2.1          # Engelman: primary tuned engine speed
+    n_tuned = 60.0 * f_h / TUNE_DIV     # Engelman: primary tuned engine speed
     return a_piston, a_valve, stroke, n_tuned, cyl.compression_ratio
 
 
@@ -114,7 +125,7 @@ def ve_truth(eng, rpm, mapf):
     # 1) Taylor Mach-index roll-off (top-end breathing limit)
     sp = 2.0 * stroke * rpm / 60.0                    # mean piston speed
     z = (a_p * sp) / (a_v * C_INTAKE)
-    roll = 1.0 / (1.0 + (z / (0.58 * cam_knee)) ** 3.4)
+    roll = 1.0 / (1.0 + (z / (ROLL_KNEE * cam_knee)) ** ROLL_EXP)
 
     # 2) Helmholtz ram bumps (primary + the octave-down echo)
     ram = min(max(mapf, 0.25), 1.2) ** 0.5            # ram needs mass flow
