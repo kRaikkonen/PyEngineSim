@@ -269,6 +269,40 @@ class Simulator:
         self.cylinder_pressure[:] = P_ATM
         self.last_blowdown[:] = P_ATM
 
+    def dyno_curve(self, rpms):
+        """WHITE-BOX WOT torque (N*m) and power (hp) vs rpm — computed from the SAME
+        physics the engine runs (VE table x BMEP x knock x charge-air temp x boost),
+        minus the friction model.  So the displayed dyno IS what the engine makes;
+        no pre-made Gaussian / ve_peak_frac curve."""
+        eng = self.engine
+        rpms = np.asarray(rpms, dtype=np.float64)
+        tq = np.zeros(len(rpms), dtype=np.float64)
+        for i in range(len(rpms)):
+            r = float(rpms[i])
+            boost = 0.0
+            if eng.induction != "na":
+                boost = (float(self._boost_lut.eval2(r, 1.0))
+                         if self._boost_lut is not None else eng.boost_bar)
+            if _HAVE_MAP_MODEL:
+                fw = map_model.solve_map_fraction(
+                    1.0, r, eng.redline_rpm, 0.85, self._map_idle_area)
+            else:
+                fw = 0.92
+            mapf = fw if boost <= 0.0 else (1.0 + boost)   # NA pumping loss / boosted
+            ve = (float(self._ve_lut.eval2(r, mapf)) if self._ve_lut is not None
+                  else 0.85)
+            if _HAVE_SURROGATE:
+                t_gas = torque_target(eng, r, mapf, ve)
+            else:
+                t_gas = (eng.heat_release_k * mapf * ve
+                         * eng.total_displacement * 1.0e5 / (4.0 * math.pi))
+            w = r * TWO_PI / 60.0
+            fric = (eng.friction_static + eng.friction_linear * w
+                    + eng.friction_quad * w * w)           # warm WOT friction
+            tq[i] = max(t_gas - fric, 0.0)
+        hp = tq * rpms * TWO_PI / 60.0 / 745.7             # W -> hp
+        return tq, hp
+
     def _burn_k(self, rpm, mapf):
         """Burn multiplier solved so the pulse model's cycle-mean torque equals
         the physical BMEP target at this operating point.  Falls back to the

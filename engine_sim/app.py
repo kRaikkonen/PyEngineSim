@@ -4748,21 +4748,23 @@ class App:
         rl = eng.redline_rpm
         rlo = eng.idle_rpm * 0.7
         rpms = np.linspace(rlo, rl, W)
-        peak = eng.ve_peak_frac * rl
-        width = max(eng.ve_width_frac * rl, 1.0)
-        tq = eng.ve_floor + (eng.ve_max - eng.ve_floor) * np.exp(-((rpms - peak) / width) ** 2)
-        if eng.induction != "na" and eng.boost_bar > 0:
-            rf = rpms / rl
-            spool = (np.clip((rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3),
-                             0, 1) if eng.induction == "turbo" else rf)
-            tq = tq * (1.0 + 0.8 * eng.boost_bar * spool)
+        # WHITE-BOX dyno: torque/HP now come from the ACTUAL physics the engine runs
+        # (VE x BMEP x knock x charge-temp x boost - friction), not a pre-made
+        # Gaussian VE bell — so the displayed curve IS what the car makes.
+        try:
+            tq, hp_curve = sim.dyno_curve(rpms)
+        except Exception:
+            peak = eng.ve_peak_frac * rl
+            width = max(eng.ve_width_frac * rl, 1.0)
+            tq = eng.ve_floor + (eng.ve_max - eng.ve_floor) * np.exp(-((rpms - peak) / width) ** 2)
+            hp_curve = tq * rpms
         # WOT reference maxima (fixed scale), then scale the drawn curves by the
         # live throttle so they shrink/grow as you lift/press
         tq_ref = max(tq.max(), 1e-9)
-        hp_ref = max((tq * rpms).max(), 1e-9)
-        tqd = tq * (0.10 + 0.90 * thr)
-        tq_n = tqd / tq_ref
-        hp_n = (tqd * rpms) / hp_ref
+        hp_ref = max(hp_curve.max(), 1e-9)
+        thr_scale = 0.10 + 0.90 * thr
+        tq_n = (tq * thr_scale) / tq_ref
+        hp_n = (hp_curve * thr_scale) / hp_ref
         rpmfrac = float(np.clip((sim.rpm - rlo) / max(rl - rlo, 1.0), 0, 1))
         # spark-advance timing: ignition spike vs the valve-event reference ------
         adv = 15.0 + 22.0 * min(sim.rpm / max(rl, 1.0), 1.0)
