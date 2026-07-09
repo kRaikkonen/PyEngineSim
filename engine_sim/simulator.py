@@ -307,6 +307,10 @@ class Simulator:
             fric = (eng.friction_static + eng.friction_linear * w
                     + eng.friction_quad * w * w)           # warm WOT friction
             t = max(t_gas - fric, 0.0)
+            if eng.torque_limit_nm > 0.0:                  # physical ECU torque cap
+                t = min(t, eng.torque_limit_nm)
+            if eng.power_limit_kw > 0.0:                    # rated-power roll-off up top
+                t = min(t, eng.power_limit_kw * 1000.0 / max(w, 1.0))
             if include_electric and hyb_w > 0.0:
                 t += hyb_w / base if w <= base else hyb_w / max(w, 1.0)  # MGU-K deploy
             tq[i] = t
@@ -320,7 +324,16 @@ class Simulator:
         ve = self._volumetric_efficiency(mapf)
         if self._burn_C is None or self._burn_T0 is None:
             return 1.0 + self.engine.heat_release_k * mapf * ve   # legacy
-        t_tgt = torque_target(self.engine, rpm, mapf, ve)
+        eng = self.engine
+        t_tgt = torque_target(eng, rpm, mapf, ve)
+        if eng.torque_limit_nm > 0.0 or eng.power_limit_kw > 0.0:
+            w = rpm * TWO_PI / 60.0
+            cap = eng.torque_limit_nm if eng.torque_limit_nm > 0.0 else float("inf")
+            if eng.power_limit_kw > 0.0:                   # rated-power roll-off up top
+                cap = min(cap, eng.power_limit_kw * 1000.0 / max(w, 1.0))
+            fric = (eng.friction_static + eng.friction_linear * w
+                    + eng.friction_quad * w * w)
+            t_tgt = min(t_tgt, cap + fric)                 # clamp MEAN BRAKE torque
         c = self._burn_C.eval2(rpm, mapf)
         t0 = self._burn_T0.eval2(rpm, mapf)
         return min(max(1.0 + (t_tgt - t0) / c, 1.0), 14.0)

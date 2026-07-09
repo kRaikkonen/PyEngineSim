@@ -3175,15 +3175,15 @@ _TORQUE_SCALE = {
 _VE_MAX = {
     '0': 0.971, '1': 0.888, '2': 1.03, '22b': 0.872, '250cal': 1.15, '3': 1.083,
     '330i': 1.109, '4': 1.093, '488': 0.891, '5': 1.026, '6': 1.034, '7': 1.15,
-    '787b': 1.4, '8': 0.883, '9': 0.82, '917': 1.15, '918': 1.15, '930': 0.82,
+    '787b': 1.4, '8': 0.883, '9': 0.95, '917': 1.15, '918': 1.15, '930': 0.92,
     '991rs': 1.148, '993gt2': 0.82, '996gt1': 0.957, '997rs4': 1.15, 'a45': 1.15,
     'ab500': 0.929, 'actros': 1.15, 'ae86': 1.15, 'amggt': 0.824, 'atomv8': 1.15,
     'audiv8': 1.028, 'aven': 1.004, 'b48': 0.878, 'bentss': 0.82, 'bmwv8': 0.82,
     'boneshaker': 0.917, 'borav5': 1.027, 'c63bs': 0.931, 'c7': 0.953, 'cgt': 1.003,
     'challenger': 0.988, 'charger': 0.903, 'chevyss': 0.883, 'clkgtr': 1.056,
     'conti': 0.82, 'corradovr6': 0.914, 'countach': 1.002, 'crs27': 1.044,
-    'ct5v': 0.832, 'd8gto': 0.99, 'db11': 0.82, 'deltas4': 1.15, 'diablo': 0.967,
-    'e36m3': 1.15, 'e60m5': 0.975, 'e63': 0.82, 'e92m3': 1.047, 'ek9': 1.15,
+    'ct5v': 0.832, 'd8gto': 0.99, 'db11': 1.0, 'deltas4': 1.15, 'diablo': 0.967,
+    'e36m3': 1.15, 'e60m5': 0.975, 'e63': 1.0, 'e92m3': 1.047, 'ek9': 1.15,
     'enzo': 1.033, 'ep3': 1.15, 'escrs': 0.82, 'evo7': 0.955, 'f2007': 1.15,
     'f355': 1.122, 'f40': 0.921, 'f450': 0.9, 'f50gt': 1.15, 'fd370z': 0.999,
     'fdviper': 0.992, 'fk8': 0.966, 'focus3': 1.041, 'fordgt': 1.058, 'ftype': 0.82,
@@ -3195,10 +3195,23 @@ _VE_MAX = {
     'pete': 0.82, 'pista': 0.936, 'pro2': 1.15, 'r34': 0.82, 'r35': 0.93,
     'r390': 0.941, 'raptor': 0.88, 'rs200': 1.15, 'rs3': 0.936, 'rs5': 0.882,
     'rtr': 1.083, 'rx7': 1.4, 'rx7fc': 1.276, 's1': 1.15, 's15': 0.894,
-    'senna': 0.971, 'sf25': 1.15, 'singer': 1.15, 'sl65': 0.82, 'speed12': 1.15,
+    'senna': 0.971, 'sf25': 1.15, 'singer': 1.15, 'sl65': 1.0, 'speed12': 1.15,
     't100': 0.988, 'titan': 0.82, 'valhalla': 1.137, 'valk': 1.15, 'veyron': 0.936,
     'viper': 1.037, 'vt15r': 0.942, 'vulcan': 1.15, 'w154': 1.089, 'wildcat': 0.82,
-    'xj220': 0.904, 'z28': 0.82, 'zonda': 1.062, 'zondar': 1.15,
+    'xj220': 0.904, 'z28': 0.892, 'zonda': 1.062, 'zondar': 1.15,
+}
+
+# Physical ECU TORQUE/POWER envelope for the rated turbos whose open-loop Otto+boost
+# would over-produce (the honest replacement for the dead _TORQUE_SCALE fudge).  Each
+# value is the car's REAL published peak torque (N*m) + rated power (hp): the limiter
+# holds the mean-torque plateau at the first and rolls into constant rated power up top
+# (min(torque, power/omega)).  Reproduces BOTH spec numbers (see engine.torque_limit_nm).
+# These cars are torque-LIMITED, not breathing-limited, so their ve_max is restored to a
+# realistic value above and the envelope does the capping.  z28 is NA (no ECU) — not
+# here; its "over" was the underrated 1968 GROSS rating, corrected via ve_max to ~360 hp.
+_TORQUE_ENVELOPE = {          # key: (peak_torque_Nm, rated_power_hp)
+    'e63': (800, 577), 'sl65': (1000, 621), 'db11': (700, 600),
+    '930': (432, 296), '9': (440, 326),
 }
 
 
@@ -3208,6 +3221,10 @@ def _annotate(key, eng):
         eng.torque_scale = _TORQUE_SCALE[key]
     if key in _VE_MAX:                              # per-car spec-power calibration
         eng.ve_max = _VE_MAX[key]
+    if key in _TORQUE_ENVELOPE:                     # physical ECU torque+power limiter
+        nm, hp = _TORQUE_ENVELOPE[key]
+        eng.torque_limit_nm = float(nm)
+        eng.power_limit_kw = hp * 0.7457
     if not eng.variable_valve and key in _VARIABLE_VALVE:
         eng.variable_valve = _VARIABLE_VALVE[key]
     if key in _CCW_ROTATION:

@@ -104,6 +104,18 @@ class Engine:
     # (so idle / light-throttle / NA behaviour is untouched).  e.g. 0.47 ~= halve
     # the on-boost torque of a car that simulates ~2x real.
     torque_scale: float = 1.0
+    # Physical ECU TORQUE/POWER LIMITER (0 = none).  A rated engine whose combustion
+    # could make more is electronically held to an ENVELOPE: a flat MEAN-torque cap
+    # at low rpm (driveline protection — a modern AMG/Aston TT is pinned to ~1000 N*m
+    # regardless of what the turbos want) that rolls into a constant RATED-POWER cap
+    # up top (torque falls as rpm rises).  Effective mean-crank cap =
+    # min(torque_limit_nm, power_limit_kw*1000 / omega).  The limiter clamps the
+    # mean-torque TARGET the burn is solved to, so the engine ACTUALLY produces the
+    # plateau + rated-power roll-off (and the dyno shows it) — the physical
+    # replacement for the old boost-blended torque_scale, reproducing BOTH the peak
+    # torque and the peak power on the spec sheet.
+    torque_limit_nm: float = 0.0
+    power_limit_kw: float = 0.0
     friction_static: float = 5.0     # N*m constant drag
     friction_linear: float = 0.012   # N*m per (rad/s)
     friction_quad: float = 9.0e-5    # N*m per (rad/s)^2 (windage/pumping at revs)
