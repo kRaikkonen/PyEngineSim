@@ -269,14 +269,21 @@ class Simulator:
         self.cylinder_pressure[:] = P_ATM
         self.last_blowdown[:] = P_ATM
 
-    def dyno_curve(self, rpms):
+    def dyno_curve(self, rpms, include_electric=False):
         """WHITE-BOX WOT torque (N*m) and power (hp) vs rpm — computed from the SAME
         physics the engine runs (VE table x BMEP x knock x charge-air temp x boost),
         minus the friction model.  So the displayed dyno IS what the engine makes;
-        no pre-made Gaussian / ve_peak_frac curve."""
+        no pre-made Gaussian / ve_peak_frac curve.
+
+        ``include_electric`` adds the hybrid/ERS MGU-K deploy on top (matching the
+        live _electric_motor_torque model — constant torque below hybrid_base_rpm,
+        constant hybrid_kw power above), so a hybrid/F1 dyno reads its SYSTEM power
+        (ICE + electric); the ve_max calibration itself targets the ICE-only share."""
         eng = self.engine
         rpms = np.asarray(rpms, dtype=np.float64)
         tq = np.zeros(len(rpms), dtype=np.float64)
+        hyb_w = (getattr(eng, "hybrid_kw", 0.0) or 0.0) * 1000.0
+        base = max(getattr(eng, "hybrid_base_rpm", 2000.0), 1.0) * TWO_PI / 60.0
         for i in range(len(rpms)):
             r = float(rpms[i])
             boost = 0.0
@@ -299,7 +306,10 @@ class Simulator:
             w = r * TWO_PI / 60.0
             fric = (eng.friction_static + eng.friction_linear * w
                     + eng.friction_quad * w * w)           # warm WOT friction
-            tq[i] = max(t_gas - fric, 0.0)
+            t = max(t_gas - fric, 0.0)
+            if include_electric and hyb_w > 0.0:
+                t += hyb_w / base if w <= base else hyb_w / max(w, 1.0)  # MGU-K deploy
+            tq[i] = t
         hp = tq * rpms * TWO_PI / 60.0 / 745.7             # W -> hp
         return tq, hp
 

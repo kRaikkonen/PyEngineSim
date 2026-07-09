@@ -4794,7 +4794,7 @@ class App:
         # (VE x BMEP x knock x charge-temp x boost - friction), not a pre-made
         # Gaussian VE bell — so the displayed curve IS what the car makes.
         try:
-            tq, hp_curve = sim.dyno_curve(rpms)
+            tq, hp_curve = sim.dyno_curve(rpms, include_electric=True)  # system power (ICE+ERS)
         except Exception:
             peak = eng.ve_peak_frac * rl
             width = max(eng.ve_width_frac * rl, 1.0)
