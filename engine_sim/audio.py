@@ -2145,13 +2145,18 @@ class Synthesizer:
             #   * with no (or a shut) valve the air backs up and pulses BACKWARD
             #     through the compressor wheel again and again -> compressor
             #     surge, the rapid 'stu-tu-tu-tu' flutter.
-            # ROBUST LIFT detection: a real pedal is RAMPED (the app smooths it), so
-            # a per-block delta almost never exceeds a snap threshold -> the old
-            # trigger never fired in game.  Instead track a slowly-decaying peak of
-            # recent throttle; a blow-off fires when the pedal has dropped well BELOW
-            # where it recently was, while still on boost — an edge-guard stops it
-            # re-firing every block while the flutter is already sounding.
-            self._thr_ref = max(sim.throttle, self._thr_ref * 0.96)
+            # ROBUST LIFT detection: a real pedal is RAMPED (the app moves the
+            # throttle ~0.04/frame, ~0.42 s for a full sweep), so a per-block delta
+            # never snaps.  Track a slowly-decaying PEAK of recent throttle; a
+            # blow-off fires when the pedal has dropped well BELOW where it recently
+            # was, while still on boost — an edge-guard stops it re-firing every block.
+            # NOTE the decay MUST be slower than the pedal ramp or the peak just
+            # tracks the throttle DOWN and no gap ever opens: at 0.96/block (8 ms) the
+            # peak fell ~4%/block, FASTER than the pedal, so a normal lift never
+            # triggered (only the 'P' test, which sets the envelope directly).  0.995
+            # holds the peak ~0.7 s, so a lift opens the >0.30 gap in ~150 ms while
+            # boost is still up (verified across 30/60 FPS).
+            self._thr_ref = max(sim.throttle, self._thr_ref * 0.995)
             if (self._thr_ref - sim.throttle) > 0.30 and sim.boost > 0.10 \
                     and self._bov_env < 0.5:
                 self._bov_env = 1.0
