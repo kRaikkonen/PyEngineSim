@@ -2335,6 +2335,9 @@ class Synthesizer:
             if (self._thr_ref - sim.throttle) > 0.30 and sim.boost > 0.10 \
                     and self._bov_env < 0.5:
                 self._bov_env = 1.0
+                # capture the TRAPPED pressure: the vent JET's velocity, pitch and
+                # loudness all derive from it (white-box jet noise below)
+                self._bov_pr0 = max(float(sim.boost), 0.1)
                 self._bdim_phase = 0.0
             if self._bov_env > 1e-3 and self.o_chord:
                 # easter egg: the blow-off resolves as a B-diminished chord
@@ -2348,44 +2351,66 @@ class Synthesizer:
                 out += (tv * 0.7) * chord * env
                 self._bov_env *= math.exp(-frames / (sr * 0.2))
             elif self._bov_env > 1e-3:
+                # ---- WHITE-BOX VENT JET (the fix for the 'artificial' pshhh):
+                # a real dump is a JET through an orifice, not white noise with a
+                # volume fade.  Everything below derives from the trapped charge:
+                #   * plenum blowdown   (PR-1) decays with tau = V/(A*Cd*c) — the
+                #     charge piping (~6 L) emptying through the valve throat;
+                #   * jet velocity      isentropic vent  u/c = sqrt(5*(1-PR^(-2/7)))
+                #     (gamma=1.4), choked-capped at 1;
+                #   * jet PITCH         Strouhal peak f = St*u/D (St~0.2): starts
+                #     bright and GLIDES DOWN as the pressure bleeds — the real
+                #     'psheeew' signature a static spectrum never has;
+                #   * jet LOUDNESS      Lighthill's U^8 acoustic power -> amplitude
+                #     ~ u^4: the sound dies with the velocity, not on a timer.
+                # The three hardwares differ only in ORIFICE GEOMETRY:
+                #   SSQV atmospheric: small throat (D~20 mm, A~3 cm^2) straight to
+                #     free air -> loud, bright, fast (tau ~ 0.10 s);
+                #   stock recirc: bigger valve (A~4 cm^2) but vents INTO the intake
+                #     plumbing -> the pipe run low-passes it dark and soft;
+                #   no-valve SURGE: backflow squeezes through the compressor wheel
+                #     (small effective area -> tau ~ 0.4 s) at the big inlet
+                #     (D~50 mm -> LOW Strouhal pitch: dark chuffs), gated by the
+                #     deep-surge cycle (~13-24 Hz, faster with more boost).
                 n = np.arange(frames)
                 noise = self._rng.standard_normal(frames)
-                # AUDIBLE base level (was tv*0.6-1.15 -> ~0.2 at tv=0.21, buried
-                # under the engine so the toggles did nothing).  A real dump valve
-                # is a LOUD lift-off event; give it its own prominence.
                 bov = 0.42 + 1.0 * tv
+                V, CD, C0 = 0.006, 0.6, 343.0            # charge piping m^3, Cd, c
+                if self.flutter and not self.ssqv:
+                    A, D = 0.8e-4, 0.050                 # backflow via wheel; inlet
+                else:
+                    A, D = (3.0e-4, 0.020) if self.ssqv else (4.0e-4, 0.025)
+                tau = V / (A * CD * C0)                  # plenum blowdown constant
+                pr = 1.0 + getattr(self, "_bov_pr0", 0.7) * self._bov_env
+                u = min(math.sqrt(max(5.0 * (1.0 - pr ** (-2.0 / 7.0)), 0.0)), 1.0)
+                f_pk = min(max(0.2 * (u * C0) / D, 120.0), sr * 0.42)
+                if _HAVE_SCIPY:
+                    bj, aj = _bandpass(f_pk, 1.1, sr)    # the jet's Strouhal band
+                    jet, self._bovjet_zi = lfilter(bj, aj, noise,
+                                                   zi=getattr(self, "_bovjet_zi",
+                                                              np.zeros(2)))
+                elif D < 0.03:                           # no-scipy: bright-ish tilt
+                    jet = np.diff(noise, prepend=noise[:1]) * 0.7 + 0.3 * noise
+                else:                                    # ...or dark 2-tap mean
+                    jet = 0.5 * (noise + np.concatenate(([self._bov_prev],
+                                                         noise[:-1])))
+                    self._bov_prev = float(noise[-1])
+                amp = bov * (u ** 4) * 3.2               # Lighthill U^8 power
                 if self.ssqv:
-                    # HKS SSQV atmospheric dump: LOUD, sharp, very BRIGHT metallic
-                    # 'TSSSH' (HF-emphasised).
-                    hf = np.diff(noise, prepend=noise[:1])
-                    env = np.exp(-n / (sr * 0.13)) * self._bov_env
-                    out += (bov * 1.25) * (0.35 * noise + 1.0 * hf) * env
-                    self._bov_env *= math.exp(-frames / (sr * 0.15))
+                    out += (amp * 1.25) * jet
                 elif self.flutter:
-                    # JDM 爆改-turbo COMPRESSOR SURGE — the iconic 'stu-tu-tu-tu'
-                    # machine-gun flutter of trapped boost pulsing back through the
-                    # wheel (recirc / no-BOV / anti-lag).  A bigger turbo (more boost)
-                    # flutters HARDER and a touch faster, and the burst SUSTAINS for
-                    # ~0.5 s as the pressure bleeds down.
-                    fl = 13.0 + 11.0 * bfrac             # ~13-24 Hz surge rate (classic)
+                    fl = 13.0 + 11.0 * bfrac             # deep-surge cycle rate
                     ph = self._flutter_phase + 2.0 * math.pi * fl * n / sr
                     if frames:
                         self._flutter_phase = float(ph[-1] % (2.0 * math.pi))
-                    # punchy 'tu' bursts: a hard gate (sin^2.5) rung with a little
-                    # low-mid air body so each pulse chuffs instead of just hissing.
                     pulse = np.clip(np.sin(ph), 0.0, 1.0) ** 2.0
-                    env = np.exp(-n / (sr * 0.40)) * self._bov_env
-                    agg = 1.6 + 1.2 * bfrac              # bigger boost -> louder flutter
-                    out += (bov * agg) * noise * pulse * env
-                    self._bov_env *= math.exp(-frames / (sr * 0.42))  # sustains longer
-                else:
-                    # stock recirc: SOFT, DARK 'pshhh' (1-pole low-passed noise)
-                    dark = 0.5 * (noise + np.concatenate(([self._bov_prev],
-                                                          noise[:-1])))
-                    self._bov_prev = float(noise[-1])
-                    env = np.exp(-n / (sr * 0.09)) * self._bov_env
-                    out += (bov * 0.55) * dark * env
-                    self._bov_env *= math.exp(-frames / (sr * 0.12))
+                    out += (amp * (1.9 + 1.2 * bfrac)) * jet * pulse
+                else:                                    # recirc: darkened by the
+                    drk = 0.5 * (jet + np.concatenate(([self._bov_prev],
+                                                       jet[:-1])))   # intake pipe run
+                    self._bov_prev = float(jet[-1]) if frames else self._bov_prev
+                    out += (amp * 0.8) * drk
+                self._bov_env *= math.exp(-frames / (sr * tau))
         self._prev_throttle = sim.throttle
 
         gv = P["gearbox_vol"]
