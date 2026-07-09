@@ -123,6 +123,7 @@ the audio never crackles:
 | `T` | Auto / Manual | | `C` | Mixer / EQ |
 | `E` | Analyzer scopes | | `M` | Mute |
 | `V` | Firing voice | | `Esc` | Quit |
+| `B` | POV: chase cam / cockpit | | | |
 
 A **Touch** toggle (top-right) brings up on-screen pedals/paddles; on by default
 on Android.

@@ -123,7 +123,8 @@ TR_ZH = {
     # toolbar
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
-    "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Gear whine": "直齿啸叫",
+    "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Cockpit": "驾驶舱",
+    "Chase cam": "追尾视角", "Gear whine": "直齿啸叫",
     "Touch": "触屏", "Touch OFF": "关闭触屏",
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
@@ -451,7 +452,8 @@ class App:
             (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
             (T("Auto") if dt.auto else T("Manual"),
              lambda: setattr(dt, "auto", not dt.auto), lambda: dt.auto, 0),
-            (T("Cabin"), lambda: setattr(sy, "cabin", not sy.cabin),
+            # listener POV: off = chase cam behind the car, on = driver's seat
+            (T("Cockpit"), lambda: setattr(sy, "cabin", not sy.cabin),
              lambda: sy.cabin, 0),
             (T("Gear whine"), lambda: setattr(sy, "straight_cut", not sy.straight_cut),
              lambda: sy.straight_cut, 0),
@@ -1175,6 +1177,10 @@ class App:
                 elif e.key == pygame.K_p:                # hidden: test the BOV sound
                     self.synth._bov_env = 1.0
                     self.synth._bdim_phase = 0.0
+                elif e.key == pygame.K_b:                # POV: chase cam <-> cockpit
+                    self.synth.cabin = not self.synth.cabin
+                    self._flash(self.tr("Cockpit") if self.synth.cabin
+                                else self.tr("Chase cam"))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["power", "major", "root+m2", "m7b5", "dim",

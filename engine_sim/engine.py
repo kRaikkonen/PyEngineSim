@@ -191,6 +191,11 @@ class Engine:
     # HOT charge is less dense -> less mass -> less power than its pressure implies
     # (the hot-vs-cold air effect).  0.7 = a typical intercooled road setup.
     intercooler_eff: float = 0.7
+    # Cabin noise reduction (dB) for the COCKPIT listener perspective: the
+    # measured whole-body isolation between the engine/exhaust field outside and
+    # the driver's ear.  0 = auto (13 dB thin-shelled sports car; 6 dB if the
+    # shell is stripped/open race).  Set ~20+ for a sealed luxury saloon.
+    cabin_nr_db: float = 0.0
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
     turbo_lag: float = 0.6           # spool time constant (s) for turbo
     turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)

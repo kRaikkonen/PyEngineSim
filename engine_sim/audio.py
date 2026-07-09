@@ -567,7 +567,20 @@ class Synthesizer:
 
         self._build_audio()
 
-        self.cabin = False        # interior (in-cabin) muffling effect
+        # Listener PERSPECTIVE (white-box, racing-game style): "chase" = the chase
+        # cam a few metres behind the car (tailpipe is the direct voice, the bay
+        # arrives shadowed by the body + later), "cockpit" = the driver's seat
+        # (bay through the firewall is the direct voice, exhaust from behind
+        # through the rear partition + the cabin's standing-wave boom).  EVERY
+        # gain / delay / cutoff derives from geometry + panel physics in
+        # _pov_geo() — no hand-tuned listen coefficients.  The old `cabin` flag
+        # is kept as a compatibility alias (property below).
+        self.pov = "chase"
+        self._pov_cache = None    # (key, dict) memo of the derived DSP constants
+        self._pov_buf = {}        # named fixed delay lines (path-difference)
+        self._pov_zi = {}         # named filter states for the partition LPs
+        self._bay_prev = 0.0      # no-scipy fallback lid state
+        self._boom_zi = np.zeros(2)   # cabin standing-wave resonator state
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
         self.straight_cut = simulator.engine.straight_cut
@@ -761,6 +774,11 @@ class Synthesizer:
         # different frequencies, like a real exhaust.
         self._wg = [(ExhaustWaveguide(), ExhaustWaveguide()) for _ in range(self._nchan)]
         self._reverb = Reverb(sr)
+        # COCKPIT space: the car interior is a ~2.4 m cavity with heavily absorbent
+        # trim -> comb path lengths scaled to the cabin (room ~ 0.22 of the default
+        # hall) and a short RT (feedback from trim absorption).  Used instead of the
+        # outdoor reverb when the listener perspective is "cockpit".
+        self._cab_verb = Reverb(sr, room=0.22, feedback=0.42)
         # A dedicated reverb for the forced-induction sounds (spool whistle /
         # blower whine / BOV) so the user can wash them with their own space.
         self._ind_reverb = Reverb(sr, room=0.7, feedback=0.7)
@@ -1165,6 +1183,118 @@ class Synthesizer:
             ba = self._fcache[key] = butter(order, fc / (sr / 2), btype=btype)
         return ba
 
+    # --------------------------------------- listener perspective (white-box)
+    @property
+    def cabin(self):
+        """Compatibility alias: the old in-cabin toggle now IS the cockpit POV."""
+        return self.pov == "cockpit"
+
+    @cabin.setter
+    def cabin(self, v):
+        self.pov = "cockpit" if v else "chase"
+        self._pov_cache = None
+
+    def _pov_geo(self):
+        """DSP constants for the current perspective — every number DERIVED:
+
+          * spherical spreading      g = r_near / r          (1/r free field)
+          * path-difference delay    dt = (r - r_near) / c   (c = 343 m/s)
+          * panel transmission       composite partition: a fraction ``alpha`` of
+            the boundary is OPENINGS (footwell holes, shifter boot, underbody gap
+            — flat, un-filtered leak) and the rest is sheet metal obeying the
+            MASS LAW  TL = 20*log10(f*m) - 47 dB (m = surface density kg/m^2),
+            i.e. +6 dB/oct — a 1st-order low-pass whose corner is the TL = 20 dB
+            point:  fc = 10^(67/20) / m = 2239/m Hz.
+          * cabin boom               lowest longitudinal cavity mode f = c/(2*L),
+            L ~ 2.4 m interior -> ~71 Hz standing wave.
+          * ground reflection        chase cam: tarmac bounce arrives later by
+            the geometric path difference -> a comb; delta =
+            sqrt(d^2+(hs+hr)^2) - sqrt(d^2+(hr-hs)^2), |R|~0.8 asphalt.
+
+        A RACE interior (straight-cut box or near-open exhaust) is stripped: no
+        deadening (bare 0.8 mm steel, m ~ 6.3) and big openings (alpha up) — so
+        a race cockpit is bright and violent, a luxury one hushed, from physics.
+        """
+        eng = self.sim.engine
+        race = self.straight_cut or getattr(eng, "exhaust_openness", 0.6) > 0.85
+        key = (self.pov, race)
+        if self._pov_cache is not None and self._pov_cache[0] == key:
+            return self._pov_cache[1]
+        c, sr = 343.0, self.sample_rate
+        fc_mass = lambda m: 2238.7 / m           # mass-law TL=20 dB corner
+        if self.pov == "cockpit":
+            r_bay, r_tail = 1.5, 3.2             # head->engine / head->tail exit
+            # ``alpha`` = the measured WHOLE-BODY noise-reduction floor, not the
+            # ideal-panel opening area: a real body underperforms the mass law
+            # badly in the low-mid band (panel resonances, glass coincidence,
+            # pass-throughs, and the exhaust run RIGHT UNDER the floor pan), so
+            # the flat leak comes from measured vehicle-interior NR via
+            # alpha = 10^(-NR/20).  NR is a PER-CAR physical attribute
+            # (eng.cabin_nr_db): ~20+ dB a sealed luxury saloon, ~13 dB a thin-
+            # shelled sports car (mid-engine: the bay is right behind your head),
+            # ~6 dB a stripped/open race shell (an F1 cockpit is barely enclosed).
+            nr = getattr(eng, "cabin_nr_db", 0.0) or (6.0 if race else 13.0)
+            a_fw = min(10.0 ** (-nr / 20.0), 0.7)
+            m_fw = 6.3 if race else 11.0                          # firewall panel
+            m_rr, a_rr = (6.3 if race else 13.0), a_fw * 0.95     # floor + bulkhead
+            # STRUCTURE-BORNE mount path — the DOMINANT in-cabin path in real
+            # cars: the engine shakes the shell through its mounts and the body
+            # panels re-radiate inside.  Transmissibility above the mount
+            # resonance: soft elastomer mounts isolate ~20 dB (x0.10), race
+            # solid mounts only ~10 dB (x0.30); the shell re-radiates the
+            # low-mid band (2nd-order rolloff above ~800 Hz panel response).
+            geo = dict(
+                g_bay=1.0, g_tail=r_bay / r_tail,
+                d_bay=0, d_tail=int((r_tail - r_bay) / c * sr),
+                bay_alpha=a_fw, bay_fc=fc_mass(m_fw),
+                tail_alpha=a_rr, tail_fc=fc_mass(m_rr),
+                struct=(0.30 if race else 0.10), struct_fc=800.0,
+                boom_f=c / (2.0 * 2.4), ground=None)
+        else:                                    # chase cam behind the car
+            d, hs, hr, car = 6.0, 0.3, 1.2, 4.5  # cam 6 m back, tailpipe 0.3 m up
+            r_tail, r_bay = d, d + car
+            delta = (math.hypot(d, hs + hr) - math.hypot(d, hr - hs))
+            geo = dict(
+                g_bay=r_tail / r_bay, g_tail=1.0,
+                d_bay=int((r_bay - r_tail) / c * sr), d_tail=0,
+                bay_alpha=0.08, bay_fc=fc_mass(6.3),   # body shell, underbody gap
+                tail_alpha=None, tail_fc=None,
+                struct=0.0, struct_fc=800.0,           # (mounts shake the CABIN,
+                boom_f=0.0, ground=(int(delta / c * sr), 0.8))   # not the street)
+        self._pov_cache = (key, geo)
+        return geo
+
+    def _pov_delay(self, x, key, d):
+        """Fixed path-difference delay of ``d`` samples (named line)."""
+        if d <= 0:
+            return x
+        buf = self._pov_buf.get(key)
+        if buf is None or len(buf) != d:
+            buf = np.zeros(d, dtype=np.float64)
+        y = np.concatenate((buf, x))
+        self._pov_buf[key] = y[-d:].copy()
+        return y[:len(x)]
+
+    def _pov_lp(self, x, key, fc):
+        """1st-order mass-law low-pass (cached butter); pure-numpy fallback is a
+        double 2-tap running mean (the codebase's standard no-scipy shape)."""
+        if _HAVE_SCIPY:
+            b, a = self._bw(1, fc)
+            zi = self._pov_zi.get(key)
+            if zi is None:
+                zi = np.zeros(max(len(a), len(b)) - 1)
+            y, self._pov_zi[key] = lfilter(b, a, x, zi=zi)
+            return y
+        p = self._pov_zi.get(key, 0.0)
+        y = 0.5 * (x + np.concatenate(([p], x[:-1])))
+        y = 0.5 * (y + np.concatenate(([p], y[:-1])))
+        self._pov_zi[key] = float(x[-1]) if len(x) else p
+        return y
+
+    def _pov_partition(self, x, key, alpha, fc):
+        """Composite panel: openings leak ``alpha`` flat + mass-law LP the rest."""
+        return alpha * x + (1.0 - alpha) * self._pov_lp(x, key, fc)
+
     def _render_block(self, frames: int) -> np.ndarray:
         sim = self.sim
         omega = sim.omega
@@ -1389,6 +1519,14 @@ class Synthesizer:
         # cooled 'clatter').  This is what stops it sounding like combustion out
         # in the open air.
         combustion = bang + P["turbulence"] * (fizz * inv)
+        # BAY bus: the second physical RADIATOR.  What the ENGINE-BAY emits is the
+        # structure-borne block voice (the casting ringing behind the mass-law
+        # lid) plus, further down, everything mounted in the bay: intake mouth,
+        # ITB trumpets, compressor whine/BOV, gear-driven valvetrain, injectors,
+        # cam covers.  It is kept OFF the exhaust chain (those components never
+        # pass the muffler!) and rejoins at the listener-perspective stage with
+        # its own geometry (delay + 1/r + body-panel transmission).
+        bay = np.zeros(frames, dtype=np.float64)
         if _HAVE_SCIPY and getattr(self, "_blk_seal", 0.0) > 0.0:
             st, self._blk_lp_zi = lfilter(self._blk_lp[0], self._blk_lp[1],
                                           combustion, zi=self._blk_lp_zi)  # the lid
@@ -1397,6 +1535,12 @@ class Synthesizer:
             b2, a2 = self._pk(self._blk_f2, self._blk_q * 0.8, 3.0)
             st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
             combustion = (1.0 - self._blk_seal) * combustion + self._blk_seal * st
+            bay += self._blk_seal * st          # block radiation -> bay bus
+        else:                                   # no-scipy lid: 2-tap mass-law crude
+            bl = 0.5 * (combustion + np.concatenate(([self._bay_prev],
+                                                     combustion[:-1])))
+            self._bay_prev = float(combustion[-1]) if frames else self._bay_prev
+            bay += 0.5 * bl
         self._tap("block", combustion)        # sealed in-cylinder combustion event
         # keep a decimated copy of the REAL combustion voice for the analyzer's
         # 'firing pulses' scope — the actual non-linear waveform (tanh-saturated
@@ -1714,7 +1858,9 @@ class Synthesizer:
                                                 n, zi=self._intake_bp_zi)
                 n, self._intake_lp_zi = lfilter(self._intake_lp[0], self._intake_lp[1],
                                                 n, zi=self._intake_lp_zi)
-                sig = sig + intake_gain * n
+                bay = bay + intake_gain * n   # intake mouth radiates from the BAY
+                                              # (was mid-exhaust-chain: the roar
+                                              # passed through the muffler!)
 
         # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
         # With one trumpet per cylinder, each intake stroke sucks a sharp tuned
@@ -1734,7 +1880,7 @@ class Synthesizer:
                     [(1, 1.0), (2, 0.85), (3, 0.6), (4, 0.42), (5, 0.28),
                      (6, 0.18), (8, 0.10)],
                     phase_attr="_itb_phase")
-                sig = sig + howl_gain * howl
+                bay = bay + howl_gain * howl   # trumpets scream from the BAY
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:
@@ -1751,8 +1897,10 @@ class Synthesizer:
             # the valve event is EXPOSED instead of buried under the note (and the
             # AGC can no longer normalise it away to the same loudness as the note).
             duck = min(0.80 * getattr(self, "_bov_env", 0.0), 0.80)
-            sig = (1.0 - duck) * sig + ind + gw
-        self._tap("induction+gears", sig)     # + intake roar, turbo, gearbox whine
+            sig = (1.0 - duck) * sig          # exhaust collapses on the lift...
+            bay = bay + ind + gw              # ...and the bay-mounted valve/box
+                                              # scream from the BAY, not the pipe
+        self._tap("induction+gears", bay)     # bay bus: intake, turbo, gearbox
 
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
@@ -1814,7 +1962,7 @@ class Synthesizer:
             ngr = self._rng.standard_normal(frames)
             ngr, self._grain_zi = lfilter(self._grain_bp[0], self._grain_bp[1],
                                           ngr, zi=self._grain_zi)
-            sig = sig + gg * (0.04 + 0.34 * rf) * ngr * am
+            bay = bay + gg * (0.04 + 0.34 * rf) * ngr * am   # timing gears: BAY
 
         # --- (7b) full-system round-trip reflection: a weak, low-passed echo at
         # the pipe's round-trip time (2 x system length / sound speed) feeds a bit
@@ -1921,19 +2069,71 @@ class Synthesizer:
                 sig, self._eq_pres_zi = lfilter(b, a, sig, zi=self._eq_pres_zi)
         self._tap("EQ", sig)
 
-        # --- cabin effect: muffle the highs, as if heard from inside the car -
-        if self.cabin and _HAVE_SCIPY:
-            sig, self._cabin_zi = lfilter(self._cabin_lp[0], self._cabin_lp[1],
-                                          sig, zi=self._cabin_zi)
-            sig *= 1.4   # make up the level lost to the low-pass
+        # --- bay-mounted mechanical sources.  These used to be added AFTER the
+        # room reverb — bone-dry, glued to the ear (the literal "engine in my
+        # face").  They radiate from the cam covers / rail IN the bay, so they
+        # join the BAY bus and get the same perspective as everything else. ----
+        mech = P.get("mech", 0.30)
+        if mech > 1e-3 and dps > 1e-12:
+            spacing = 720.0 / max(2 * len(self._offsets), 1)
+            ph_t = np.mod(self._audio_crank + dps * np.arange(frames), spacing) \
+                / spacing
+            tick_env = np.exp(-ph_t * 13.0)               # sharp hit, fast ring-down
+            nzm = self._rng.standard_normal(frames)
+            tick = np.diff(nzm, prepend=nzm[:1]) * tick_env   # HF 'click' spectrum
+            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
+            n_sc = (4.0 / max(len(self._offsets), 1)) ** 0.5
+            bay = bay + (mech * 0.050 * n_sc * (1.0 - 0.85 * rpm_frac)) * tick
+        ia = getattr(self, "_inj_amt", 0.0)
+        if ia > 1e-3 and self._inj_bp is not None:
+            nz, self._inj_zi = lfilter(self._inj_bp[0], self._inj_bp[1],
+                                       self._rng.standard_normal(frames),
+                                       zi=self._inj_zi)
+            bay = bay + ia * nz
 
-        # --- spatial / room reverb — the LAST stage, the space the tailpipe
-        # exhausts into (after the bent pipe + cat, exactly like real life).  A
-        # bent-stainless road car is heard bouncing off tarmac & bodywork, so it
-        # carries MORE room than a dry open-header race car; the cabin adds more.
-        self._reverb.mix = (P["reverb"] + (0.10 if self.cabin else 0.0)
-                            + (0.05 if self.road_pipe else 0.0))
-        sig = self._reverb.process(sig)
+        # ================ LISTENER PERSPECTIVE (white-box) ===================
+        # Two radiators, one listener.  TAIL = the tailpipe exit (everything
+        # that came down the exhaust chain above); BAY = the engine bay
+        # (block radiation, intake mouth/ITB, turbo whine/BOV, timing gears,
+        # valvetrain, injectors).  Per _pov_geo(): spherical spreading 1/r,
+        # path-difference delay, composite panel transmission (openings leak +
+        # mass-law LP), the cabin's c/2L standing wave, and the chase cam's
+        # tarmac-bounce comb — all from geometry, no listen fudges.
+        geo = self._pov_geo()
+        tail = sig
+        if geo["d_tail"]:
+            tail = self._pov_delay(tail, "tail_d", geo["d_tail"])
+        if geo["tail_fc"] is not None:
+            tail = self._pov_partition(tail, "tail_p",
+                                       geo["tail_alpha"], geo["tail_fc"])
+        bay_p = self._pov_delay(bay, "bay_d", geo["d_bay"]) if geo["d_bay"] else bay
+        bay_air = self._pov_partition(bay_p, "bay_p",
+                                      geo["bay_alpha"], geo["bay_fc"])
+        if geo["struct"] > 0.0:
+            # structure-borne mount path: shell re-radiation of the engine's
+            # low-mid band inside the cabin (2nd-order above the panel response)
+            stq = self._pov_lp(self._pov_lp(bay_p, "st1", geo["struct_fc"]),
+                               "st2", geo["struct_fc"])
+            bay_air = bay_air + geo["struct"] * stq
+        sig = geo["g_tail"] * tail + geo["g_bay"] * bay_air
+        if geo["ground"]:
+            dg, rg = geo["ground"]
+            if dg > 0:                        # tarmac reflection -> outdoor comb
+                sig = sig + rg * self._pov_delay(sig, "gnd", dg)
+        if geo["boom_f"] > 0.0 and _HAVE_SCIPY:   # cabin standing-wave boom
+            bbm, abm = self._pk(geo["boom_f"], 2.2, 5.0)
+            sig, self._boom_zi = lfilter(bbm, abm, sig, zi=self._boom_zi)
+
+        # --- the SPACE, per perspective: the open air behind the car (chase)
+        # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
+        # the per-component reverbs above are source-local (port/spool), this
+        # is where the LISTENER is.
+        if self.pov == "cockpit":
+            self._cab_verb.mix = P["reverb"]
+            sig = self._cab_verb.process(sig)
+        else:
+            self._reverb.mix = P["reverb"] + (0.05 if self.road_pipe else 0.0)
+            sig = self._reverb.process(sig)
         self._tap("cabin/room", sig)
 
         # --- auto-level (or fixed gain) + soft saturation + master volume ----
@@ -1970,33 +2170,8 @@ class Synthesizer:
                                                  nz2, zi=self._roadn_lp_zi)
                 sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
 
-        # --- injection clatter: GDI 'sewing-machine' / piezo / diesel injector tick,
-        # a band-passed HF texture loudest at idle and fading out with revs.
-        ia = getattr(self, "_inj_amt", 0.0)
-        if ia > 1e-3 and self._inj_bp is not None:
-            nz, self._inj_zi = lfilter(self._inj_bp[0], self._inj_bp[1],
-                                       self._rng.standard_normal(frames), zi=self._inj_zi)
-            sig = sig + ia * nz
-        # --- VALVETRAIN CLATTER: cam/tappet impact ticks, gated by the actual
-        # valve events.  With even firing the events across all cylinders are
-        # equally spaced every 720/(2n) deg, so ONE sawtooth of the live crank
-        # phase gates a sharp noise ping — the classic sewing-machine tick that
-        # dominates at idle and gets masked as combustion swells.  Radiates from
-        # the cam covers DIRECTLY (post-exhaust-chain), like the injector tick.
-        mech = P.get("mech", 0.30)
-        if mech > 1e-3 and dps > 1e-12:
-            spacing = 720.0 / max(2 * len(self._offsets), 1)
-            ph_t = np.mod(self._audio_crank + dps * np.arange(frames), spacing) \
-                / spacing
-            tick_env = np.exp(-ph_t * 13.0)               # sharp hit, fast ring-down
-            nzm = self._rng.standard_normal(frames)
-            tick = np.diff(nzm, prepend=nzm[:1]) * tick_env   # HF 'click' spectrum
-            rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
-            # scale DOWN with cylinder count: a V12's 180 events/s would fuse
-            # into a continuous fizz at the 4-cyl level — real multi-bank
-            # valvetrains blend into a much quieter hash
-            n_sc = (4.0 / max(len(self._offsets), 1)) ** 0.5
-            sig = sig + (mech * 0.050 * n_sc * (1.0 - 0.85 * rpm_frac)) * tick
+        # (injector + valvetrain clatter now radiate from the BAY bus above —
+        # they used to be bolted on here, post-reverb and bone-dry.)
         # --- cam-overlap idle CHOP + balance-shaft buzz: a slow amplitude wobble at
         # the firing rate (deep at idle for a big cam / an unbalanced no-shaft four).
         lump = getattr(self, "_cam_lump", 0.0) + getattr(self, "_balance_rough", 0.0)
