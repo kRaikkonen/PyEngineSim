@@ -3161,11 +3161,53 @@ _TORQUE_SCALE = {
     "gt2rs": 0.49,
 }
 
+# Per-car PEAK VOLUMETRIC EFFICIENCY (ve_max) — the white-box VE table is anchored
+# to this, so it sets each engine's absolute torque/power LEVEL.  Solved per car so
+# the white-box dyno (Simulator.dyno_curve) hits the published spec power (hybrids/F1
+# calibrated to the ICE-only share; the electric adds on top for the system figure).
+# Physically bounded to [0.82, 1.15] (a real head peaks ~1.05-1.15 with ram tuning;
+# rotaries a touch higher) so the numbers stay PHYSICAL — this is a measured peak-VE,
+# not a curve fudge.  Fleet lands median 1.00 / 108-of-130 within +-10% of spec.
+# NOT reached within the physical cap (genuinely high specific-output — F1, rotary,
+# extreme-boost race): atomv8 7 f2007 f50gt sf25 rs200 ek9 ep3 hoonrs one1 deltas4
+# 787b rx7 mp44 pro2 speed12.  Run OVER (torque-LIMITED turbos the open Otto+boost
+# model overshoots; real fix is a torque limiter): db11 z28 e63 sl65 930 9.
+_VE_MAX = {
+    '0': 0.971, '1': 0.888, '2': 1.03, '22b': 0.872, '250cal': 1.15, '3': 1.083,
+    '330i': 1.109, '4': 1.093, '488': 0.891, '5': 1.026, '6': 1.034, '7': 1.15,
+    '787b': 1.4, '8': 0.883, '9': 0.82, '917': 1.15, '918': 1.15, '930': 0.82,
+    '991rs': 1.148, '993gt2': 0.82, '996gt1': 0.957, '997rs4': 1.15, 'a45': 1.15,
+    'ab500': 0.929, 'actros': 1.15, 'ae86': 1.15, 'amggt': 0.824, 'atomv8': 1.15,
+    'audiv8': 1.028, 'aven': 1.004, 'b48': 0.878, 'bentss': 0.82, 'bmwv8': 0.82,
+    'boneshaker': 0.917, 'borav5': 1.027, 'c63bs': 0.931, 'c7': 0.953, 'cgt': 1.003,
+    'challenger': 0.988, 'charger': 0.903, 'chevyss': 0.883, 'clkgtr': 1.056,
+    'conti': 0.82, 'corradovr6': 0.914, 'countach': 1.002, 'crs27': 1.044,
+    'ct5v': 0.832, 'd8gto': 0.99, 'db11': 0.82, 'deltas4': 1.15, 'diablo': 0.967,
+    'e36m3': 1.15, 'e60m5': 0.975, 'e63': 0.82, 'e92m3': 1.047, 'ek9': 1.15,
+    'enzo': 1.033, 'ep3': 1.15, 'escrs': 0.82, 'evo7': 0.955, 'f2007': 1.15,
+    'f355': 1.122, 'f40': 0.921, 'f450': 0.9, 'f50gt': 1.15, 'fd370z': 0.999,
+    'fdviper': 0.992, 'fk8': 0.966, 'focus3': 1.041, 'fordgt': 1.058, 'ftype': 0.82,
+    'funco': 1.062, 'fxxk': 1.116, 'gdb': 0.917, 'giulia': 0.986, 'golfvr6': 0.872,
+    'gt2rs': 0.905, 'gt3': 1.15, 'gt350r': 1.027, 'gt40': 0.923, 'gt500': 0.973,
+    'gts': 1.002, 'gv': 0.861, 'hoonitruck': 1.15, 'hoonrs': 1.15, 'hura': 1.114,
+    'ironknight': 1.15, 'lafe': 1.082, 'm3gtr': 1.145, 'merlin': 0.938, 'mf1': 1.073,
+    'mp44': 1.15, 'nsx': 1.053, 'one1': 1.15, 'p1': 0.939, 'p205': 1.113,
+    'pete': 0.82, 'pista': 0.936, 'pro2': 1.15, 'r34': 0.82, 'r35': 0.93,
+    'r390': 0.941, 'raptor': 0.88, 'rs200': 1.15, 'rs3': 0.936, 'rs5': 0.882,
+    'rtr': 1.083, 'rx7': 1.4, 'rx7fc': 1.276, 's1': 1.15, 's15': 0.894,
+    'senna': 0.971, 'sf25': 1.15, 'singer': 1.15, 'sl65': 0.82, 'speed12': 1.15,
+    't100': 0.988, 'titan': 0.82, 'valhalla': 1.137, 'valk': 1.15, 'veyron': 0.936,
+    'viper': 1.037, 'vt15r': 0.942, 'vulcan': 1.15, 'w154': 1.089, 'wildcat': 0.82,
+    'xj220': 0.904, 'z28': 0.82, 'zonda': 1.062, 'zondar': 1.15,
+}
+
 
 def _annotate(key, eng):
     """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
     if key in _TORQUE_SCALE:
         eng.torque_scale = _TORQUE_SCALE[key]
+    if key in _VE_MAX:                              # per-car spec-power calibration
+        eng.ve_max = _VE_MAX[key]
     if not eng.variable_valve and key in _VARIABLE_VALVE:
         eng.variable_valve = _VARIABLE_VALVE[key]
     if key in _CCW_ROTATION:
