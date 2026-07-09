@@ -3148,18 +3148,8 @@ _RACE_CAM = frozenset({"7", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12
 _HOT_CAM = frozenset({"4", "488", "pista", "f355", "nsx", "ek9", "ep3", "fk8",
                       "gt3", "991rs", "997rs4", "lafe", "enzo", "gt350r"})
 
-# Forced-induction TORQUE trim (boost-blended, torque-path only — see
-# Engine.torque_scale).  The open-loop Otto model + boost makes some turbo/SC
-# cars produce ~2x their real peak torque; these multipliers pull each back to
-# its catalogue figure (auto-calibrated vs real-world peak Nm, verified to land
-# within ~1% at full boost).  Off-boost behaviour and the exhaust SOUND are
-# unchanged.  NA cars never appear here (no boost to trim).
-_TORQUE_SCALE = {
-    "488": 0.48, "930": 0.46, "22b": 0.40, "gdb": 0.47, "giulia": 0.52,
-    "gt500": 0.49, "9": 0.79, "f40": 0.80, "evo7": 0.66, "ct5v": 0.53,
-    "e63": 0.41, "db11": 0.64, "pista": 0.49, "senna": 0.50, "one1": 0.50,
-    "gt2rs": 0.49,
-}
+# _TORQUE_SCALE (the old boost-blended torque fudge) is GONE — superseded by the
+# physical ECU torque+power limiter (_TORQUE_ENVELOPE / engine.torque_limit_nm).
 
 # Per-car PEAK VOLUMETRIC EFFICIENCY (ve_max) — the white-box VE table is anchored
 # to this, so it sets each engine's absolute torque/power LEVEL.  Solved per car so
@@ -3217,8 +3207,6 @@ _TORQUE_ENVELOPE = {          # key: (peak_torque_Nm, rated_power_hp)
 
 def _annotate(key, eng):
     """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
-    if key in _TORQUE_SCALE:
-        eng.torque_scale = _TORQUE_SCALE[key]
     if key in _VE_MAX:                              # per-car spec-power calibration
         eng.ve_max = _VE_MAX[key]
     if key in _TORQUE_ENVELOPE:                     # physical ECU torque+power limiter

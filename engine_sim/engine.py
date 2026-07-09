@@ -98,11 +98,9 @@ class Engine:
     # timing becomes a live, physical parameter.
     spark_advance_deg: float = 22.0  # ignition before combustion TDC (deg)
     burn_duration_deg: float = 55.0  # 10-90% heat release window (deg)
-    # Torque-only trim for FORCED-INDUCTION cars whose open-loop boost torque runs
-    # high vs the real car.  1.0 = no change.  Applied to crank torque ONLY (never
-    # the audio), and BLENDED BY BOOST: full effect at peak boost, none off-boost
-    # (so idle / light-throttle / NA behaviour is untouched).  e.g. 0.47 ~= halve
-    # the on-boost torque of a car that simulates ~2x real.
+    # DEPRECATED / unused — kept only so old saved configs still load.  This was a
+    # boost-blended torque fudge; it is superseded by the physical ECU limiter
+    # (torque_limit_nm + power_limit_kw) and is no longer read anywhere.
     torque_scale: float = 1.0
     # Physical ECU TORQUE/POWER LIMITER (0 = none).  A rated engine whose combustion
     # could make more is electronically held to an ENVELOPE: a flat MEAN-torque cap

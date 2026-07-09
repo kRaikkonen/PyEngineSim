@@ -457,6 +457,14 @@ class Simulator:
             else:                                 # legacy linear spool ramp
                 spool = (rf - eng.turbo_spool_frac) / max(eng.turbo_spool_width, 1e-3)
                 target = eng.boost_bar * thr * min(max(spool, 0.0), 1.0) * load_gate
+            # REV-LIMIT / cut: no combustion -> no exhaust enthalpy -> the turbine
+            # loses its drive and the shaft spools DOWN.  Without this the manifold
+            # stays boosted through a held fuel cut, and on a big low-redline diesel
+            # the BOOSTED intake stroke does positive pumping work that walks the
+            # engine past its limiter (a no-load over-rev).  The fast bleed tau below
+            # means a brief limiter bounce barely dips, but a sustained cut collapses.
+            if self._fuel_cut:
+                target = 0.0
             # WHITE-BOX SPOOL TRANSIENT: the boost lags because the turbo SHAFT
             # (inertia) must spin UP, driven by exhaust enthalpy —
             #     tau_spool ~ J_turbo / exhaust_power.
