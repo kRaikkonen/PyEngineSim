@@ -244,6 +244,8 @@ class Engine:
     # "continuous" (Valvetronic/MultiAir -> throttleless, extra-smooth).  Derived
     # from variable_valve in _annotate.
     valve_lift: str = "fixed"
+    vtec_rpm: float = 0.0            # two-stage cam crossover rpm (0 -> auto 0.62*redline):
+                                     #   the VE/torque STEP and the audio brightness jump
     integrated_manifold: bool = False  # exhaust manifold cast into the head (modern
     #                                    turbos): short, hot, tighter & more muffled
     # Cam profile: "mild" (smooth idle), "stock", "hot" (lopey idle + rasp),

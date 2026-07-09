@@ -353,7 +353,7 @@ class TruthCylinder:
     """One representative cylinder + its runner gas systems + flame model —
     the CombustionChamber port, driven by prescribed crank kinematics."""
 
-    def __init__(self, eng, spark_advance_fn=None, boost_bar=0.0):
+    def __init__(self, eng, spark_advance_fn=None, boost_bar=0.0, rpm=None):
         cyl = eng.cylinders[0]
         self.bore = cyl.bore
         self.stroke = cyl.stroke
@@ -369,8 +369,23 @@ class TruthCylinder:
         d_iv = self.bore * (0.39 if n_int >= 2 else 0.47)
         d_ev = 0.83 * d_iv
         n_exh = max(1, getattr(eng, "valves_per_cyl", 4) - n_int)
-        self.max_lift_i = 0.27 * d_iv
-        self.max_lift_e = 0.27 * d_ev
+        # cam: duration + lift by profile.  VTEC/AVS TWO-STAGE picks the lobe for
+        # the running rpm (short/low below the crossover, long/high above) — the
+        # same switch the runtime ve_model uses — so a baked pulse/VE from the truth
+        # model carries the VTEC step too.  lift_scale is applied BEFORE the flow
+        # constants so k_*_max reflect the chosen lobe.
+        cam = getattr(eng, "cam_profile", "stock")
+        dur_i = {"mild": 236.0, "stock": 250.0, "hot": 266.0, "race": 284.0}.get(cam, 250.0)
+        lift_scale = 1.0
+        if getattr(eng, "valve_lift", "fixed") == "two-stage" and rpm is not None:
+            xr = getattr(eng, "vtec_rpm", 0.0) or 0.62 * eng.redline_rpm
+            hi = rpm >= xr
+            dur_i = 286.0 if hi else 230.0
+            lift_scale = 1.15 if hi else 0.82
+        dur_e = dur_i + 4.0
+        self.dur_i, self.dur_e = dur_i, dur_e
+        self.max_lift_i = 0.27 * d_iv * lift_scale
+        self.max_lift_e = 0.27 * d_ev * lift_scale
         # peak port flow from curtain area at max lift with Cd ~ 0.6, converted
         # to a flow-bench SCFM figure and then to a flow constant like the C++
         v_bench = math.sqrt(2.0 * 28.0 * 249.088889 / 1.2)   # bench dP velocity
@@ -378,12 +393,6 @@ class TruthCylinder:
         q_e = n_exh * math.pi * d_ev * self.max_lift_e * 0.62 * v_bench
         self.k_int_max = k_flow_from_scfm(q_i / 0.0004719474432)
         self.k_exh_max = k_flow_from_scfm(q_e / 0.0004719474432)
-
-        # cam: duration by profile, lift = smooth lobe (raised-cosine^2)
-        cam = getattr(eng, "cam_profile", "stock")
-        dur_i = {"mild": 236.0, "stock": 250.0, "hot": 266.0, "race": 284.0}.get(cam, 250.0)
-        dur_e = dur_i + 4.0
-        self.dur_i, self.dur_e = dur_i, dur_e
         # centerlines in THIS project's cycle convention (phi=0 is INTAKE TDC,
         # 180 BDC, 360 combustion TDC, 540 exhaust BDC):
         #   intake opens ~15 deg BTDC(0)  -> centre ~ dur/2 - 15
@@ -710,7 +719,7 @@ def measure_operating_point(eng, rpm, throttle, spark_advance_fn=None,
             boost_bar = b_max * min(max(spool, 0.0), 1.0) * min(throttle / 0.6, 1.0)
         else:
             boost_bar = 0.0
-    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar)
+    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar, rpm=rpm)
     rho_ref = ATM / (R * T_AMB)                # ambient molar density (VE ref)
     n_ideal = rho_ref * cyl.Vd                 # ideal trapped charge, mol
     last_imep = None
@@ -827,7 +836,7 @@ def exhaust_pressure_pulse(eng, rf, throttle=1.0, dphi=1.0, N=128,
         boost_bar = b_max * min(max(spool, 0.0), 1.0) * min(throttle / 0.6, 1.0)
     else:
         boost_bar = 0.0
-    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar)
+    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar, rpm=rpm)
     # settle the cycle (the chamber starts cold/empty — let it reach steady state)
     for _ in range(warmup):
         phi = 0.0

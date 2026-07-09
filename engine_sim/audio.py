@@ -1055,17 +1055,16 @@ class Synthesizer:
         # and raspier ("VTEC kicks in").  variable_valve is display-only on the
         # Engine; we read the same field here to colour the sound.
         self._vtec = 0.0
-        vv = getattr(eng, "variable_valve", "")
-        if vv:
-            # Only LIFT-SWITCHING systems give an audible step ("kick") at the
-            # crossover — Honda VTEC, Toyota VVTL-i, Mitsubishi MIVEC, Audi AVS,
-            # Porsche VarioCam Plus.  Cam-PHASING / continuous-lift systems (BMW
-            # VANOS & Valvetronic, Toyota VVT-i, Ferrari VVT, Nissan CVTCS, Ford
-            # Ti-VCT, Hyundai CVVT) spool up SMOOTHLY — just a gentle brightening.
-            lift = any(k in vv for k in ("VTEC", "VVTL", "MIVEC", "AVS",
-                                         "VarioCam", "Valvematic", "Camtronic"))
-            step = 1.0 if lift else 0.22
-            self._vtec = min(max((rpm_frac - 0.68) / 0.06, 0.0), 1.0)
+        vl = getattr(eng, "valve_lift", "fixed")
+        if vl != "fixed":
+            # The audible 'kick' now rides the SAME crossover as the white-box VE
+            # STEP (ve_model._cam_params): a two-stage lift SWITCH (VTEC/AVS/MIVEC)
+            # steps hard AT vtec_rpm, a continuous phasing system (VANOS/VVT-i/
+            # Valvetronic) just brightens gently — so the sound follows the physical
+            # breathing change instead of a separate hand-set rpm.
+            step = 1.0 if vl == "two-stage" else 0.22
+            xf = (getattr(eng, "vtec_rpm", 0.0) / max(eng.redline_rpm, 1.0)) or 0.62
+            self._vtec = min(max((rpm_frac - xf) / 0.06, 0.0), 1.0)
             self._post_fc *= 1.0 + 0.30 * step * self._vtec
             fc *= 1.0 + 0.26 * step * self._vtec
         # tail-pipe TIP mouth: a big bore brightens the exit, a small one darkens it

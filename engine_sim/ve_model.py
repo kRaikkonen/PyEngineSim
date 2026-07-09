@@ -67,14 +67,42 @@ def _geometry(eng):
 _CAM = {"mild": (0.97, 0.00, 1.0), "stock": (1.00, 0.00, 1.0),
         "hot": (1.08, 0.10, 3200.0), "race": (1.16, 0.18, 3900.0)}
 
+# VTEC/AVS two-stage lobes: a LOW-rpm economy lobe (breathes well low, rolls off
+# HARD up top so keeping it past the crossover would strangle the engine) and a
+# HIGH-rpm power lobe (screams up top, would lope down low).  The step between them
+# at the switch IS the VTEC kick.
+_VTEC_LO = (0.78, 0.00, 1.0)
+_VTEC_HI = (1.20, 0.16, 4200.0)
+
+
+def _cam_params(eng, rpm):
+    """Cam (knee, low-rpm penalty, penalty-fade rpm) — RPM-VARIABLE for variable
+    valve timing, so the breathing/VE reflects the real mechanism:
+
+      * two-stage (VTEC/AVS): SWITCH from the low lobe to the high lobe at the
+        crossover rpm -> a genuine VE/torque STEP (the 'VTEC kick'), the engine
+        taking whichever lobe breathes better at each speed.
+      * continuous (VANOS/VVT-i/Valvetronic): phase the cam to keep the high-rpm
+        breathing WITHOUT the low-rpm overlap lope -> a broad, flexible curve.
+      * fixed: the static cam_profile as before.
+    """
+    lift = getattr(eng, "valve_lift", "fixed")
+    if lift == "two-stage":
+        xr = getattr(eng, "vtec_rpm", 0.0) or 0.62 * eng.redline_rpm
+        w = 1.0 / (1.0 + math.exp(-(rpm - xr) / max(0.013 * eng.redline_rpm, 45.0)))
+        return tuple(lo + (hi - lo) * w for lo, hi in zip(_VTEC_LO, _VTEC_HI))
+    if lift == "continuous":
+        knee, _, _ = _CAM.get(getattr(eng, "cam_profile", "stock"), _CAM["stock"])
+        return (max(knee, _CAM["hot"][0]), 0.0, 1.0)   # top-end breathing, no lope
+    return _CAM.get(getattr(eng, "cam_profile", "stock"), _CAM["stock"])
+
 
 def ve_truth(eng, rpm, mapf):
     """Volumetric efficiency (unnormalised) at ``rpm`` and manifold-pressure
     fraction ``mapf`` (p_man / p_atm; > 1 under boost)."""
     a_p, a_v, stroke, n_tuned, cr = _geometry(eng)
     rpm = max(rpm, 1.0)
-    cam_knee, cam_pen, cam_fade = _CAM.get(getattr(eng, "cam_profile", "stock"),
-                                           _CAM["stock"])
+    cam_knee, cam_pen, cam_fade = _cam_params(eng, rpm)
 
     # 1) Taylor Mach-index roll-off (top-end breathing limit)
     sp = 2.0 * stroke * rpm / 60.0                    # mean piston speed
