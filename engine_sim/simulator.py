@@ -44,6 +44,11 @@ except Exception:                       # pragma: no cover
     _HAVE_MAP_MODEL = False
 
 GAMMA = 1.30          # ratio of specific heats for burned gas (~1.3)
+# combustion temperature-rise anchor (K): the heat-release q/cv term, ONE constant
+# calibrated so a typical NA idle sits ~630 K exhaust and full load ~1230 K (the
+# known-good sound-speed range), the per-car spread then falling out of CR / boost
+# / load / rpm.  ~ (LHV/AFR)·eta_burn/cv, derated for dissociation + incompleteness.
+_COMB_DT = 1700.0
 # Physical peak-cylinder-pressure ceiling (Pa).  The open-loop Otto model lets a
 # HIGH compression ratio multiply with boost into absurd peak pressures (a diesel
 # at CR~20 + boost computes ~1300 bar, ~8x its real torque).  Real engines are
@@ -757,19 +762,46 @@ class Simulator:
         v_open = cyl.volume(theta)
         return p_peak * (v_tdc / v_open) ** GAMMA
 
-    def exhaust_sound_speed(self) -> float:
-        """Speed of sound in the exhaust gas (m/s) at the current operating point.
-
-        c = sqrt(gamma * R * T).  The exhaust gas is hot (idle ~650 K up to
-        ~1200 K at full load), so c is ~470-670 m/s — far above the 343 m/s of
-        cold air, and it *rises with load and rpm*.  That is why a real exhaust
-        note slides up in pitch as you load the engine, on top of the firing
-        rate climbing.  The audio pipe resonance is tuned from this.
+    def exhaust_gas_temp(self) -> float:
+        """WHITE-BOX exhaust-gas temperature (K) at the exhaust valve — from the
+        REAL cycle thermodynamics, not a fitted line: charge temp -> adiabatic
+        COMPRESSION -> combustion heat release -> EXPANSION to the exhaust valve ->
+        wall heat loss.  Drives the exhaust sound speed / note-pitch slide, and the
+        in-cylinder PEAK temperature falls out of the same chain (in_cylinder_peak_temp).
         """
+        eng = self.engine
+        cr = min(max(eng.cylinders[0].compression_ratio, 6.0), 24.0)
         load = self._effective_throttle()
-        rpm_frac = min(self.rpm / max(self.engine.redline_rpm, 1.0), 1.0)
-        temp_k = 650.0 + 350.0 * load + 200.0 * rpm_frac
-        return math.sqrt(GAMMA * 287.0 * temp_k)
+        rpm_frac = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
+        # 1) charge temp entering compression: ambient + compressor heat of
+        #    compression under boost (same physics as bmep_model's charge temp)
+        pr = 1.0 + max(self.boost, 0.0)                    # compressor pressure ratio
+        t_charge = 300.0 * (1.0 + (pr ** 0.2857 - 1.0) / 0.70)
+        # 2) adiabatic compression to TDC
+        t_comp = t_charge * cr ** (GAMMA - 1.0)
+        # 3) combustion heat release (q/cv rise), scaled by fuelling completeness —
+        #    more complete + less residual-diluted at higher load.  This IS the peak.
+        self._t_peak = t_comp + _COMB_DT * (0.42 + 0.58 * load)
+        # 4) expansion TDC -> exhaust valve extracts work and cools; a HIGH
+        #    compression(=expansion) ratio pulls MORE heat out -> a cooler exhaust
+        #    (why a high-CR NA engine runs cooler EGT than a low-CR turbo).
+        t_evo = self._t_peak / (0.85 * cr) ** (GAMMA - 1.0)
+        # 5) wall heat loss toward the ~90 C coolant: a bigger fraction at LOW rpm
+        #    (more residence time) -> cooler at idle, hotter as the revs climb.
+        tc = self.coolant_c + 273.15
+        return min(max(tc + (t_evo - tc) * (0.60 + 0.40 * rpm_frac), 300.0), 1500.0)
+
+    def in_cylinder_peak_temp(self) -> float:
+        """Peak in-cylinder gas temperature (K) this cycle — a by-product of the
+        exhaust_gas_temp chain (call it first each frame).  Telemetry / knock ref."""
+        return getattr(self, "_t_peak", 2200.0)
+
+    def exhaust_sound_speed(self) -> float:
+        """Speed of sound sqrt(gamma R T) in the exhaust gas.  The note's pitch now
+        slides with the WHITE-BOX cycle temperature (exhaust_gas_temp), per car —
+        a high-CR NA screamer runs a cooler, lower-c exhaust than a low-CR turbo.
+        """
+        return math.sqrt(GAMMA * 287.0 * self.exhaust_gas_temp())
 
     def forced_induction_rpm(self) -> float:
         """Estimated compressor/turbine SHAFT speed (rpm) for the boost gauge.
