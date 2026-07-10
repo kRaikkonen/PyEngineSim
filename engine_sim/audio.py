@@ -72,7 +72,13 @@ _POWER_CHORD = (
 # Selectable firing-body chord voicings (hidden number-key 1-6 hotkeys).  Each
 # is (pitch-ratio vs firing pitch, level); max 5 voices to fit the filter state.
 _FIRE_CHORDS = (
-    _POWER_CHORD,                                                      # 1 power (default)
+    # 1 (default): NOT a musical chord — the ENGINE SERIES.  A real exhaust
+    # carries every integer harmonic of the firing rate with a ~1/k physical
+    # decay; picking musical intervals (root+5th+octave) out of it is
+    # instrument-synthesis thinking and is exactly what made the firing body
+    # read as a PITCHED VOICE ("像人声/变调").  Chords 2-6 stay as easter eggs.
+    ((1.0, 1.0), (2.0, 0.62), (3.0, 0.45), (4.0, 0.34), (5.0, 0.27),
+     (6.0, 0.22)),
     ((0.5, 0.6), (1.0, 1.0), (1.26, 0.7), (1.5, 0.7), (2.0, 0.4)),    # 2 major power
     ((0.5, 0.5), (1.0, 1.0), (1.0595, 0.8), (2.0, 0.45)),             # 3 root + minor 2nd
     ((1.0, 1.0), (1.189, 0.65), (1.414, 0.62), (1.782, 0.5), (0.5, 0.5)),  # 4 m7b5
@@ -540,7 +546,9 @@ class Synthesizer:
             "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
-            "shear": 0.07,        # tail-pipe air-shear roar at the exit (mass-flow)
+            "shear": 0.13,        # tail-pipe air-shear roar at the exit (mass-flow)
+                                  #   — part of the ~30 % un-pitched noise share a
+                                  #   real engine carries (the fixed underlay)
             "whine": 1.0,         # high-rpm standing-wave whine/scream amount
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
@@ -848,7 +856,7 @@ class Synthesizer:
                                                len(self._intake_lp[1])) - 1)
             # firing 'body' = a power/colour chord rung as high-Q resonators.
             # Sized to the widest voicing (5) so every hidden chord fits.
-            self._chord_zi = [np.zeros(2) for _ in range(5)]
+            self._chord_zi = [np.zeros(2) for _ in range(6)]
             self._eq_lo_zi = np.zeros(2)
             self._eq_mid_zi = np.zeros(2)
             self._eq_hi_zi = np.zeros(2)
@@ -1499,7 +1507,12 @@ class Synthesizer:
                 # per-firing fizz — restored via a higher `turbulence`).  The
                 # UNGATED floor stays tiny (0.008): a constant hiss between pulses
                 # is the dyno-cell tell (白噪音), the gated fizz is the car.
-                fizz_chans[ci] = e * noise + 0.008 * noise
+                # gated fizz + a REAL broadband floor: ~30 % of a live engine's
+                # energy is un-pitched gas/turbulence noise that does NOT
+                # transpose with rpm — the fixed underlay that separates an
+                # internal-combustion machine from a synthesizer.  (0.008 was
+                # a whisper; the flow-scaled shear/vortex stages add the rest.)
+                fizz_chans[ci] = e * noise + 0.02 * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -1529,6 +1542,13 @@ class Synthesizer:
         inv = 1.0 / self._nchan
         dry *= inv
         wet *= inv
+        # REAL exhaust pulses are grossly ASYMMETRIC: the compression crest
+        # steepens as it travels (it rides hotter, faster gas — a forming shock,
+        # a few ms to peak) while the rarefaction tail drags out long.  A
+        # symmetric pulse has sparse, clean harmonics — the synthesizer tell
+        # ("太对称、太干净").  One-sided quadratic = crest steepening + the
+        # even-order richness of the real wave.
+        dry = dry + 0.45 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
@@ -2114,6 +2134,30 @@ class Synthesizer:
         if _HAVE_SCIPY and self._thunder is not None:
             sig, self._thunder_zi = lfilter(self._thunder[0], self._thunder[1],
                                             sig, zi=self._thunder_zi)
+        # BROADBAND PULSATING LOW BAND (the 澎湃): a real system's low end is
+        # not one 78 Hz resonance ("低频是点不是面") — every blowdown shoves a
+        # turbulent SLUG of gas, a WIDE 60-250 Hz rumble amplitude-modulated at
+        # the firing rate.  A point peak hums one note; the firing-gated band
+        # is the 轰隆隆 / air-push.  Gain from cylinder litres (big slugs
+        # thunder), level rides load via mean flow; the modulation envelope is
+        # locked to the live crank phase.
+        if _HAVE_SCIPY and dps > 1e-12:
+            cyl_l2 = (sim.engine.total_displacement * 1000.0) \
+                / max(len(self._offsets), 1)
+            g_rmb = min(max((cyl_l2 - 0.22) * 0.55, 0.0), 0.45)
+            if g_rmb > 0.01:
+                spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
+                ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
+                             spac2) / spac2
+                envp = np.exp(-ph2 * 3.0)                      # per-firing slug
+                brm, arm = _bandpass(130.0, 0.6, self.sample_rate)
+                if not hasattr(self, "_rumble_zi"):
+                    self._rumble_zi = np.zeros(2)
+                rmb, self._rumble_zi = lfilter(
+                    brm, arm, self._rng.standard_normal(frames),
+                    zi=self._rumble_zi)
+                sig = sig + g_rmb * (0.35 + 0.65 * envp) \
+                    * (0.30 + 0.70 * getattr(self, "_flow", 0.0)) * rmb
         self._tap("thunder", sig)             # deep displacement low-end roar
         # gear-grain: gear-driven valvetrain / timing-gear WHIR — a fine, dense
         # band-passed noise modulated by a gear-mesh tone, so it's a 'grind-like'
@@ -2196,7 +2240,7 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             flow = rpm_frac * (0.35 + 0.65 * sim.throttle)
-            shear_gain = P.get("shear", 0.10) * flow
+            shear_gain = P.get("shear", 0.15) * flow
             if shear_gain > 1e-4:
                 ns_ = self._rng.standard_normal(frames)
                 ns_, self._shear_bp_zi = lfilter(self._shear_bp[0], self._shear_bp[1],

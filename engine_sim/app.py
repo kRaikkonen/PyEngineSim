@@ -1195,7 +1195,7 @@ class App:
                                          "trackside": "Trackside"}[_nxt]))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
-                    self._flash(["power", "major", "root+m2", "m7b5", "dim",
+                    self._flash(["engine", "major", "root+m2", "m7b5", "dim",
                                  "maj7"][e.key - pygame.K_1])
                 elif e.key == pygame.K_x:
                     if not self.sim.drivetrain.auto:
