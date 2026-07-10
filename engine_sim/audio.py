@@ -1678,13 +1678,25 @@ class Synthesizer:
                     # downstream nonlinearities which re-generate audible LF).
                     # 70 Hz still kills the DC/infra pedestal at idle without
                     # eating the bass at speed.
-                    f_hp = min(max(0.25 * sim.rpm * len(self._offsets) / 120.0,
-                                   18.0), 70.0)
-                    bhp2, ahp2 = self._bw(1, f_hp, btype="high")
-                    zi = self._bip_zi.get(ci)
-                    if zi is None:
-                        zi = np.zeros(1)
-                    bang_c, self._bip_zi[ci] = lfilter(bhp2, ahp2, bang_c, zi=zi)
+                    # ...and the coupling FADES OUT as the pulses FUSE (Leo:
+                    # F1 only sounds right with F9 off): past ~300 fires/s the
+                    # overlapped train's pedestal IS the elevated mean pipe
+                    # pressure that BIASES the real gas nonlinearities (tanh /
+                    # shock steepening) into their violent operating point —
+                    # strip it and the F1 goes thin.  Separated pulses (road
+                    # cars) keep the full AC fix; the 55 Hz DC-block downstream
+                    # stops the mean from ever radiating.
+                    fire_n = sim.rpm * len(self._offsets) / 120.0
+                    m_ac = min(max((900.0 - fire_n) / 600.0, 0.0), 1.0)
+                    if m_ac > 1e-3:
+                        f_hp = min(max(0.25 * fire_n, 18.0), 70.0)
+                        bhp2, ahp2 = self._bw(1, f_hp, btype="high")
+                        zi = self._bip_zi.get(ci)
+                        if zi is None:
+                            zi = np.zeros(1)
+                        acp, self._bip_zi[ci] = lfilter(bhp2, ahp2, bang_c,
+                                                        zi=zi)
+                        bang_c = m_ac * acp + (1.0 - m_ac) * bang_c
                 chans[ci] = bang_c                        # clean bang -> pipe + dry
                 # fizz = gas-rush noise GATED by the pulse `e` (this is the GOOD,
                 # per-firing fizz — restored via a higher `turbulence`).  The
@@ -1830,6 +1842,11 @@ class Synthesizer:
         # pass the muffler!) and rejoins at the listener-perspective stage with
         # its own geometry (delay + 1/r + body-panel transmission).
         bay = np.zeros(frames, dtype=np.float64)
+        # intake-side sub-bus: compressor whine / BOV / intake roar / ITB howl
+        # radiate from the intake tract MOUTH and the atmospheric dump — a
+        # bright OPENING, not through sheet metal (the 355 Hz body-panel LP was
+        # turning the turbo whistle to mud — Leo: "涡轮声搞坏了").
+        bayi = np.zeros(frames, dtype=np.float64)
         if _HAVE_SCIPY and getattr(self, "_blk_seal", 0.0) > 0.0:
             st, self._blk_lp_zi = lfilter(self._blk_lp[0], self._blk_lp[1],
                                           combustion, zi=self._blk_lp_zi)  # the lid
@@ -1872,16 +1889,28 @@ class Synthesizer:
                 det = 1.0 + 0.03 * (2 * ci - (self._nchan - 1)) \
                     / max(self._nchan - 1, 1)
             else:
-                det = 1.0
+                det = 0.98                     # mono pipe: split-detuned below
             D2c = max(int(round(D2 * det)), 4)
             prim = wg_primary.process(exc, D1, g1, s, lp_a)
             if self.vx.get("series_wg", True):
                 mid = wg_mid.process(0.35 * exc + 0.5 * prim, D3, g3, s, lp_a)
-                total = wg_total.process(0.20 * exc + 0.5 * mid, D2c, g2, s,
-                                         lp_end)
+                tin = 0.20 * exc + 0.5 * mid
+                total = wg_total.process(tin, D2c, g2, s, lp_end)
             else:                              # classic parallel wiring (F1 key)
                 mid = wg_mid.process(exc, D3, g3, s, lp_a)
+                tin = exc
                 total = wg_total.process(exc, D2c, g2, s, lp_end)
+            if self._nchan == 1:
+                # SINGLE-PIPE cars (I4/I6 one collector — the 2JZ) had no bank
+                # detune, so they alone kept a PERFECT periodic comb — the
+                # organ-pipe tell Leo heard only on them.  A real single pipe
+                # still staggers its modes (taper, bends, the temperature
+                # gradient along the run): split the full-system comb into a
+                # +-2 % detuned pair.
+                if not hasattr(self, "_wg_monoB"):
+                    self._wg_monoB = ExhaustWaveguide(1200)
+                total = 0.5 * (total + self._wg_monoB.process(
+                    tin, max(int(round(D2 * 1.02)), 4), g2, s, lp_end))
             wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         wet *= inv
         wet += er_add
@@ -2249,7 +2278,7 @@ class Synthesizer:
                                                 n, zi=self._intake_bp_zi)
                 n, self._intake_lp_zi = lfilter(self._intake_lp[0], self._intake_lp[1],
                                                 n, zi=self._intake_lp_zi)
-                bay = bay + intake_gain * n   # intake mouth radiates from the BAY
+                bayi = bayi + intake_gain * n  # intake mouth: bright opening
                                               # (was mid-exhaust-chain: the roar
                                               # passed through the muffler!)
 
@@ -2279,7 +2308,7 @@ class Synthesizer:
                          (6, 0.18), (8, 0.10)])
                 howl = self._whine(fire_hz, frames, hset,
                                    phase_attr="_itb_phase")
-                bay = bay + howl_gain * howl   # trumpets scream from the BAY
+                bayi = bayi + howl_gain * howl  # trumpets: bright opening
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:
@@ -2297,8 +2326,8 @@ class Synthesizer:
             # AGC can no longer normalise it away to the same loudness as the note).
             duck = min(0.80 * getattr(self, "_bov_env", 0.0), 0.80)
             sig = (1.0 - duck) * sig          # exhaust collapses on the lift...
-            bay = bay + ind + gw              # ...and the bay-mounted valve/box
-                                              # scream from the BAY, not the pipe
+            bayi = bayi + ind + gw            # whine/BOV: intake tract + dump
+                                              # vent to open air, not the pipe
         self._tap("induction+gears", bay)     # bay bus: intake, turbo, gearbox
 
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
@@ -2362,6 +2391,12 @@ class Synthesizer:
             # the low end, and the loudness-weighted AGC means raising it no
             # longer ducks the rest — bass is a pure additive here.
             g_rmb = min(max((cyl_l2 - 0.22) * 1.05, 0.0), 0.72)
+            if sim.engine.redline_rpm >= 11000.0:
+                # extreme fire rates merge the slugs into a continuous jet
+                # ROAR whose LF tracks TOTAL mass flow, not litres-per-cyl —
+                # the 0.3 L F1 cylinders had zeroed their rumble share
+                # (Leo: the F1 needs MORE bass, not less)
+                g_rmb = max(g_rmb, 0.26)
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
                 ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
@@ -2594,6 +2629,13 @@ class Synthesizer:
         bay_p = self._pov_delay(bay, "bay_d", geo["d_bay"]) if geo["d_bay"] else bay
         bay_air = self._pov_partition(bay_p, "bay_p",
                                       geo["bay_alpha"], geo["bay_fc"])
+        # intake-side BRIGHT path: the tract mouth / atmospheric dump is an
+        # OPENING — high leak, gentle 2.4 kHz shading (arch/ducting), never the
+        # body-panel mass law that was muddying the compressor whistle.
+        bayi_p = self._pov_delay(bayi, "bayi_d", geo["d_bay"]) \
+            if geo["d_bay"] else bayi
+        a_hi = min(geo["bay_alpha"] * 2.2 + 0.15, 0.80)
+        bay_air = bay_air + self._pov_partition(bayi_p, "bayi_p", a_hi, 2400.0)
         if geo["struct"] > 0.0:
             # structure-borne mount path: shell re-radiation of the engine's
             # low-mid band inside the cabin (2nd-order above the panel response)
