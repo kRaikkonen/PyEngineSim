@@ -124,7 +124,7 @@ TR_ZH = {
     "Demo cars": "示例车", "Load car…": "载入车型…", "Load EQ…": "载入EQ…",
     "Save…": "保存…", "Mixer / EQ": "混音/EQ", "Out:": "输出:",
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Cockpit": "驾驶舱",
-    "Chase cam": "追尾视角", "Gear whine": "直齿啸叫",
+    "Chase cam": "追尾视角", "Trackside": "路边飞驰", "Gear whine": "直齿啸叫",
     "Touch": "触屏", "Touch OFF": "关闭触屏",
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
@@ -1183,10 +1183,16 @@ class App:
                         self.sim.boost,
                         getattr(self.sim.engine, "boost_bar", 0.0), 0.8)
                     self.synth._bdim_phase = 0.0
-                elif e.key == pygame.K_b:                # POV: chase cam <-> cockpit
-                    self.synth.cabin = not self.synth.cabin
-                    self._flash(self.tr("Cockpit") if self.synth.cabin
-                                else self.tr("Chase cam"))
+                elif e.key == pygame.K_b:      # POV: chase -> cockpit -> trackside
+                    _order = ["chase", "cockpit", "trackside"]
+                    _cur = getattr(self.synth, "pov", "chase")
+                    _nxt = _order[(_order.index(_cur) + 1) % 3] \
+                        if _cur in _order else "chase"
+                    self.synth.pov = _nxt
+                    self.synth._pov_cache = None
+                    self._flash(self.tr({"chase": "Chase cam",
+                                         "cockpit": "Cockpit",
+                                         "trackside": "Trackside"}[_nxt]))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["power", "major", "root+m2", "m7b5", "dim",

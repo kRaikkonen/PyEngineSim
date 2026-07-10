@@ -310,6 +310,34 @@ class _BlockDelay:
         return out
 
 
+class _FlybyDelay:
+    """Fractional delay line whose delay RAMPS per sample — a moving source's
+    propagation delay.  Changing path length IS the Doppler effect (physically
+    exact: d(delay)/dt = radial velocity / c gives the pitch bend), so a car
+    passing the trackside mic sweeps +30 %/-19 % at 290 km/h with zero explicit
+    pitch-shifter — the classic F1 'neeeoowm'."""
+
+    def __init__(self, max_delay):
+        self.buf = np.zeros(int(max_delay) + 4, dtype=np.float64)
+        self.wp = 0
+        self.prev = 1.0
+
+    def process(self, x, d_new):
+        n = len(x)
+        N = len(self.buf)
+        wi = (self.wp + np.arange(n)) % N
+        self.buf[wi] = x
+        d_new = float(min(max(d_new, 1.0), N - 3))
+        d = np.linspace(self.prev, d_new, n)        # smooth per-sample ramp
+        self.prev = d_new
+        idx = (self.wp + np.arange(n)) - d
+        i0 = np.floor(idx).astype(np.int64)
+        fr = idx - i0
+        out = self.buf[i0 % N] * (1.0 - fr) + self.buf[(i0 + 1) % N] * fr
+        self.wp = (self.wp + n) % N
+        return out
+
+
 class CylinderVoicing:
     """Deterministic per-cylinder exhaust-voice variation derived PURELY from
     intake / exhaust GEOMETRY — no random numbers, no per-car tuning.  It gives
@@ -1273,6 +1301,18 @@ class Synthesizer:
                 # airborne partition and the stiffness HP — it's structure.
                 chassis=(0.60 if race else 0.45),
                 boom_f=c / (2.0 * 2.4), ground=None)
+        elif self.pov == "trackside":
+            # fixed mic 12 m off the racing line; the CAR MOVES PAST it.  The
+            # changing path length is applied downstream as a per-sample
+            # fractional delay — true Doppler (+30 %/-19 % at 290 km/h), 1/r
+            # level and distance air-absorption follow the live distance.
+            geo = dict(
+                g_bay=(0.7 if race else 0.45), g_tail=1.0,
+                d_bay=0, d_tail=0,
+                bay_alpha=(0.35 if race else 0.08), bay_fc=fc_mass(6.3),
+                tail_alpha=None, tail_fc=None,
+                struct=0.0, struct_fc=800.0, chassis=0.0,
+                boom_f=0.0, ground=None, flyby=True)
         else:                                    # chase cam behind the car
             d, hs, hr, car = 6.0, 0.3, 1.2, 4.5  # cam 6 m back, tailpipe 0.3 m up
             r_tail, r_bay = d, d + car
@@ -1280,7 +1320,10 @@ class Synthesizer:
             geo = dict(
                 g_bay=r_tail / r_bay, g_tail=1.0,
                 d_bay=int((r_bay - r_tail) / c * sr), d_tail=0,
-                bay_alpha=0.08, bay_fc=fc_mass(6.3),   # body shell, underbody gap
+                # a RACE car has no sealed bay at all — vented engine cover,
+                # exposed stacks/airbox (an open-wheeler's engine is naked):
+                # the intake soprano reaches the chase mic nearly unshadowed.
+                bay_alpha=(0.35 if race else 0.08), bay_fc=fc_mass(6.3),
                 tail_alpha=None, tail_fc=None,
                 struct=0.0, struct_fc=800.0,           # (mounts shake the CABIN,
                 chassis=0.0,                           #  not the street)
@@ -1618,7 +1661,7 @@ class Synthesizer:
                 # g_e = g * |one-pole LP|.  The stack now rings exactly where
                 # this car's pipe resonates instead of a hand-rolled rolloff.
                 harms = []
-                for hk in range(1, 11):
+                for hk in range(1, 13):
                     f = hk * fire_hz
                     if f >= self.sample_rate * 0.45:
                         break
@@ -1628,17 +1671,28 @@ class Synthesizer:
                     g_e = min(g * lp_mag, 0.995)
                     comb = 1.0 / math.sqrt(1.0 + 2.0 * g_e * math.cos(w * D1)
                                            + g_e * g_e)
-                    # A powerful brass-like scream = a STRONG fundamental anchoring
-                    # a SMOOTH harmonic rolloff.  The 'broken trumpet' was a weak
-                    # fundamental (6%!) with energy scattered into harsh high
-                    # partials — so drive a dominant fundamental + exponential
-                    # rolloff (0.66^k) and let the pipe comb only lightly COLOUR it
-                    # (^0.35), instead of a sharp comb resonance hollowing out the
-                    # core.  High AND massive (高亢澎湃有力), not a thin buzz.
-                    a = comb ** 0.35 * 0.66 ** (hk - 1)
+                    # FLAT-TOP spectrum, odd-dominant — the real F1 signature:
+                    # equal-length headers + a straight-through system keep
+                    # harmonics 3-8 nearly as strong as the fundamental (the old
+                    # 0.66^k fell to 19 % by h5 = energy piled at the fundamental
+                    # = the low drill), and the quarter-wave pipe passes ODD
+                    # harmonics far more strongly than even (physics of an
+                    # open-closed resonator) — evens damped, not equal, or it
+                    # reads as an electronic oscillator.
+                    roll = 0.90 ** (hk - 1) if hk <= 8 \
+                        else (0.90 ** 7) * (0.55 ** (hk - 8))
+                    parity = 1.0 if (hk % 2) else 0.58
+                    a = comb ** 0.5 * roll * parity
                     if hk == 1:
-                        a *= 1.45              # firm the anchoring fundamental note
+                        a *= 1.15              # slight anchor, no towering
                     harms.append((hk, a))
+                # COLLECTOR INTERFERENCE (bank half-orders): each bank's own
+                # N-into-1 collector fires at HALF the total rate, and the two
+                # banks never cancel exactly (unequal header runs) — so real
+                # V8/V10/V12 screamers carry strong 0.5/1.5/2.5-order content
+                # under the firing series: the GROWL beneath the scream.
+                if harms and len(self._offsets) >= 8:
+                    harms += [(0.5, 0.40), (1.5, 0.22), (2.5, 0.10)]
                 if harms:
                     srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
                     harms = [(hk, a / srms) for hk, a in harms]   # unit-RMS stack
@@ -1657,6 +1711,15 @@ class Synthesizer:
                     # grit: a real open-exhaust screamer is nonlinear — saturate HARD
                     # for the raspy, torn power (dense odd harmonics), not a pure sine.
                     scream = np.tanh(scream * (1.7 + 1.8 * load)) * 0.8
+                    # SECOND nonlinearity layer: tanh alone yields only clean
+                    # ODD harmonics (an electronic fuzz).  The real machine adds
+                    # ASYMMETRIC distortion — one-way valve flow truncation and
+                    # the under-expanded tip jet — i.e. even-order + rich
+                    # intermodulation between all the partials, which is what
+                    # fuses the stack into one torn WALL instead of a chord.
+                    sq = scream * scream
+                    scream = scream + (0.14 + 0.18 * load) \
+                        * (sq - float(np.mean(sq)))
                     # ---- DE-BUZZ: a pure periodic sine stack IS an electric-drill /
                     # mosquito buzz.  A real F1 is a VIOLENT, TEXTURED, aperiodic
                     # scream, so ride the tone with:
@@ -1699,7 +1762,12 @@ class Synthesizer:
                     # ONLY LIGHTLY — the combustion punch/body underneath IS the 有力
                     # a real F1 keeps.  (Was 0.62 = stripped it to a comical whistle.)
                     sig_rms = math.sqrt(float(np.mean(sig * sig)) + 1e-12)
-                    duck = 0.32 * m
+                    # deeper duck at full merge: physically the discrete pulses
+                    # HAVE fused — leaving 68 % of the pulse train under the
+                    # scream put an audible '哒哒哒' seam on top of it.  The
+                    # scream now carries its own body (flat-top + half-orders +
+                    # IM), so the pulse residue can drop to roughly half.
+                    duck = (0.30 + 0.18 * m) * m
                     lvl = sig_rms * (1.10 + 0.50 * load) * m
                     sig = (1.0 - duck) * sig + lvl * scream
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
@@ -1876,8 +1944,15 @@ class Synthesizer:
             f_sys = (c_runner / (2.0 * math.pi)) * math.sqrt(
                 a_tp / (v_mf * l_nk))
             f_sys = min(max(f_sys, 45.0), 240.0)
-            g_sys = min(3.5 + 1.4 * math.log10(1.0 + v_mf / 0.002), 6.5)
-            bS, aS = self._pk(f_sys, 1.8, g_sys)
+            # WIDE and MODEST, not a narrow peak: the neck's viscous losses +
+            # any fibre packing damp the box resonance hard (Q ~ 1), and an
+            # absorptive muffler damps it further.  A high-Q boost here reads
+            # as a one-note drone (不悦耳) — exactly what de-drone hardware
+            # exists to kill; the real thing is a broad warm lift.
+            g_sys = min(3.2 + 1.2 * math.log10(1.0 + v_mf / 0.002), 4.2)
+            if getattr(sim.engine, "muffler_type", "reflective") == "absorptive":
+                g_sys *= 0.6
+            bS, aS = self._pk(f_sys, 1.0, g_sys)
             if not hasattr(self, "_sysres_zi"):
                 self._sysres_zi = np.zeros(2)
             sig, self._sysres_zi = lfilter(bS, aS, sig, zi=self._sysres_zi)
@@ -1958,13 +2033,21 @@ class Synthesizer:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             fire_hz = sim.rpm * len(self._offsets) / 120.0
             thr = min(max(sim.throttle, 0.0), 1.0)
-            howl_gain = 0.16 * (0.15 + 0.85 * thr) * rpm_frac ** 1.5
+            # An F1-class engine's soprano is ~40 % INTAKE: bare velocity stacks
+            # + an unfiltered airbox above the driver's head — no filter, no
+            # plenum damping.  Bigger share + a FLAT-TOP harmonic set for
+            # screamers (the trumpets are short quarter-wave horns, they carry
+            # their harmonics almost undiminished).
+            scrm = sim.engine.redline_rpm >= 11000.0
+            howl_gain = (0.38 if scrm else 0.16) \
+                * (0.15 + 0.85 * thr) * rpm_frac ** 1.5
             if howl_gain > 1e-4 and 20.0 < fire_hz < self.sample_rate * 0.4:
-                howl = self._whine(
-                    fire_hz, frames,
-                    [(1, 1.0), (2, 0.85), (3, 0.6), (4, 0.42), (5, 0.28),
-                     (6, 0.18), (8, 0.10)],
-                    phase_attr="_itb_phase")
+                hset = ([(1, 1.0), (2, 0.9), (3, 0.8), (4, 0.68), (5, 0.55),
+                         (6, 0.42), (8, 0.25), (10, 0.14)] if scrm else
+                        [(1, 1.0), (2, 0.85), (3, 0.6), (4, 0.42), (5, 0.28),
+                         (6, 0.18), (8, 0.10)])
+                howl = self._whine(fire_hz, frames, hset,
+                                   phase_attr="_itb_phase")
                 bay = bay + howl_gain * howl   # trumpets scream from the BAY
 
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
@@ -2266,6 +2349,28 @@ class Synthesizer:
             # models AIRBORNE transmission only).
             chas = self._pov_lp(tail_pre, "chassis", 100.0)
             sig = sig + geo["chassis"] * chas
+        if geo.get("flyby"):
+            # TRACKSIDE FLY-BY: the car drives past a fixed mic (posts every
+            # 200 m, 12 m off the line).  The propagation delay follows the live
+            # distance — its per-sample ramp IS the Doppler bend; level 1/r and
+            # air absorption (HF dies with distance) ride the same geometry.
+            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
+            x = getattr(self, "_tk_x", -60.0) + v * (frames / self.sample_rate)
+            if x > 100.0:
+                x -= 200.0
+            self._tk_x = x
+            dist = math.hypot(x, 12.0)
+            if not hasattr(self, "_tk_dl"):
+                self._tk_dl = _FlybyDelay(12000)
+            sig = self._tk_dl.process(sig, dist / 343.0 * self.sample_rate) \
+                * (12.0 / dist)
+            if _HAVE_SCIPY:                       # molecular HF loss over range
+                fca = min(800.0 + 16000.0 / (1.0 + dist / 30.0),
+                          self.sample_rate * 0.45)
+                bA2, aA2 = self._bw(1, fca)
+                if not hasattr(self, "_tk_lp_zi"):
+                    self._tk_lp_zi = np.zeros(1)
+                sig, self._tk_lp_zi = lfilter(bA2, aA2, sig, zi=self._tk_lp_zi)
 
         # --- the SPACE, per perspective: the open air behind the car (chase)
         # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
