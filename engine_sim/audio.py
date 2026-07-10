@@ -1515,8 +1515,11 @@ class Synthesizer:
                 # Adaptive AC-coupling at half the firing rate turns each lump
                 # into that bipolar wave: pedestal gone, attack kept.
                 if _HAVE_SCIPY and self.vx.get("bipolar", True) and dps > 1e-12:
-                    f_hp = min(max(0.5 * sim.rpm * len(self._offsets) / 120.0,
-                                   40.0), 250.0)
+                    # corner at QUARTER the firing rate (was half): the coupling
+                    # only needs to kill the DC/infra pedestal — at fire/2 it was
+                    # also shaving the audible bass band (Leo: F9 weakened bass)
+                    f_hp = min(max(0.25 * sim.rpm * len(self._offsets) / 120.0,
+                                   25.0), 120.0)
                     bhp2, ahp2 = self._bw(1, f_hp, btype="high")
                     zi = self._bip_zi.get(ci)
                     if zi is None:
@@ -2057,10 +2060,10 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12 and self.vx.get("rumble", True):
             cyl_l2 = (sim.engine.total_displacement * 1000.0) \
                 / max(len(self._offsets), 1)
-            # LOUDER (Leo: the new bass reads right but too quiet): with the
-            # unipolar pedestal gone (F9) this band IS the low end now, and the
-            # loudness-weighted AGC means raising it no longer ducks the rest.
-            g_rmb = min(max((cyl_l2 - 0.22) * 0.75, 0.0), 0.52)
+            # LOUDER x2 (Leo): with the unipolar pedestal gone (F9) this band IS
+            # the low end, and the loudness-weighted AGC means raising it no
+            # longer ducks the rest — bass is a pure additive here.
+            g_rmb = min(max((cyl_l2 - 0.22) * 1.05, 0.0), 0.72)
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
                 ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
