@@ -1726,7 +1726,7 @@ class Synthesizer:
                 # transpose with rpm — the fixed underlay that separates an
                 # internal-combustion machine from a synthesizer.  (0.008 was
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
-                nfl = 0.010 if self.vx.get("noise", True) else 0.008
+                nfl = 0.006 if self.vx.get("noise", True) else 0.005
                 fizz_chans[ci] = e * noise + nfl * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
@@ -2785,7 +2785,12 @@ class Synthesizer:
                 est = np.diff(sig, prepend=sig[:1]) * 8.0    # crude HF proxy
             rms = float(np.sqrt(np.mean(est * est))) + 1e-9
             self._level += (rms - self._level) * 0.04
-            gain = min(0.22 / (self._level + 1e-6), 6.0)
+            # gain ceiling FOLLOWS COMBUSTION: on the overrun a real car gets
+            # QUIETER — the old fixed x6 ceiling let the AGC pump the residual
+            # noise floors (fizz/ticks/injector band) up to fill the hole,
+            # which was Leo's lift-off "white noise" amplifier.
+            gmax = 2.2 + 3.8 * getattr(self, "_comb_load", 1.0)
+            gain = min(0.22 / (self._level + 1e-6), gmax)
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
