@@ -2855,11 +2855,12 @@ class Synthesizer:
                 self._f1c_env, self._f1c_g = 0.0, 1.0
             _r = float(np.sqrt(np.mean(sig * sig)))
             self._f1c_env += (_r - self._f1c_env)                 * (0.45 if _r > self._f1c_env else 0.10)
-            _th, _ratio = 0.16, 3.0
+            _th, _ratio = 0.22, 2.0          # gentled (F50 control: the 3:1
+                                             # pump was part of the fake feel)
             _gt = 1.0 if self._f1c_env <= _th                 else (_th / self._f1c_env) ** (1.0 - 1.0 / _ratio)
             _gp = self._f1c_g
             self._f1c_g += (_gt - _gp) * 0.5
-            sig = sig * np.linspace(_gp, self._f1c_g, frames) * 1.30
+            sig = sig * np.linspace(_gp, self._f1c_g, frames) * 1.15
 
         # (injector + valvetrain clatter now radiate from the BAY bus above —
         # they used to be bolted on here, post-reverb and bone-dry.)
