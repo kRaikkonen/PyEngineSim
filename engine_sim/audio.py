@@ -1582,11 +1582,16 @@ class Synthesizer:
             # WALL of sound instead of clean synthesizer lines.  Amplitude
             # scatter (here) + firing-PHASE scatter (_tjit, degrees — phase
             # modulation broadens the HIGH harmonics hardest).
-            wall = 1.0 + 2.0 * min(max(
-                (sim.engine.redline_rpm - 9000.0) / 6000.0, 0.0), 1.0)
+            # LIVE-rpm law (was keyed to the static REDLINE, so an F2004 got
+            # the same dose at 10k as at 18.5k — measured: inter-harmonic fill
+            # collapsed to 0.06 at 16k = the electric drill Leo heard).  The
+            # burn occupies more crank angle and turbulence scatter grows with
+            # SPEED: F50 @10k ~1.2 (its ear-proven level), F2004 @16k ~2.0,
+            # @18.5k ~2.3, road cars below 8.5k untouched.
+            wall = 1.0 + 1.2 * min(max((sim.rpm - 8500.0) / 9000.0, 0.0), 1.1)
             self._jit += (1.0 + (0.12 * wall)
                           * (self._rng.random(len(self._jit)) - 0.5)
-                          - self._jit) * min(0.25 + 0.20 * (wall - 1.0), 0.6)
+                          - self._jit) * min(0.25 + 0.20 * (wall - 1.0), 0.42)
             self._tjit += ((self._rng.random(len(self._jit)) - 0.5)
                            * (0.8 * wall) - self._tjit) * 0.30
 
