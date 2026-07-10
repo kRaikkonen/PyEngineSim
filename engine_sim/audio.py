@@ -822,7 +822,8 @@ class Synthesizer:
         # TWO waveguides per channel: a short primary runner (high resonance) and
         # the full system length (low resonance) -> several pipe resonances at
         # different frequencies, like a real exhaust.
-        self._wg = [(ExhaustWaveguide(), ExhaustWaveguide()) for _ in range(self._nchan)]
+        self._wg = [(ExhaustWaveguide(), ExhaustWaveguide(), ExhaustWaveguide())
+                    for _ in range(self._nchan)]   # runner / mid-section / full
         self._reverb = Reverb(sr)
         # COCKPIT space: the car interior is a ~2.4 m cavity with heavily absorbent
         # trim -> comb path lengths scaled to the cabin (room ~ 0.22 of the default
@@ -1181,18 +1182,53 @@ class Synthesizer:
         # car (ka ~ 0.03 at idle), decisive for an F1 firing at 1.5 kHz
         # (ka ~ 0.5) — which is exactly why a real F1 sounds DRY and ripping,
         # not like a ringing organ pipe.
-        fire_hz = max(self.sim.rpm, 1.0) / 120.0 * eng.num_cylinders
-        ka = 2.0 * math.pi * fire_hz * eng.exhaust_radius_m / c
-        g *= max(1.0 - 0.5 * ka * ka, 0.55)
-
         lp_a = math.exp(-2 * math.pi * fc / sr)
+
+        # ---- UNIFIED SYSTEM DAMPING (整体调音感): ONE resonant-character
+        # number for the whole system, derived from the hardware — every
+        # resonant stage (waveguides, standing-wave whine, wall formants,
+        # chamber modes) reads its Q from THIS.  A straight-pipe car rings
+        # sharp and long EVERYWHERE; a packed stock box is uniformly warm and
+        # damped — one coherent personality instead of each module ringing to
+        # its own taste.  The exhaust VALVE flips between two whole-system
+        # characters (not just a brightness knob).
+        absorptive = getattr(eng, "muffler_type", "reflective") == "absorptive"
+        sysq = (0.35 + 0.45 * eng.exhaust_openness
+                + 0.10 * min(max(qf - 1.0, -1.0), 2.0)   # wall material sing
+                - (0.18 if absorptive else 0.0)          # packing soaks all Qs
+                - 0.10 * min(l_total / 4.0, 1.0)         # long runs damp
+                + 0.06 * min(rad / 0.035, 1.5))          # fat bore: less wall
+        sysq = min(max(sysq + 0.20 * valve, 0.15), 1.0)
+        self._sysq = sysq
+
+        # ---- PER-MODE RADIATION-IMPEDANCE BACK-REACTION: an open end reflects
+        # |R| ~ 1-(ka)^2/2, so each waveguide's OWN fundamental sees its OWN
+        # end reflection — LF can't escape (strong reflection -> strong, long
+        # ring), HF radiates away (weak reflection -> fast decay), and the TIP
+        # DIAMETER shapes the whole system response, not just its brightness.
+        a_tip = rad * max(getattr(eng, "tip_scale", 1.0), 0.5)
+        l_mid = l_primary + 0.45 * (l_total - l_primary)  # collector->muffler
+        D3 = round(2.0 * l_mid * sr / c)
+
+        def _rend(fq):
+            ka_m = 2.0 * math.pi * fq * a_tip / c
+            return min(max(1.0 - 0.45 * ka_m * ka_m - 0.12 * ka_m, 0.45), 1.0)
+
+        # firing-centroid escape term (why a real F1 is DRY, not an organ pipe)
+        fire_hz = max(self.sim.rpm, 1.0) / 120.0 * eng.num_cylinders
+        ka = 2.0 * math.pi * fire_hz * a_tip / c
+        g *= max(1.0 - 0.5 * ka * ka, 0.55)
+        g1 = min(g * _rend(c / (4.0 * l_primary)), 0.995)
+        g3 = min(g * _rend(c / (4.0 * l_mid)), 0.995)
+        g2 = min(g * _rend(c / (4.0 * l_total)), 0.995)
+
         # Helmholtz muffler/chamber resonance
         A, V = eng.muffler_neck_area_m2, eng.muffler_volume_m3
         r_neck = math.sqrt(A / math.pi)
         l_h = eng.muffler_neck_len_m + 1.7 * r_neck
         f_helm = (c / (2 * math.pi)) * math.sqrt(A / (V * l_h))
         f_helm = min(max(f_helm, 40.0), 400.0)
-        return D1, D2, g, lp_a, f_helm
+        return D1, D2, D3, g1, g2, g3, lp_a, f_helm
 
     # ------------------------------------------------------- synthesis core
     def _tap(self, name: str, sig: np.ndarray) -> None:
@@ -1397,7 +1433,7 @@ class Synthesizer:
         else:
             self._cold = min(1.0, self._cold + dt_blk / 40.0)
 
-        D1, D2, g, lp_a, f_helm = self._resonance_params()
+        D1, D2, D3, g1, g2, g3, lp_a, f_helm = self._resonance_params()
         s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
         # live hot-gas sound speed (~470-670 m/s, climbs with rpm/load) -> the
         # runner-delay interference pattern shifts slightly as the engine heats.
@@ -1568,22 +1604,29 @@ class Synthesizer:
             # Reverb the explosion at the source, then that reverberant bang is
             # what both the dry mix and the PIPE (waveguide) downstream receive.
             self._src_verb[ci].mix = P["src_reverb"]
-            src = self._src_verb[ci].process(chans[ci])
+            # the SYSTEM's excitation is the whole gas event: pulses AND the
+            # gas-rush turbulence (noise ringing the combs = the dense resonant
+            # texture a bare tonal excitation can never give the wall)
+            src = self._src_verb[ci].process(
+                chans[ci] + 0.5 * P["turbulence"] * fizz_chans[ci])
             dry += src
-            wg_primary, wg_total = self._wg[ci]
-            # SERIES waveguides, the way the gas actually travels: the pulse
-            # rings the primary RUNNER first, and what the runner passes through
-            # the collector step (transmission = 1-|R| ~ 0.7) then rings the
-            # FULL SYSTEM.  The long pipe re-modulates the short pipe's
-            # resonance — resonances LAYER (the 一层叠一层 body) instead of two
-            # independent combs summed side by side (the old, unphysical
-            # parallel wiring, which could never stack low-frequency energy).
-            prim = wg_primary.process(src, D1, g, s, lp_a)
+            wg_primary, wg_total, wg_mid = self._wg[ci]
+            # THREE-SECTION SERIES waveguide, the way the gas actually travels:
+            # runner -> mid-section (collector-to-muffler) -> full system, each
+            # passing ~0.7 of itself through the next area step.  Each section
+            # rings its own quarter-wave series with its own end-reflection
+            # (radiation-impedance back-reaction: g1/g2/g3), so the 80-4000 Hz
+            # band fills with interleaved modal peaks — the SPECTRAL WALL —
+            # instead of two lonely comb series.
+            prim = wg_primary.process(src, D1, g1, s, lp_a)
             if self.vx.get("series_wg", True):
-                total = wg_total.process(src + 0.7 * prim, D2, g * 0.96, s, lp_a)
+                mid = wg_mid.process(0.5 * src + 0.7 * prim, D3, g3, s, lp_a)
+                total = wg_total.process(0.35 * src + 0.7 * mid, D2, g2, s, lp_a)
             else:                              # classic parallel wiring (F1 key)
-                total = wg_total.process(src, D2, g * 0.96, s, lp_a)
-            wet += P["res1"] * prim + P["res2"] * total
+                mid = wg_mid.process(src, D3, g3, s, lp_a)
+                total = wg_total.process(src, D2, g2, s, lp_a)
+            res_mid = 0.55 * max(P["res1"], P["res2"])
+            wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         inv = 1.0 / self._nchan
         dry *= inv
         wet *= inv
@@ -1690,7 +1733,13 @@ class Synthesizer:
         if frames:
             cstep = max(1, frames // 64)
             self.last_combustion = combustion[::cstep][:64].astype(np.float64).copy()
-        sig = combustion + wet                # + the OPEN pipe resonance (tailpipe)
+        # EXCITATION -> SYSTEM -> RADIATION (整体调音感 rebuild): the pipe is
+        # the instrument, the engine only blows.  The direct combustion voice
+        # survives ONLY as the structure/wall leak (~14 % — pipe walls are not
+        # transparent, but nearly), and everything else the listener hears is
+        # the SYSTEM's own output ringing below.  The mechanical presence of
+        # the engine itself still reaches the ear via the BAY bus.
+        sig = 0.14 * combustion + wet
 
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
@@ -1836,7 +1885,18 @@ class Synthesizer:
         if _HAVE_SCIPY and self._whine_amt > 0.02:
             f_qw = c_runner / (4.0 * max(sim.engine.exhaust_total_m, 0.5))
             wamt = self._whine_amt * (0.25 + 0.75 * self._valve)
-            Qbase = min(2.0 + 0.16 * self._whine_ld, 14.0)
+            # Q from the UNIFIED system damping + the header SIGNATURE:
+            # equal-length headers stack their interference peaks razor-sharp
+            # (the clean race whine); unequal headers smear them broad and
+            # gruff — the architecture is audible, not just the muffler.
+            _sq = getattr(self, "_sysq", 0.6)
+            Qbase = min((2.0 + 0.16 * self._whine_ld) * (0.55 + 0.9 * _sq),
+                        16.0)
+            if getattr(sim.engine, "header_unequal_deg", 0.0) > 0.0:
+                Qbase *= 0.65
+                wamt *= 0.85
+            else:
+                Qbase *= 1.15
             for k, n in enumerate(self._whine_orders):
                 fc = f_qw * n
                 if 2400.0 < fc < min(8000.0, self.sample_rate * 0.45):
@@ -1935,9 +1995,44 @@ class Synthesizer:
                 mg = mcomb * P.get("muffler", 1.0)
                 sig = (sig + 0.32 * mg * self._muff_dl1.process(sig, d1)
                        + 0.22 * mg * self._muff_dl2.process(sig, d2))
-            if absorptive and _HAVE_SCIPY:    # packed-fibre broadband HF absorption
-                bA, aA = self._bw(1, min(6800.0, sr * 0.45))
+            # DUAL-CHAMBER standing waves: the box is baffled front/rear; each
+            # cavity rings its own quarter-wave through the transmission — two
+            # extra modal groups between the Helmholtz boom and the comb
+            # notches.  Lengths from the box geometry, Q from the UNIFIED
+            # system damping (one resonant personality per car).
+            l_box = max(getattr(sim.engine, "muffler_neck_len_m", 0.08) * 4.0,
+                        0.15)
+            _sq = getattr(self, "_sysq", 0.6)
+            if not hasattr(self, "_cham_zi"):
+                self._cham_zi = [np.zeros(2), np.zeros(2)]
+            for kk, (cfr, cdb) in enumerate(((0.42, 2.6), (0.58, 2.0))):
+                f_ch = c_runner / (4.0 * max(l_box * cfr, 0.05))
+                if 60.0 < f_ch < 4500.0:
+                    bC, aC = self._pk(f_ch, 0.8 + 2.4 * _sq,
+                                      cdb * (0.5 + 0.8 * _sq))
+                    sig, self._cham_zi[kk] = lfilter(bC, aC, sig,
+                                                     zi=self._cham_zi[kk])
+            if absorptive and _HAVE_SCIPY:
+                # PROGRESSIVE packed-fibre rolloff, not one pole: absorption
+                # grows with frequency (deeper fibre interaction), so cascade
+                # two gentle poles — a natural tail, no 'filter cutoff' edge.
+                bA, aA = self._bw(1, min(8200.0, sr * 0.45))
                 sig, self._absorb_zi = lfilter(bA, aA, sig, zi=self._absorb_zi)
+                bA2, aA2 = self._bw(1, min(12500.0, sr * 0.45))
+                if not hasattr(self, "_absorb2_zi"):
+                    self._absorb2_zi = np.zeros(1)
+                sig, self._absorb2_zi = lfilter(bA2, aA2, sig,
+                                                zi=self._absorb2_zi)
+            # AIR ABSORPTION over the pipe run: molecular losses rise with
+            # frequency and LENGTH — a long truck system arrives duller than a
+            # stubby side-exit, from geometry.
+            if _HAVE_SCIPY:
+                l_run = max(getattr(sim.engine, "exhaust_total_m", 1.6), 0.3)
+                bAir, aAir = self._bw(1, min(16000.0 / (1.0 + 0.22 * l_run),
+                                             sr * 0.45))
+                if not hasattr(self, "_air_zi"):
+                    self._air_zi = np.zeros(1)
+                sig, self._air_zi = lfilter(bAir, aAir, sig, zi=self._air_zi)
             if getattr(sim.engine, "flex_pipe", False) and _HAVE_SCIPY:
                 # corrugated flex section -> a buzzy mid resonance (the 'braaa' rasp)
                 bf, af = self._pk(1650.0, 2.2, 4.0)
@@ -2055,9 +2150,12 @@ class Synthesizer:
             qf = getattr(self, "_wall_q", 1.0)           # material ring duration/Q
             # Q from the material damping: a low-loss wall (titanium) rings
             # sharper/longer; cast iron is broad and dead.
-            bp1, ap1 = self._pk(f1, min(3.4 * qf, 12.0), (4.3 - 1.4 * wt) * ring)
+            _sq2 = 0.6 + 0.7 * getattr(self, "_sysq", 0.6)   # unified damping
+            bp1, ap1 = self._pk(f1, min(3.4 * qf * _sq2, 12.0),
+                                (4.3 - 1.4 * wt) * ring)
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
-            bp2, ap2 = self._pk(f2, min(4.2 * qf, 14.0), (3.2 - 1.6 * wt) * ring)
+            bp2, ap2 = self._pk(f2, min(4.2 * qf * _sq2, 14.0),
+                                (3.2 - 1.6 * wt) * ring)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         self._tap("metal ring", sig)          # stainless wall-resonance formants
         # --- MEGAPHONE / exit-horn bark: the powerful mid formant a diverging
