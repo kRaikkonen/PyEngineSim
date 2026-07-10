@@ -2560,7 +2560,23 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             flow = rpm_frac * (0.35 + 0.65 * sim.throttle)
-            shear_gain = P.get("shear", 0.10) * flow                 * (0.30 + 0.70 * getattr(self, "_comb_load", 1.0))
+            # ABSOLUTE exit velocity (why only the F1 lacked 澎湃: every LF
+            # body mechanism — rumble/boom/thunder — lives below 250 Hz where
+            # a 1.4 kHz-firing engine has nothing; a real F1's wall is its JET
+            # ROAR).  u = expanded volume flow / total tip area, choked-capped;
+            # Lighthill power ~ U^8, tempered here to amplitude ~ (u/u_ref)^2
+            # with saturation.  A 300 m/s F1/race exit roars a broadband WALL;
+            # a 120 m/s cruiser stays polite — from geometry, same formula.
+            q_ex = sim.engine.total_displacement * sim.rpm / 120.0 * 3.0
+            a_tips = self._nchan * math.pi * (
+                max(sim.engine.exhaust_radius_m, 0.012)
+                * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)) ** 2
+            u_abs = min(q_ex / max(a_tips, 1e-4)
+                        * (0.35 + 0.65 * min(max(sim.throttle, 0.0), 1.0)),
+                        320.0)
+            jet_amp = min(max((u_abs / 150.0) ** 2, 0.5), 6.0)
+            shear_gain = P.get("shear", 0.10) * flow * jet_amp \
+                * (0.30 + 0.70 * getattr(self, "_comb_load", 1.0))
             if not self.vx.get("noise", True):
                 shear_gain *= 0.7             # classic quieter underlay (F7)
             if shear_gain > 1e-4:
