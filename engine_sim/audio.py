@@ -2460,7 +2460,21 @@ class Synthesizer:
 
         # --- auto-level (or fixed gain) + soft saturation + master volume ----
         if self.agc_enabled:
-            rms = float(np.sqrt(np.mean(sig * sig))) + 1e-9
+            # LOUDNESS-weighted level estimate: the ear barely counts deep LF
+            # (equal-loudness contours), but a raw-RMS AGC counts it in full —
+            # so every bit of real low-end body added lately made the AGC pull
+            # the AUDIBLE bands down: the more 浑厚, the more 闷.  Estimate the
+            # level on a ~300 Hz-high-passed copy (a cheap A-weighting LF roll)
+            # so bass rides ON TOP instead of stealing the gain budget.  The
+            # signal itself is untouched; peaks stay guarded by the limiter.
+            if _HAVE_SCIPY:
+                bwg, awg = self._bw(1, 300.0, btype="high")
+                if not hasattr(self, "_agc_hp_zi"):
+                    self._agc_hp_zi = np.zeros(1)
+                est, self._agc_hp_zi = lfilter(bwg, awg, sig, zi=self._agc_hp_zi)
+            else:
+                est = np.diff(sig, prepend=sig[:1]) * 8.0    # crude HF proxy
+            rms = float(np.sqrt(np.mean(est * est))) + 1e-9
             self._level += (rms - self._level) * 0.04
             gain = min(0.22 / (self._level + 1e-6), 6.0)
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
