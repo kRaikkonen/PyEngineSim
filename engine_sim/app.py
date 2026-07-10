@@ -725,8 +725,7 @@ class App:
                 ("F5 eng_series", vx.get("engine_series", True)),
                 ("F6 rad_hp", vx.get("rad_hp", True)),
                 ("F7 noise", vx.get("noise", True)),
-                ("F9 bipolar", vx.get("bipolar", True)),
-                ("F10 scream", vx.get("scream", True))]
+                ("F9 bipolar", vx.get("bipolar", True))]
         w, rh = 172, 15
         h = rh * (len(rows) + 2) + 22
         x, y = WIDTH - w - 14, 60
@@ -1252,12 +1251,6 @@ class App:
                                                                      True)
                     self._flash("bipolar "
                                 + ("ON" if self.synth.vx["bipolar"] else "OFF"))
-                elif e.key == pygame.K_F10:    # F1 additive scream layer
-                    self.synth.vx["scream"] = not self.synth.vx.get("scream",
-                                                                    True)
-                    self._flash("scream stack "
-                                + ("ON" if self.synth.vx["scream"] else
-                                   "OFF (pulse machine only)"))
                 elif e.key == pygame.K_F11:    # TEMP: voicing debug panel
                     self.voicing_dbg = not getattr(self, "voicing_dbg", True)
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6

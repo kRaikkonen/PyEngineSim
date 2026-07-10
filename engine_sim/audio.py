@@ -629,8 +629,7 @@ class Synthesizer:
         # bisect which serve the sound and which broke it.  All default ON.
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
                        engine_series=True, rad_hp=True, noise=True,
-                       bipolar=True,   # F9: AC-couple the source pulses
-                       scream=True)    # F10: F1 additive scream layer on/off
+                       bipolar=True)   # F9: AC-couple the source pulses
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
@@ -768,7 +767,6 @@ class Synthesizer:
         self._flex_zi = np.zeros(2)       # corrugated flex-pipe buzz state
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
-        self._scream_phase = 0.0          # F1 high-rpm harmonic-stack oscillator
         self._itb_phase = 0.0             # ITB induction-howl oscillator
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
@@ -912,14 +910,6 @@ class Synthesizer:
             self._shear_bp = _bandpass(2600.0, 0.6, sr)
             self._shear_hp = butter(2, 900.0 / (sr / 2), btype="high")
             self._shear_bp_zi = np.zeros(2)
-            # F1 scream TEARING-noise band (~3 kHz, moderate Q): the shredding-air
-            # texture that rides the tone so an F1 reads as a violent engine, not a
-            # pure electronic buzz — band-limited so it tears, not hisses.
-            # air-shear SIZZLE band: the tearing rides ABOVE the harmonic stack
-            # (8 kHz+), NOT at 3 kHz — a 3 kHz gated band IS the electric-drill
-            # spectrum and made the buzz worse, not better.
-            self._f1tear_bp = _bandpass(min(8000.0, sr * 0.36), 0.7, sr)
-            self._f1tear_zi = np.zeros(2)
             self._shear_hp_zi = np.zeros(2)
             # (Step 3) cylinder-head / exhaust-port cavity: a gentle low-pass that
             # 'rounds' the raw pulse so it reads as metal, not a digital click.
@@ -1706,134 +1696,11 @@ class Synthesizer:
         # scream IS its harmonic series at these speeds), keeping the pulse
         # model underneath for body.  Gated to genuine screamers (redline >=
         # 11 krpm) so ordinary engines are untouched.
-        # F10 gates the whole ADDITIVE SCREAM layer: it was built to paper over
-        # the per-pulse model degenerating at F1 fire rates — but the pulse path
-        # has since gained the bipolar AC source, series waveguides, wave
-        # steepening and the megaphone horn, so the PHYSICAL path may now beat
-        # the synthetic stack outright.  OFF = the pulse machine carries the F1
-        # alone (no stack, no duck, no tear).  The ear decides.
-        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0 \
-                and self.vx.get("scream", True):
-            fire_hz = sim.rpm * len(self._offsets) / 120.0
-            if fire_hz > 500.0:
-                m = min((fire_hz - 500.0) / 600.0, 1.0)
-                # PHYSICS-SWEPT harmonic gains (the DDSP-without-NN move): each
-                # harmonic's level = the blowdown source spectrum (~1/k) times
-                # |H| of the ACTUAL exhaust waveguide at that frequency — the
-                # closed form of the feedback comb we synthesize with:
-                #     |H(w)| = 1 / sqrt(1 + 2 g_e cos(wD) + g_e^2),
-                # g_e = g * |one-pole LP|.  The stack now rings exactly where
-                # this car's pipe resonates instead of a hand-rolled rolloff.
-                harms = []
-                for hk in range(1, 13):
-                    f = hk * fire_hz
-                    if f >= self.sample_rate * 0.45:
-                        break
-                    w = 2.0 * math.pi * f / self.sample_rate
-                    lp_mag = (1.0 - lp_a) / math.sqrt(
-                        1.0 - 2.0 * lp_a * math.cos(w) + lp_a * lp_a)
-                    g_e = min(g * lp_mag, 0.995)
-                    comb = 1.0 / math.sqrt(1.0 + 2.0 * g_e * math.cos(w * D1)
-                                           + g_e * g_e)
-                    # FLAT-TOP spectrum, odd-dominant — the real F1 signature:
-                    # equal-length headers + a straight-through system keep
-                    # harmonics 3-8 nearly as strong as the fundamental (the old
-                    # 0.66^k fell to 19 % by h5 = energy piled at the fundamental
-                    # = the low drill), and the quarter-wave pipe passes ODD
-                    # harmonics far more strongly than even (physics of an
-                    # open-closed resonator) — evens damped, not equal, or it
-                    # reads as an electronic oscillator.
-                    roll = 0.90 ** (hk - 1) if hk <= 8 \
-                        else (0.90 ** 7) * (0.55 ** (hk - 8))
-                    parity = 1.0 if (hk % 2) else 0.58
-                    a = comb ** 0.5 * roll * parity
-                    if hk == 1:
-                        a *= 1.15              # slight anchor, no towering
-                    harms.append((hk, a))
-                # COLLECTOR INTERFERENCE (bank half-orders): each bank's own
-                # N-into-1 collector fires at HALF the total rate, and the two
-                # banks never cancel exactly (unequal header runs) — so real
-                # V8/V10/V12 screamers carry strong 0.5/1.5/2.5-order content
-                # under the firing series: the GROWL beneath the scream.
-                if harms and len(self._offsets) >= 8:
-                    harms += [(0.5, 0.40), (1.5, 0.22), (2.5, 0.10)]
-                if harms:
-                    srms = math.sqrt(sum(a * a for _, a in harms) * 0.5) or 1.0
-                    harms = [(hk, a / srms) for hk, a in harms]   # unit-RMS stack
-                    # HARMONIC LINE BROADENING (the real de-buzz): a perfectly
-                    # periodic stack IS an electric drill — every line is a
-                    # delta.  A real engine scatters each cycle's combustion
-                    # phase (turbulence, +-0.5-1 deg ignition jitter), which
-                    # broadens every harmonic line into a narrow band — the
-                    # 'wall of sound'.  Model: slow random-walk detune of the
-                    # whole stack (~0.4 % sigma), smoothed so it breathes.
-                    dtn = getattr(self, "_scr_jit", 0.0)
-                    dtn += 0.35 * (float(self._rng.standard_normal()) * 0.004 - dtn)
-                    self._scr_jit = dtn
-                    scream = self._whine(fire_hz * (1.0 + dtn), frames, harms,
-                                         phase_attr="_scream_phase")
-                    # grit: a real open-exhaust screamer is nonlinear — saturate HARD
-                    # for the raspy, torn power (dense odd harmonics), not a pure sine.
-                    scream = np.tanh(scream * (1.7 + 1.8 * load)) * 0.8
-                    # SECOND nonlinearity layer: tanh alone yields only clean
-                    # ODD harmonics (an electronic fuzz).  The real machine adds
-                    # ASYMMETRIC distortion — one-way valve flow truncation and
-                    # the under-expanded tip jet — i.e. even-order + rich
-                    # intermodulation between all the partials, which is what
-                    # fuses the stack into one torn WALL instead of a chord.
-                    sq = scream * scream
-                    scream = scream + (0.14 + 0.18 * load) \
-                        * (sq - float(np.mean(sq)))
-                    # ---- DE-BUZZ: a pure periodic sine stack IS an electric-drill /
-                    # mosquito buzz.  A real F1 is a VIOLENT, TEXTURED, aperiodic
-                    # scream, so ride the tone with:
-                    #  (1) broadband TEARING noise (the shredding air at 1200-1500
-                    #      fires/s), GATED by the tone envelope so it tears WITH the
-                    #      firing instead of being a flat hiss;
-                    envn = np.abs(scream)
-                    envn = envn / (float(envn.max()) + 1e-9)
-                    tn = self._rng.standard_normal(frames)
-                    if _HAVE_SCIPY:
-                        tn, self._f1tear_zi = lfilter(self._f1tear_bp[0],
-                                                      self._f1tear_bp[1], tn,
-                                                      zi=self._f1tear_zi)
-                    else:
-                        tn = np.diff(tn, prepend=tn[:1])       # bright-ish fallback
-                    tear = tn * (0.35 + 0.65 * envn)           # gated by the tone
-                    #  (2) a slow AMPLITUDE SHIMMER (cycle-to-cycle jitter) so it
-                    #      breathes organically instead of buzzing electronically.
-                    ctrl = self._rng.standard_normal(5)
-                    jit = np.interp(np.linspace(0.0, 1.0, frames),
-                                    np.linspace(0.0, 1.0, 5), ctrl)
-                    # CRANK-ORDER SIDEBANDS — why a real engine at 1500 fires/s
-                    # is NOT a drill: the banks/runners are never identical and
-                    # the cam breathes once per CYCLE, so the 'pure' firing-order
-                    # stack is amplitude-modulated at the crank rate (order 1)
-                    # and the cycle rate (order 0.5).  That fills the spectrum
-                    # between the firing harmonics with sideband content — the
-                    # subharmonic BODY under the scream.
-                    f_rev = sim.rpm / 60.0
-                    ph_r = getattr(self, "_rev_ph", 0.0) \
-                        + (2.0 * math.pi * f_rev / self.sample_rate) \
-                        * np.arange(1, frames + 1)
-                    self._rev_ph = float(ph_r[-1] % (4.0 * math.pi))
-                    am = 1.0 + 0.12 * np.sin(ph_r) + 0.08 * np.sin(0.5 * ph_r + 1.3)
-                    scream = scream * am
-                    # sizzle RIDES the scream (8 kHz air shear), it must not
-                    # dominate — at 0.68 in the old 3 kHz band it WAS the drill
-                    scream = scream * (1.0 + 0.20 * m * jit) + (0.40 * m) * tear
-                    # CROSSFADE the fused pulses onto the merged scream, but DUCK
-                    # ONLY LIGHTLY — the combustion punch/body underneath IS the 有力
-                    # a real F1 keeps.  (Was 0.62 = stripped it to a comical whistle.)
-                    sig_rms = math.sqrt(float(np.mean(sig * sig)) + 1e-12)
-                    # deeper duck at full merge: physically the discrete pulses
-                    # HAVE fused — leaving 68 % of the pulse train under the
-                    # scream put an audible '哒哒哒' seam on top of it.  The
-                    # scream now carries its own body (flat-top + half-orders +
-                    # IM), so the pulse residue can drop to roughly half.
-                    duck = (0.30 + 0.18 * m) * m
-                    lvl = sig_rms * (1.10 + 0.50 * load) * m
-                    sig = (1.0 - duck) * sig + lvl * scream
+        # (The additive F1 'scream stack' that lived here 2026-07 is GONE — ear
+        # verdict: the physical pulse path (bipolar AC source + series waveguides
+        # + finite-amplitude steepening + megaphone horn + per-cylinder scatter)
+        # beats the synthetic layer outright on every high-revving car.  The
+        # screamers keep their open top end via the anti-harshness LP exemption.)
         # overrun pops/bangs are unburnt fuel igniting IN the exhaust, so they
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
