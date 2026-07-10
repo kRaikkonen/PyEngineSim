@@ -88,7 +88,9 @@ def exhaust_acoustics(eng):
     # (collapse steepened again per Leo's 0.04-slider calibration: the open
     # cars want the field at near-garnish level; the direct wave is the voice)
     tail_ratio = a_tail / a_col
-    res2 = min(max(1.00 * muff_return * (1.02 - 0.82 * open_frac)
+    # (openness collapse steepened to Leo's 0.07 slider point: open cars'
+    # field is a whisper; boxed cars unchanged)
+    res2 = min(max(1.00 * muff_return * (1.08 - 0.95 * open_frac)
                    / max(tail_ratio, 0.5), 0.04), 0.68)
 
     # --- wall: viscothermal + radiation loss ~ 1/radius (thin pipe = more wall

@@ -630,7 +630,7 @@ class Synthesizer:
             _disp = max(c0.displacement, 1e-6)                       # m^3 / cylinder
             _cr = max(getattr(c0, "compression_ratio", 10.5) or 10.5, 5.0)
             _mps = 2.0 * c0.stroke * max(simulator.engine.redline_rpm, 1000.0) / 60.0
-            self.params["crack"] = min(max(0.12 * self._bd_sharp ** 0.6, 0.05), 0.28)
+            self.params["crack"] = min(max(0.17 * self._bd_sharp ** 0.6, 0.07), 0.40)
             self.params["body"] = min(max(1.60 * (_disp / 5.415e-4) ** 0.30, 1.0), 2.6)
             self.params["turbulence"] = min(max(0.34 * (_mps / 21.65) ** 0.5, 0.18), 0.5)
             self.params["drive"] = min(max(0.40 * (_cr / 11.8) ** 0.5, 0.25), 0.6)
@@ -654,9 +654,11 @@ class Synthesizer:
                                                               1.2), 0.68)
             # INTAKE ROAR level from the induction hardware: an exposed race
             # airbox / ITB trumpet set breathes loud; a filtered plenum is shy.
+            # exposed-airbox bump keyed to TRUE race builds (dog box), not
+            # exhaust openness — an Aventador has an open pipe but a FILTERED
+            # airbox (Leo's 0.11 calibration)
             self.params["intake"] = min(0.10
-                                        + (0.08 if _eng.exhaust_openness > 0.85
-                                           else 0.0)
+                                        + (0.08 if _eng.straight_cut else 0.0)
                                         + (0.06 if getattr(
                                             _eng, "individual_throttle", False)
                                            else 0.0), 0.24)
@@ -1325,7 +1327,7 @@ class Synthesizer:
         # the HF reverb time is FAR shorter than LF (open end + fibre eat the
         # top): the in-loop pole sets RT_HF/RT_LF
         self._rv_lp = math.exp(-2.0 * math.pi
-                               * (900.0 + 2600.0 * eng.exhaust_openness) / sr)
+                               * (1400.0 + 3400.0 * eng.exhaust_openness) / sr)
         # tail-end FREQUENCY-DEPENDENT reflection for the full-system guide:
         # lows re-ring (|R| -> 1) while highs escape out the tip — an extra
         # in-loop pole at the tip's radiation corner, so the LF tail hums long
@@ -1754,7 +1756,7 @@ class Synthesizer:
         # ("太对称、太干净").  One-sided quadratic = crest steepening + the
         # even-order richness of the real wave.  (0.45 overshot -> 0.25.)
         if self.vx.get("asym", True):
-            dry = dry + 0.25 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
+            dry = dry + 0.30 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
 
         # ================== IN-PIPE REVERB (管内混响) =======================
         # The sound bounces up and down the SYSTEM many times before it dies —
@@ -2004,7 +2006,7 @@ class Synthesizer:
         # as a trumpet's brassy 'cuivre' snarl).  Quadratic self-distortion,
         # strength driven by mean flow + choked blowdown, so idle stays clean and
         # a hard pull turns raspy from the physics up.  One vector op.
-        kst = 0.22 * getattr(self, "_flow", 0.0) + 0.30 * choke
+        kst = 0.26 * getattr(self, "_flow", 0.0) + 0.34 * choke
         if kst > 0.01:
             sig = sig + kst * sig * np.abs(sig)
         # --- (3a) cylinder-head / exhaust-port cavity low-pass: round the raw
@@ -2250,7 +2252,7 @@ class Synthesizer:
             # stubby side-exit, from geometry.
             if _HAVE_SCIPY:
                 l_run = max(getattr(sim.engine, "exhaust_total_m", 1.6), 0.3)
-                bAir, aAir = self._bw(1, min(16000.0 / (1.0 + 0.22 * l_run),
+                bAir, aAir = self._bw(1, min(16000.0 / (1.0 + 0.13 * l_run),
                                              sr * 0.45))
                 if not hasattr(self, "_air_zi"):
                     self._air_zi = np.zeros(1)
