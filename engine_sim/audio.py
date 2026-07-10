@@ -2190,7 +2190,10 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12 and self.vx.get("rumble", True):
             cyl_l2 = (sim.engine.total_displacement * 1000.0) \
                 / max(len(self._offsets), 1)
-            g_rmb = min(max((cyl_l2 - 0.22) * 0.45, 0.0), 0.30)
+            # LOUDER (Leo: the new bass reads right but too quiet): with the
+            # unipolar pedestal gone (F9) this band IS the low end now, and the
+            # loudness-weighted AGC means raising it no longer ducks the rest.
+            g_rmb = min(max((cyl_l2 - 0.22) * 0.75, 0.0), 0.52)
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
                 ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
