@@ -1206,6 +1206,11 @@ class App:
                     for k in self.synth.vx:
                         self.synth.vx[k] = on
                     self._flash("voicing NEW" if on else "voicing CLASSIC")
+                elif e.key == pygame.K_F9:     # bipolar (AC) source pulses
+                    self.synth.vx["bipolar"] = not self.synth.vx.get("bipolar",
+                                                                     True)
+                    self._flash("bipolar "
+                                + ("ON" if self.synth.vx["bipolar"] else "OFF"))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",

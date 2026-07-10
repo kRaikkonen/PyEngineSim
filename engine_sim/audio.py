@@ -628,7 +628,9 @@ class Synthesizer:
         # per-step ear validation; these gate each one LIVE so the ear can
         # bisect which serve the sound and which broke it.  All default ON.
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
-                       engine_series=True, rad_hp=True, noise=True)
+                       engine_series=True, rad_hp=True, noise=True,
+                       bipolar=True)   # F9: AC-couple the source pulses
+        self._bip_zi = {}         # per-channel AC-coupling filter states
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
         self.straight_cut = simulator.engine.straight_cut
@@ -1512,7 +1514,24 @@ class Synthesizer:
             for ci in range(self._nchan):
                 e = chans[ci] * strength
                 noise = self._rng.standard_normal(frames)
-                chans[ci] = 0.55 * e                      # clean bang -> pipe + dry
+                bang_c = 0.55 * e
+                # BIPOLAR SOURCE (F9): blow+disp are non-negative ENVELOPES, so
+                # the raw train is a string of positive lumps — a huge inherent
+                # sub-firing pedestal (the hidden 闷/LF flood) and smooth sparse
+                # harmonics (the synthesizer tell).  A real port's ACOUSTIC
+                # pressure is AC: the compression spike is followed by a
+                # rarefaction undershoot (slug inertia + overlap back-suction).
+                # Adaptive AC-coupling at half the firing rate turns each lump
+                # into that bipolar wave: pedestal gone, attack kept.
+                if _HAVE_SCIPY and self.vx.get("bipolar", True) and dps > 1e-12:
+                    f_hp = min(max(0.5 * sim.rpm * len(self._offsets) / 120.0,
+                                   40.0), 250.0)
+                    bhp2, ahp2 = self._bw(1, f_hp, btype="high")
+                    zi = self._bip_zi.get(ci)
+                    if zi is None:
+                        zi = np.zeros(1)
+                    bang_c, self._bip_zi[ci] = lfilter(bhp2, ahp2, bang_c, zi=zi)
+                chans[ci] = bang_c                        # clean bang -> pipe + dry
                 # fizz = gas-rush noise GATED by the pulse `e` (this is the GOOD,
                 # per-firing fizz — restored via a higher `turbulence`).  The
                 # UNGATED floor stays tiny (0.008): a constant hiss between pulses
