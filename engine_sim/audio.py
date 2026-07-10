@@ -508,11 +508,10 @@ class Synthesizer:
         # sound of a bench dyno with the mic at the header.  A car on the street
         # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 0.62,         # direct through-wave level.  1.44 -> 1.10 -> 0.62:
-                                 #   behind a real car 90 % of what you hear IS the
-                                 #   system resonance; the raw valve bang is a minor
-                                 #   through-component.  With dry dominant it read
-                                 #   as firecrackers ("啪啪啪"), not a pipe ("嗡")
+            "dry": 0.92,         # direct through-wave level.  0.62 gutted the
+                                 #   combustion punch entirely (the whole chain went
+                                 #   mushy/distant) — 0.92 keeps the pipe field
+                                 #   dominant but the bang present.  Live slider.
             "res1": 0.42,         # primary pipe resonance (runner) — fallback only,
             "res2": 0.75,         # normally overridden by exhaust_tmm geometry;
                                   #   re-anchored so the standing-wave field rivals
@@ -546,9 +545,9 @@ class Synthesizer:
             "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
-            "shear": 0.13,        # tail-pipe air-shear roar at the exit (mass-flow)
-                                  #   — part of the ~30 % un-pitched noise share a
-                                  #   real engine carries (the fixed underlay)
+            "shear": 0.10,        # tail-pipe air-shear roar at the exit (mass-flow)
+                                  #   — part of the un-pitched noise share a real
+                                  #   engine carries (the fixed underlay)
             "whine": 1.0,         # high-rpm standing-wave whine/scream amount
             "valve_open": 1.0,    # how far the active exhaust valve opens at revs
             "muffler": 1.0,       # muffler internal-reflection (comb) depth
@@ -621,6 +620,12 @@ class Synthesizer:
         self._pov_zi = {}         # named filter states for the partition LPs
         self._bay_prev = 0.0      # no-scipy fallback lid state
         self._boom_zi = np.zeros(2)   # cabin standing-wave resonator state
+        # VOICING BISECT flags (F1-F7 in-app toggle one each, F8 flips all):
+        # the recent voicing batch shipped several structural changes without
+        # per-step ear validation; these gate each one LIVE so the ear can
+        # bisect which serve the sound and which broke it.  All default ON.
+        self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
+                       engine_series=True, rad_hp=True, noise=True)
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
         self.straight_cut = simulator.engine.straight_cut
@@ -1512,7 +1517,8 @@ class Synthesizer:
                 # transpose with rpm — the fixed underlay that separates an
                 # internal-combustion machine from a synthesizer.  (0.008 was
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
-                fizz_chans[ci] = e * noise + 0.02 * noise
+                nfl = 0.014 if self.vx.get("noise", True) else 0.008
+                fizz_chans[ci] = e * noise + nfl * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -1537,7 +1543,10 @@ class Synthesizer:
             # independent combs summed side by side (the old, unphysical
             # parallel wiring, which could never stack low-frequency energy).
             prim = wg_primary.process(src, D1, g, s, lp_a)
-            total = wg_total.process(src + 0.7 * prim, D2, g * 0.96, s, lp_a)
+            if self.vx.get("series_wg", True):
+                total = wg_total.process(src + 0.7 * prim, D2, g * 0.96, s, lp_a)
+            else:                              # classic parallel wiring (F1 key)
+                total = wg_total.process(src, D2, g * 0.96, s, lp_a)
             wet += P["res1"] * prim + P["res2"] * total
         inv = 1.0 / self._nchan
         dry *= inv
@@ -1547,8 +1556,9 @@ class Synthesizer:
         # a few ms to peak) while the rarefaction tail drags out long.  A
         # symmetric pulse has sparse, clean harmonics — the synthesizer tell
         # ("太对称、太干净").  One-sided quadratic = crest steepening + the
-        # even-order richness of the real wave.
-        dry = dry + 0.45 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
+        # even-order richness of the real wave.  (0.45 overshot -> 0.25.)
+        if self.vx.get("asym", True):
+            dry = dry + 0.25 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
@@ -1572,6 +1582,8 @@ class Synthesizer:
             root = min(max(P["firing_pitch"], 28.0), 600.0)
             nyq = self.sample_rate * 0.45
             chord = _FIRE_CHORDS[self.fire_chord % len(_FIRE_CHORDS)]
+            if self.fire_chord == 0 and not self.vx.get("engine_series", True):
+                chord = _POWER_CHORD          # classic musical default (F5 key)
             for k, (ratio, lvl) in enumerate(chord):
                 f = min(root * ratio, nyq)
                 bb, ab = _bandpass(f, 11.0, self.sample_rate)    # resonant -> rings
@@ -1956,26 +1968,28 @@ class Synthesizer:
             # the box's own resonant GAIN was never applied — the muffler
             # attenuated but never RESONATED.  Tuned by the live hot-gas c,
             # strength from the box size; it's the hardware, not an effect.
-            v_mf = max(getattr(sim.engine, "muffler_volume_m3", 0.003), 1e-5)
-            a_tp = math.pi * (max(sim.engine.exhaust_radius_m, 0.012)
-                              * max(getattr(sim.engine, "tip_scale", 1.0),
-                                    0.5)) ** 2
-            l_nk = 0.45 + 0.61 * math.sqrt(a_tp / math.pi)  # tailpipe + end corr
-            f_sys = (c_runner / (2.0 * math.pi)) * math.sqrt(
-                a_tp / (v_mf * l_nk))
-            f_sys = min(max(f_sys, 45.0), 240.0)
-            # WIDE and MODEST, not a narrow peak: the neck's viscous losses +
-            # any fibre packing damp the box resonance hard (Q ~ 1), and an
-            # absorptive muffler damps it further.  A high-Q boost here reads
-            # as a one-note drone (不悦耳) — exactly what de-drone hardware
-            # exists to kill; the real thing is a broad warm lift.
-            g_sys = min(3.2 + 1.2 * math.log10(1.0 + v_mf / 0.002), 4.2)
-            if getattr(sim.engine, "muffler_type", "reflective") == "absorptive":
-                g_sys *= 0.6
-            bS, aS = self._pk(f_sys, 1.0, g_sys)
-            if not hasattr(self, "_sysres_zi"):
-                self._sysres_zi = np.zeros(2)
-            sig, self._sysres_zi = lfilter(bS, aS, sig, zi=self._sysres_zi)
+            if self.vx.get("sys_helm", True):
+                v_mf = max(getattr(sim.engine, "muffler_volume_m3", 0.003), 1e-5)
+                a_tp = math.pi * (max(sim.engine.exhaust_radius_m, 0.012)
+                                  * max(getattr(sim.engine, "tip_scale", 1.0),
+                                        0.5)) ** 2
+                l_nk = 0.45 + 0.61 * math.sqrt(a_tp / math.pi)  # + end corr
+                f_sys = (c_runner / (2.0 * math.pi)) * math.sqrt(
+                    a_tp / (v_mf * l_nk))
+                f_sys = min(max(f_sys, 45.0), 240.0)
+                # WIDE and MODEST, not a narrow peak: the neck's viscous losses
+                # + any fibre packing damp the box resonance hard (Q ~ 1), and
+                # an absorptive muffler damps it further.  A high-Q boost here
+                # reads as a one-note drone (不悦耳) — the real thing is a
+                # broad warm lift.
+                g_sys = min(3.0 + 1.0 * math.log10(1.0 + v_mf / 0.002), 3.4)
+                if getattr(sim.engine, "muffler_type",
+                           "reflective") == "absorptive":
+                    g_sys *= 0.6
+                bS, aS = self._pk(f_sys, 1.0, g_sys)
+                if not hasattr(self, "_sysres_zi"):
+                    self._sysres_zi = np.zeros(2)
+                sig, self._sysres_zi = lfilter(bS, aS, sig, zi=self._sysres_zi)
             # (6b) muffler internal reflections: two short feed-forward comb taps
             # (expansion chamber + baffle paths) -> periodic notches = the muffler's
             # own colour, not just a low-pass.  Stronger in a packed/quiet box, light
@@ -2141,10 +2155,10 @@ class Synthesizer:
         # is the 轰隆隆 / air-push.  Gain from cylinder litres (big slugs
         # thunder), level rides load via mean flow; the modulation envelope is
         # locked to the live crank phase.
-        if _HAVE_SCIPY and dps > 1e-12:
+        if _HAVE_SCIPY and dps > 1e-12 and self.vx.get("rumble", True):
             cyl_l2 = (sim.engine.total_displacement * 1000.0) \
                 / max(len(self._offsets), 1)
-            g_rmb = min(max((cyl_l2 - 0.22) * 0.55, 0.0), 0.45)
+            g_rmb = min(max((cyl_l2 - 0.22) * 0.45, 0.0), 0.30)
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
                 ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
@@ -2220,7 +2234,7 @@ class Synthesizer:
             a_tip = max(sim.engine.exhaust_radius_m, 0.012) \
                 * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)
             f_a = min(343.0 / (2.0 * math.pi * a_tip), self.sample_rate * 0.4)
-            if _HAVE_SCIPY:
+            if _HAVE_SCIPY and self.vx.get("rad_hp", True):
                 bR, aR = self._bw(1, f_a, btype="high")
                 if not hasattr(self, "_radhp_zi"):
                     self._radhp_zi = np.zeros(1)
@@ -2240,7 +2254,9 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             flow = rpm_frac * (0.35 + 0.65 * sim.throttle)
-            shear_gain = P.get("shear", 0.15) * flow
+            shear_gain = P.get("shear", 0.10) * flow
+            if not self.vx.get("noise", True):
+                shear_gain *= 0.7             # classic quieter underlay (F7)
             if shear_gain > 1e-4:
                 ns_ = self._rng.standard_normal(frames)
                 ns_, self._shear_bp_zi = lfilter(self._shear_bp[0], self._shear_bp[1],

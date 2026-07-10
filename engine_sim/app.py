@@ -1193,6 +1193,19 @@ class App:
                     self._flash(self.tr({"chase": "Chase cam",
                                          "cockpit": "Cockpit",
                                          "trackside": "Trackside"}[_nxt]))
+                elif pygame.K_F1 <= e.key <= pygame.K_F7:
+                    # VOICING BISECT: toggle one recent structural voicing
+                    # change live, so the ear can find which serve the sound.
+                    _vn = ["series_wg", "sys_helm", "rumble", "asym",
+                           "engine_series", "rad_hp", "noise"]
+                    nm = _vn[e.key - pygame.K_F1]
+                    self.synth.vx[nm] = not self.synth.vx.get(nm, True)
+                    self._flash(f"{nm} {'ON' if self.synth.vx[nm] else 'OFF'}")
+                elif e.key == pygame.K_F8:     # all new voicing <-> all classic
+                    on = not all(self.synth.vx.values())
+                    for k in self.synth.vx:
+                        self.synth.vx[k] = on
+                    self._flash("voicing NEW" if on else "voicing CLASSIC")
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",
