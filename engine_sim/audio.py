@@ -1827,7 +1827,13 @@ class Synthesizer:
             # typical openness (~0.7) reproduces the known-good ~ -4 dB.
             _op = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
             res_depth = -(2.0 + 7.0 * (1.0 - _op))       # -2 dB open .. -7.6 dB closed
-            bH, aH = self._pk(f_helm, 1.4, res_depth)
+            # NARROW like the real hardware: a side-branch resonator is a tuned
+            # trap for ONE drone frequency; its bandwidth is its own damping,
+            # Q ~ 5-10 for a packed automotive branch.  The old Q=1.4 smeared the
+            # notch across ~50-250 Hz and GUTTED the engine's whole audible bass
+            # body (traced: LF share 0.65 -> 0.14 at this stage — Leo's
+            # "完全没有低频" was literally this one filter).
+            bH, aH = self._pk(f_helm, 6.0, res_depth)
             sig, self._helm_zi = lfilter(bH, aH, sig, zi=self._helm_zi)
             self._tap("resonator", sig)       # Helmholtz de-drone notch
             # (6) muffler: variable-valve expansion low-pass — muffled at idle,
