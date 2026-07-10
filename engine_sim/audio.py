@@ -553,7 +553,7 @@ class Synthesizer:
             "src_reverb": 0.26,   # reverb on the explosion itself (pre-pipe) — a
                                   #   head/port cavity is TINY; 0.48 smeared the
                                   #   pulse transients into mush (wet complaint)
-            "reverb": 0.18,      # spatial reverb mix — an exhaust mic is OUTDOORS
+            "reverb": 0.26,      # spatial reverb mix — an exhaust mic is OUTDOORS
                                  #   in free field; 0.4 was a small room, far too wet
             "intake": 0.11,       # induction roar level (halved — was too windy)
             "eq_low": 0.0,        # dB
@@ -627,6 +627,30 @@ class Synthesizer:
             self.params["body"] = min(max(1.60 * (_disp / 5.415e-4) ** 0.30, 1.0), 2.6)
             self.params["turbulence"] = min(max(0.34 * (_mps / 21.65) ** 0.5, 0.18), 0.5)
             self.params["drive"] = min(max(0.40 * (_cr / 11.8) ** 0.5, 0.25), 0.6)
+            # CYLINDER SPREAD from the build, not taste: carb / mechanical
+            # race injection meters each cylinder differently (±6-8 % scatter)
+            # where modern EFI holds ±2-3 %; unequal-length headers add
+            # acoustic per-runner differences on top.
+            _eng = simulator.engine
+            _inj = getattr(_eng, "injection", "port")
+            self.params["cyl_spread"] = min(
+                0.55 + (0.25 if _inj in ("carb", "mech") else 0.0)
+                + (0.20 if getattr(_eng, "header_unequal_deg", 0.0) > 0.0
+                   else 0.0), 1.0)
+            # EXPLOSION (port/head cavity) REVERB from the port volume: a big
+            # cylinder's exhaust port + header entry is a bigger chamber.
+            _cyl_l = (_eng.total_displacement * 1000.0) / max(
+                _eng.num_cylinders, 1)
+            self.params["src_reverb"] = min(0.20 + 0.12 * min(_cyl_l / 0.70,
+                                                              1.2), 0.36)
+            # INTAKE ROAR level from the induction hardware: an exposed race
+            # airbox / ITB trumpet set breathes loud; a filtered plenum is shy.
+            self.params["intake"] = min(0.10
+                                        + (0.08 if _eng.exhaust_openness > 0.85
+                                           else 0.0)
+                                        + (0.06 if getattr(
+                                            _eng, "individual_throttle", False)
+                                           else 0.0), 0.24)
         except Exception:
             pass
 
@@ -1716,21 +1740,9 @@ class Synthesizer:
         d3_ = 0.5 * (t3 + np.concatenate(([t3[0]], t3[:-1])))
         d3_ = 0.5 * (d3_ + np.concatenate(([d3_[0]], d3_[:-1])))  # darkest
         wet = wet + 0.34 * t1 + 0.20 * d2 + 0.11 * d3_
-        # (2) MULTI-CHAMBER REVERB COMBS: catalyst brick + the box's two
-        # chambers, feedback derived from the system RT60 (a stock box hums
-        # 0.2-0.35 s, a straight pipe dies in 0.05-0.1 s), the in-loop pole
-        # keeping the HF tail far shorter than the LF hum — the '经过消音器'
-        # tail character.  (y - x) extracts the pure reverberant part.
-        rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
-        if rvD is not None:
-            rlp = self._rv_lp
-            rv = (0.40 * (self._xc[0].process(wet, rvD[0], rvG[0], 1.0, rlp)
-                          - wet)
-                  + 0.30 * (self._xc[1].process(wet, rvD[1], rvG[1], 1.0, rlp)
-                            - wet)
-                  + 0.22 * (self._xc[2].process(wet, rvD[2], rvG[2], 1.0, rlp)
-                            - wet))
-            wet = wet + rv
+        # (the multi-chamber reverb combs now ring the VOICED bang downstream —
+        # see the sig-combine point — so the Body/Drive/Attack/Firing-pitch
+        # voices stay audible through the system instead of dying in the leak)
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
@@ -1751,7 +1763,12 @@ class Synthesizer:
         # changes the timbre, and the chord is its own voice — not 'more ignition'.
         body = np.zeros(frames, dtype=np.float64)
         if _HAVE_SCIPY and P["body"] > 1e-3:
-            root = min(max(P["firing_pitch"], 28.0), 600.0)
+            # LIVE physical pitch: the firing body rings at the actual firing
+            # fundamental (rpm-tracking), NOT a fixed 90 Hz — that was leftover
+            # synthesizer DNA (the resonators sat at 90*k Hz at any rev).  The
+            # slider is now a RATIO trim around the physical pitch (90 = x1.0).
+            fire_live = max(sim.rpm, 1.0) / 120.0 * len(self._offsets)
+            root = min(max(fire_live * (P["firing_pitch"] / 90.0), 28.0), 600.0)
             nyq = self.sample_rate * 0.45
             chord = _FIRE_CHORDS[self.fire_chord % len(_FIRE_CHORDS)]
             if self.fire_chord == 0 and not self.vx.get("engine_series", True):
@@ -1833,6 +1850,23 @@ class Synthesizer:
         # the SYSTEM's own output ringing below.  The mechanical presence of
         # the engine itself still reaches the ear via the BAY bus.
         sig = 0.14 * combustion + wet
+        # MULTI-CHAMBER REVERB COMBS ring the VOICED wave (catalyst brick + the
+        # box's two chambers; feedback from the system RT60, in-loop pole = HF
+        # tail << LF hum).  Fed with the shaped bang so the Body / Drive /
+        # Attack / Firing-pitch voices reach the ear THROUGH the system's own
+        # resonances (they had died to the 14 % leak after the rebuild — Leo
+        # caught the sliders going deaf).  (y - x) keeps the pure tail.
+        rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
+        if rvD is not None:
+            ring_in = sig + 0.36 * combustion
+            rlp = self._rv_lp
+            rv = (0.40 * (self._xc[0].process(ring_in, rvD[0], rvG[0], 1.0,
+                                              rlp) - ring_in)
+                  + 0.30 * (self._xc[1].process(ring_in, rvD[1], rvG[1], 1.0,
+                                                rlp) - ring_in)
+                  + 0.22 * (self._xc[2].process(ring_in, rvD[2], rvG[2], 1.0,
+                                                rlp) - ring_in))
+            sig = sig + rv
 
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
