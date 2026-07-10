@@ -3012,14 +3012,14 @@ class App:
 
     def _draw_header_tube(self, p0, p1, ctrl, rad, cols=None, joint=False):
         """A manifold runner from a head port (p0) bending through ctrl into the
-        collector (p1): dark casing, lit body and a top sheen.  Sampled at only a
-        few points so the bend is FACETED (bent-metal polygon), not an organic
-        curve.  ``joint`` caps the port end with a flange fitting."""
+        collector (p1): dark casing, lit body and a top sheen, densely sampled
+        so the bend reads as a smooth mandrel-bent tube (was 5 faceted points —
+        the 'ugly pipes').  ``joint`` caps the port end with a flange fitting."""
         cols = cols or self._EXH_COLS
         sc = self._pipe_target(cols)
         pts = []
-        for k in range(5):
-            t = k / 4.0
+        for k in range(17):
+            t = k / 16.0
             u = 1.0 - t
             pts.append((u * u * p0[0] + 2 * u * t * ctrl[0] + t * t * p1[0],
                         u * u * p0[1] + 2 * u * t * ctrl[1] + t * t * p1[1]))
@@ -3043,27 +3043,14 @@ class App:
         rounded rather than robotically square (a slight 488-style curve)."""
         cols = cols or self._EXH_COLS
         sc = self._pipe_target(cols)
+        rounded = self._fillet(pts, r=max(10.0, rad * 3.0))
+        ipts = [(int(x), int(y)) for x, y in rounded]
         if self.low_quality:                           # flat single-colour pipe
-            ipts = [(int(x), int(y)) for x, y in pts]  # no chamfer, no shading
             if len(ipts) >= 2:
                 pygame.draw.lines(sc, cols[1], False, ipts, max(2, rad * 2))
             if joint:
                 pygame.draw.circle(sc, cols[1], ipts[0], rad + 1)
             return
-        raw = [(float(x), float(y)) for x, y in pts]
-        if len(raw) >= 3:                              # chamfer the interior corners
-            soft = [raw[0]]
-            cut = min(7.0, rad * 2.2)
-            for i in range(1, len(raw) - 1):
-                a, b, c = raw[i - 1], raw[i], raw[i + 1]
-                v1 = (b[0] - a[0], b[1] - a[1]); l1 = math.hypot(*v1) or 1.0
-                v2 = (c[0] - b[0], c[1] - b[1]); l2 = math.hypot(*v2) or 1.0
-                c1, c2 = min(cut, l1 * 0.45), min(cut, l2 * 0.45)
-                soft.append((b[0] - v1[0] / l1 * c1, b[1] - v1[1] / l1 * c1))
-                soft.append((b[0] + v2[0] / l2 * c2, b[1] + v2[1] / l2 * c2))
-            soft.append(raw[-1])
-            raw = soft
-        ipts = [(int(x), int(y)) for x, y in raw]
         self._tube_run(sc, ipts, rad, cols)
         if joint:                                      # flange on a head boss
             x, y = ipts[0]
@@ -3077,6 +3064,31 @@ class App:
     def _mix(c1, c2, t):
         return (int(c1[0] + (c2[0] - c1[0]) * t), int(c1[1] + (c2[1] - c1[1]) * t),
                 int(c1[2] + (c2[2] - c1[2]) * t))
+
+    @staticmethod
+    def _fillet(pts, r=12.0, seg=6):
+        """Round every interior corner of a polyline with an arc-like bezier —
+        real mandrel-bent pipework has RADIUSED bends, not plumber's elbows.
+        (The old ~7 px chamfer read as robotic right-angle plumbing.)"""
+        if len(pts) < 3:
+            return [(float(x), float(y)) for x, y in pts]
+        out = [(float(pts[0][0]), float(pts[0][1]))]
+        for i in range(1, len(pts) - 1):
+            a, b, c = pts[i - 1], pts[i], pts[i + 1]
+            v1 = (b[0] - a[0], b[1] - a[1])
+            l1 = math.hypot(*v1) or 1.0
+            v2 = (c[0] - b[0], c[1] - b[1])
+            l2 = math.hypot(*v2) or 1.0
+            f = min(r, 0.45 * l1, 0.45 * l2)
+            p1 = (b[0] - v1[0] / l1 * f, b[1] - v1[1] / l1 * f)
+            p2 = (b[0] + v2[0] / l2 * f, b[1] + v2[1] / l2 * f)
+            for k in range(seg + 1):
+                t = k / seg
+                u = 1.0 - t
+                out.append((u * u * p1[0] + 2 * u * t * b[0] + t * t * p2[0],
+                            u * u * p1[1] + 2 * u * t * b[1] + t * t * p2[1]))
+        out.append((float(pts[-1][0]), float(pts[-1][1])))
+        return out
 
     def _tube_run(self, sc, ipts, rad, cols):
         """Draw a polyline as a glossy ROUND tube: dark casing, a body core that's
@@ -3114,6 +3126,14 @@ class App:
                                          (66, 72, 86), rad * 2, gloss=True),
                          (cxc - rad * 2, cyc - rad * 2))
         pygame.draw.circle(self.screen, (34, 38, 48), (cxc, cyc), rad * 2, 2)
+        # machined merge rings + the hot throat (was a flat brushed disc)
+        pygame.draw.circle(self.screen, (104, 110, 124), (cxc, cyc),
+                           rad * 2 - 3, 1)
+        pygame.draw.circle(self.screen, (58, 63, 75), (cxc, cyc), rad + 2, 1)
+        pygame.draw.circle(self.screen, (150, 96, 66), (cxc, cyc),
+                           max(2, rad - 1))
+        pygame.draw.circle(self.screen, (52, 30, 24), (cxc, cyc),
+                           max(1, rad - 3))
 
     def _draw_headers(self, eng, ports, collector, rad, cols=None):
         """Route every cylinder's exhaust runner (ports: list of (x, y, axis_ang,
