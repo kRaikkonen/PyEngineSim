@@ -1087,7 +1087,7 @@ class Synthesizer:
             rev = min(max((eng.redline_rpm - 5000.0) / 5000.0, 0.0), 1.25)
             bore = min(max((0.028 - r) / 0.011, 0.0), 1.0)
             self._whine_amt = min(rev * (0.55 + 0.30 * bore
-                                         + 0.25 * eng.exhaust_openness), 1.1)
+                                         + 0.25 * eng.exhaust_openness), 0.72)
             # HOT-V: turbos sit in the valley right off short, equal-length, merged
             # runners -> they swallow the header rasp / standing-wave whine and
             # deepen + smooth the note (the AMG/BMW twin-turbo woofle).
@@ -2119,7 +2119,7 @@ class Synthesizer:
             # gruff — the architecture is audible, not just the muffler.
             _sq = getattr(self, "_sysq", 0.6)
             Qbase = min((2.0 + 0.16 * self._whine_ld) * (0.55 + 0.9 * _sq),
-                        16.0)
+                        11.0)
             if getattr(sim.engine, "header_unequal_deg", 0.0) > 0.0:
                 Qbase *= 0.65
                 wamt *= 0.85
@@ -2128,8 +2128,8 @@ class Synthesizer:
             for k, n in enumerate(self._whine_orders):
                 fc = f_qw * n
                 if 2400.0 < fc < min(8000.0, self.sample_rate * 0.45):
-                    Q = min(Qbase * math.sqrt(1.0 + 0.10 * n), 22.0)
-                    gain = (5.5 - 1.3 * k) * wamt * P.get("whine", 1.0)
+                    Q = min(Qbase * math.sqrt(1.0 + 0.10 * n), 14.0)
+                    gain = (4.2 - 1.1 * k) * wamt * P.get("whine", 1.0)
                     bw, aw = self._pk(fc, Q, gain)
                     sig, self._whine_zi[k] = lfilter(bw, aw, sig, zi=self._whine_zi[k])
         self._tap("standing-wave", sig)
