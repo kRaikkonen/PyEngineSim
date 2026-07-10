@@ -1691,43 +1691,21 @@ class Synthesizer:
         P = self.params
         dry = np.zeros(frames, dtype=np.float64)
         wet = np.zeros(frames, dtype=np.float64)
+        srcs = []                              # per-channel excitations (pass 2)
         for ci in range(self._nchan):
             # Reverb the explosion at the source, then that reverberant bang is
             # what both the dry mix and the PIPE (waveguide) downstream receive.
             self._src_verb[ci].mix = P["src_reverb"]
-            # the SYSTEM's excitation is the whole gas event: pulses AND the
-            # gas-rush turbulence (noise ringing the combs = the dense resonant
-            # texture a bare tonal excitation can never give the wall)
+            # PASS 1 of the unified architecture: only the port-cavity reverb
+            # here (the fire bang's EARLY reverb).  The waveguide system runs
+            # in PASS 2 below, AFTER the bang is voiced — so the per-car voice
+            # rides THROUGH the pipe instead of competing with it in a mix.
             src = self._src_verb[ci].process(
                 chans[ci] + 0.25 * P["turbulence"] * fizz_chans[ci])
+            srcs.append(src)
             dry += src
-            wg_primary, wg_total, wg_mid = self._wg[ci]
-            # THREE-SECTION SERIES waveguide, the way the gas actually travels:
-            # runner -> mid-section (collector-to-muffler) -> full system, each
-            # passing ~0.7 of itself through the next area step.  Each section
-            # rings its own quarter-wave series with its own end-reflection
-            # (radiation-impedance back-reaction: g1/g2/g3), so the 80-4000 Hz
-            # band fills with interleaved modal peaks — the SPECTRAL WALL —
-            # instead of two lonely comb series.
-            prim = wg_primary.process(src, D1, g1, s, lp_a)
-            lp_end = getattr(self, "_lp_a_end", lp_a)   # tip: lows re-ring,
-            if self.vx.get("series_wg", True):          # highs escape (item 5)
-                # ENERGY-CONSERVING junctions: a real area step SPLITS the wave
-                # (T+R<=1) — feeding each section's full resonant gain into the
-                # next multiplied the peaks (resonance-of-resonance: too loud
-                # AND unphysical double-peaks).  Couple at 0.5 with lighter
-                # direct bleeds so the cascade colours instead of compounding.
-                mid = wg_mid.process(0.35 * src + 0.5 * prim, D3, g3, s, lp_a)
-                total = wg_total.process(0.20 * src + 0.5 * mid, D2, g2, s,
-                                         lp_end)
-            else:                              # classic parallel wiring (F1 key)
-                mid = wg_mid.process(src, D3, g3, s, lp_a)
-                total = wg_total.process(src, D2, g2, s, lp_end)
-            res_mid = 0.40 * max(P["res1"], P["res2"])
-            wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         inv = 1.0 / self._nchan
         dry *= inv
-        wet *= inv
         # REAL exhaust pulses are grossly ASYMMETRIC: the compression crest
         # steepens as it travels (it rides hotter, faster gas — a forming shock,
         # a few ms to peak) while the rarefaction tail drags out long.  A
@@ -1754,10 +1732,7 @@ class Synthesizer:
         d2 = 0.5 * (t2 + np.concatenate(([t2[0]], t2[:-1])))      # darker
         d3_ = 0.5 * (t3 + np.concatenate(([t3[0]], t3[:-1])))
         d3_ = 0.5 * (d3_ + np.concatenate(([d3_[0]], d3_[:-1])))  # darkest
-        wet = wet + 0.34 * t1 + 0.20 * d2 + 0.11 * d3_
-        # (the multi-chamber reverb combs now ring the VOICED bang downstream —
-        # see the sig-combine point — so the Body/Drive/Attack/Firing-pitch
-        # voices stay audible through the system instead of dying in the leak)
+        er_add = 0.34 * t1 + 0.20 * d2 + 0.11 * d3_   # joins wet in pass 2
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
@@ -1858,29 +1833,55 @@ class Synthesizer:
         if frames:
             cstep = max(1, frames // 64)
             self.last_combustion = combustion[::cstep][:64].astype(np.float64).copy()
-        # EXCITATION -> SYSTEM -> RADIATION (整体调音感 rebuild): the pipe is
-        # the instrument, the engine only blows.  The direct combustion voice
-        # survives ONLY as the structure/wall leak (~14 % — pipe walls are not
-        # transparent, but nearly), and everything else the listener hears is
-        # the SYSTEM's own output ringing below.  The mechanical presence of
-        # the engine itself still reaches the ear via the BAY bus.
+        # ============ PASS 2: THE VOICED BANG RINGS THE SYSTEM ==============
+        # UNIFIED architecture (the whole-picture fix): the per-car VOICE (dry
+        # punch + crack + body + drive — months of ear calibration) is not a
+        # competitor mixed against the pipe field; it IS the excitation.  Each
+        # channel's waveguide chain receives its own bank's pulses PLUS the
+        # voiced combustion — so the fire bang's reverb IS the exhaust system,
+        # the fleet identity rides THROUGH the pipe, and there is no A/B ratio
+        # left to band-aid.
+        res_mid = 0.40 * max(P["res1"], P["res2"])
+        lp_end = getattr(self, "_lp_a_end", lp_a)
+        for ci in range(self._nchan):
+            exc = srcs[ci] + 0.7 * inv * combustion
+            wg_primary, wg_total, wg_mid = self._wg[ci]
+            # DE-REGULARIZED full-system comb: real pipes are never perfectly
+            # periodic resonators (temperature gradient along the run, bends,
+            # taper stagger the modes) — and each bank's path differs.  A few
+            # percent detune between banks kills the organ-pipe/flanger tell.
+            if self._nchan > 1:
+                det = 1.0 + 0.03 * (2 * ci - (self._nchan - 1)) \
+                    / max(self._nchan - 1, 1)
+            else:
+                det = 1.0
+            D2c = max(int(round(D2 * det)), 4)
+            prim = wg_primary.process(exc, D1, g1, s, lp_a)
+            if self.vx.get("series_wg", True):
+                mid = wg_mid.process(0.35 * exc + 0.5 * prim, D3, g3, s, lp_a)
+                total = wg_total.process(0.20 * exc + 0.5 * mid, D2c, g2, s,
+                                         lp_end)
+            else:                              # classic parallel wiring (F1 key)
+                mid = wg_mid.process(exc, D3, g3, s, lp_a)
+                total = wg_total.process(exc, D2c, g2, s, lp_end)
+            wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
+        wet *= inv
+        wet += er_add
+        # the direct through-wave survives only as the structure/wall leak;
+        # the note is the SYSTEM's output (which now CONTAINS the voiced bang)
         sig = 0.14 * combustion + wet
-        # MULTI-CHAMBER REVERB COMBS ring the VOICED wave (catalyst brick + the
-        # box's two chambers; feedback from the system RT60, in-loop pole = HF
-        # tail << LF hum).  Fed with the shaped bang so the Body / Drive /
-        # Attack / Firing-pitch voices reach the ear THROUGH the system's own
-        # resonances (they had died to the 14 % leak after the rebuild — Leo
-        # caught the sliders going deaf).  (y - x) keeps the pure tail.
+        # MULTI-CHAMBER REVERB COMBS (catalyst brick + box front/rear; feedback
+        # from the system RT60, in-loop pole = HF tail << LF hum).  Input is
+        # the system output itself — combustion already rings inside it.
         rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
         if rvD is not None:
-            ring_in = sig + 0.36 * combustion
             rlp = self._rv_lp
-            rv = (0.30 * (self._xc[0].process(ring_in, rvD[0], rvG[0], 1.0,
-                                              rlp) - ring_in)
-                  + 0.22 * (self._xc[1].process(ring_in, rvD[1], rvG[1], 1.0,
-                                                rlp) - ring_in)
-                  + 0.16 * (self._xc[2].process(ring_in, rvD[2], rvG[2], 1.0,
-                                                rlp) - ring_in))
+            rv = (0.30 * (self._xc[0].process(sig, rvD[0], rvG[0], 1.0,
+                                              rlp) - sig)
+                  + 0.22 * (self._xc[1].process(sig, rvD[1], rvG[1], 1.0,
+                                                rlp) - sig)
+                  + 0.16 * (self._xc[2].process(sig, rvD[2], rvG[2], 1.0,
+                                                rlp) - sig))
             sig = sig + rv
 
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
