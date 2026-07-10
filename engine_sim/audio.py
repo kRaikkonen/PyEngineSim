@@ -540,7 +540,10 @@ class Synthesizer:
             "cyl_spread": 0.5,    # how much each cylinder's pitch/level differs
             "master": 0.6,        # master output volume
             "spatial_x": 0.5,     # stereo pan: 0 left .. 1 right
-            "spatial_y": 0.6,     # distance: 0 far (dark/quiet) .. 1 near
+            "spatial_y": 0.85,    # distance: 0 far (dark/quiet) .. 1 near.  0.6
+                                  #   kept a permanent 9.4 kHz LP + -4.5 dB on
+                                  #   EVERYTHING (a big hidden muffle); the POV
+                                  #   stage now owns distance, so default near
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
             "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
@@ -1334,9 +1337,11 @@ class Synthesizer:
                 g_bay=r_tail / r_bay, g_tail=1.0,
                 d_bay=int((r_bay - r_tail) / c * sr), d_tail=0,
                 # a RACE car has no sealed bay at all — vented engine cover,
-                # exposed stacks/airbox (an open-wheeler's engine is naked):
-                # the intake soprano reaches the chase mic nearly unshadowed.
-                bay_alpha=(0.35 if race else 0.08), bay_fc=fc_mass(6.3),
+                # exposed stacks/airbox (an open-wheeler's engine is naked);
+                # and even a ROAD car's bay is open-bottomed (underbody, wheel
+                # arches, cooling stack) — 0.08 modelled a sealed box and
+                # deleted the intake/valvetrain texture (a hidden muffle).
+                bay_alpha=(0.35 if race else 0.22), bay_fc=fc_mass(6.3),
                 tail_alpha=None, tail_fc=None,
                 struct=0.0, struct_fc=800.0,           # (mounts shake the CABIN,
                 chassis=0.0,                           #  not the street)
@@ -2387,8 +2392,15 @@ class Synthesizer:
         sig = geo["g_tail"] * tail + geo["g_bay"] * bay_air
         if geo["ground"]:
             dg, rg = geo["ground"]
-            if dg > 0:                        # tarmac reflection -> outdoor comb
-                sig = sig + rg * self._pov_delay(sig, "gnd", dg)
+            if dg > 0:
+                # tarmac bounce — but REAL asphalt is rough at cm scale: the
+                # highs scatter diffusely and only the LOW band reflects
+                # coherently.  A full-band 0.8 copy carved -14 dB comb notches
+                # straight through the presence band (a major hidden muffle);
+                # low-passed + softer, it's a gentle outdoor LF ripple instead.
+                gref = self._pov_lp(self._pov_delay(sig, "gnd", dg),
+                                    "gnd_lp", 1800.0)
+                sig = sig + 0.45 * gref
         if geo["boom_f"] > 0.0 and _HAVE_SCIPY:
             # STIFFNESS region: below the first panel resonance (~90 Hz) the
             # partition is stiffness-controlled and TL RISES as f falls — deep
