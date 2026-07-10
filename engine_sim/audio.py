@@ -1561,7 +1561,21 @@ class Synthesizer:
         choke = 0.0          # exhaust-valve choked-flow factor (0 subsonic .. 1 choked)
         if dps > 1e-12:
             idx = np.arange(frames)
-            crank = self._audio_crank + dps * idx
+            # INSTANTANEOUS-SPEED FLUTTER: crank torsionals + combustion
+            # feedback make a real crank's momentary speed wander ~0.1-0.3 %,
+            # so its pulse train can NEVER phase-lock to any grid.  Ours
+            # could: at 16,000 rpm a V10's firing period is EXACTLY 24.000
+            # samples — every pulse identical -> drill-line spectrum (measured
+            # fill 0.06 vs 0.39 just 1 % of rpm away; near-integer ratios
+            # lock too).  A smooth AR(1) phase wander (grows with the same
+            # speed-scatter law as `wall`) breaks every lock continuously.
+            _rt = self._rng.standard_normal() * 1.5 * max(
+                (min(sim.rpm, 18500.0) - 8500.0) / 9000.0, 0.0)
+            self._rub = getattr(self, "_rub", 0.0)
+            _rp = self._rub
+            self._rub += (_rt - self._rub) * 0.45
+            crank = self._audio_crank + dps * idx \
+                + np.linspace(_rp, self._rub, frames)
             p_open = sim.blowdown_pressure() - 1.05 * P_ATM
             strength = math.copysign(math.sqrt(abs(p_open)), p_open) / math.sqrt(6 * P_ATM)
             # load 0..1 from the cylinder pressure at valve-open: drives how steep
@@ -1592,8 +1606,14 @@ class Synthesizer:
             self._jit += (1.0 + (0.12 * wall)
                           * (self._rng.random(len(self._jit)) - 0.5)
                           - self._jit) * min(0.25 + 0.20 * (wall - 1.0), 0.42)
+            # per-FIRING arrival scatter is what actually breaks the sample-
+            # grid locks (a global phase wander shifts all pulses together and
+            # changes nothing): at 16k each cylinder fires ~once per block, so
+            # this block-rate refresh IS per-firing — but +-0.8 deg (~0.1
+            # sample) couldn't crack a 24.000-sample lock.  Real spark/burn
+            # scatter at extreme speed is degrees, not tenths.
             self._tjit += ((self._rng.random(len(self._jit)) - 0.5)
-                           * (0.8 * wall) - self._tjit) * 0.30
+                           * (1.4 * wall) - self._tjit) * 0.45
 
             # Cylinder spread ~3x stronger than before, and bigger still at low
             # rpm (valve shut), where the spaced pops make each cylinder's own
