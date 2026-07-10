@@ -474,10 +474,11 @@ class Synthesizer:
         # sound of a bench dyno with the mic at the header.  A car on the street
         # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 1.10,         # direct through-wave level.  Dropped 1.44 -> 1.10
-                                 #   with the resonance re-anchor: the raw bang was
-                                 #   5-10x the pipe field, so the exhaust never
-                                 #   sounded like it CAME THROUGH a pipe
+            "dry": 0.62,         # direct through-wave level.  1.44 -> 1.10 -> 0.62:
+                                 #   behind a real car 90 % of what you hear IS the
+                                 #   system resonance; the raw valve bang is a minor
+                                 #   through-component.  With dry dominant it read
+                                 #   as firecrackers ("啪啪啪"), not a pipe ("嗡")
             "res1": 0.42,         # primary pipe resonance (runner) — fallback only,
             "res2": 0.75,         # normally overridden by exhaust_tmm geometry;
                                   #   re-anchored so the standing-wave field rivals
@@ -1267,6 +1268,10 @@ class Synthesizer:
                 bay_alpha=a_fw, bay_fc=fc_mass(m_fw),
                 tail_alpha=a_rr, tail_fc=fc_mass(m_rr),
                 struct=(0.55 if race else 0.40), struct_fc=2000.0,
+                # exhaust hangers bolt the pipe to the floor: the panels re-
+                # radiate its LF INSIDE (chest thump), bypassing BOTH the
+                # airborne partition and the stiffness HP — it's structure.
+                chassis=(0.60 if race else 0.45),
                 boom_f=c / (2.0 * 2.4), ground=None)
         else:                                    # chase cam behind the car
             d, hs, hr, car = 6.0, 0.3, 1.2, 4.5  # cam 6 m back, tailpipe 0.3 m up
@@ -1278,7 +1283,8 @@ class Synthesizer:
                 bay_alpha=0.08, bay_fc=fc_mass(6.3),   # body shell, underbody gap
                 tail_alpha=None, tail_fc=None,
                 struct=0.0, struct_fc=800.0,           # (mounts shake the CABIN,
-                boom_f=0.0, ground=(int(delta / c * sr), 0.8))   # not the street)
+                chassis=0.0,                           #  not the street)
+                boom_f=0.0, ground=(int(delta / c * sr), 0.8))
         self._pov_cache = (key, geo)
         return geo
 
@@ -1467,9 +1473,16 @@ class Synthesizer:
             src = self._src_verb[ci].process(chans[ci])
             dry += src
             wg_primary, wg_total = self._wg[ci]
-            # two pipe resonances at different frequencies (runner + full system)
-            wet += (P["res1"] * wg_primary.process(src, D1, g, s, lp_a)
-                    + P["res2"] * wg_total.process(src, D2, g * 0.96, s, lp_a))
+            # SERIES waveguides, the way the gas actually travels: the pulse
+            # rings the primary RUNNER first, and what the runner passes through
+            # the collector step (transmission = 1-|R| ~ 0.7) then rings the
+            # FULL SYSTEM.  The long pipe re-modulates the short pipe's
+            # resonance — resonances LAYER (the 一层叠一层 body) instead of two
+            # independent combs summed side by side (the old, unphysical
+            # parallel wiring, which could never stack low-frequency energy).
+            prim = wg_primary.process(src, D1, g, s, lp_a)
+            total = wg_total.process(src + 0.7 * prim, D2, g * 0.96, s, lp_a)
+            wet += P["res1"] * prim + P["res2"] * total
         inv = 1.0 / self._nchan
         dry *= inv
         wet *= inv
@@ -1846,6 +1859,28 @@ class Synthesizer:
             if self._valve < 0.75:
                 bL, aL = self._pk(110.0, 0.6, (1.0 - self._valve) * 7.0)
                 sig, self._lowboost_zi = lfilter(bL, aL, sig, zi=self._lowboost_zi)
+            # SYSTEM HELMHOLTZ RESONANCE (the 浑厚 core, ALWAYS on): the
+            # expansion box (volume V) breathing through the tailpipe (neck
+            # A, L) is a Helmholtz resonator IN the transmission path — the
+            # output PEAKS at f_sys = (c/2pi)*sqrt(A/(V*L)), the deep
+            # 80-200 Hz 排管闷响 every real system carries.  Until now the
+            # chain only ever CUT low end (de-drone notch, DC block, LP);
+            # the box's own resonant GAIN was never applied — the muffler
+            # attenuated but never RESONATED.  Tuned by the live hot-gas c,
+            # strength from the box size; it's the hardware, not an effect.
+            v_mf = max(getattr(sim.engine, "muffler_volume_m3", 0.003), 1e-5)
+            a_tp = math.pi * (max(sim.engine.exhaust_radius_m, 0.012)
+                              * max(getattr(sim.engine, "tip_scale", 1.0),
+                                    0.5)) ** 2
+            l_nk = 0.45 + 0.61 * math.sqrt(a_tp / math.pi)  # tailpipe + end corr
+            f_sys = (c_runner / (2.0 * math.pi)) * math.sqrt(
+                a_tp / (v_mf * l_nk))
+            f_sys = min(max(f_sys, 45.0), 240.0)
+            g_sys = min(3.5 + 1.4 * math.log10(1.0 + v_mf / 0.002), 6.5)
+            bS, aS = self._pk(f_sys, 1.8, g_sys)
+            if not hasattr(self, "_sysres_zi"):
+                self._sysres_zi = np.zeros(2)
+            sig, self._sysres_zi = lfilter(bS, aS, sig, zi=self._sysres_zi)
             # (6b) muffler internal reflections: two short feed-forward comb taps
             # (expansion chamber + baffle paths) -> periodic notches = the muffler's
             # own colour, not just a low-pass.  Stronger in a packed/quiet box, light
@@ -2049,13 +2084,28 @@ class Synthesizer:
         self._comb_load = comb_load           # reused by the overrun darkening
         rad *= comb_load       # no combustion (overrun) -> no sharp radiation
         if rad > 1e-3:
-            ext = np.empty(frames + 1, dtype=np.float64)
-            ext[0] = self._rad_prev
-            ext[1:] = sig
-            self._rad_prev = float(sig[-1])
-            drv = np.diff(ext) * (self.sample_rate / (2.0 * math.pi * 500.0))
+            # PISTON-RADIATOR shape, not a pure derivative: the open end radiates
+            # with efficiency ~ (ka)^2 below its corner and ~flat above, i.e. a
+            # 1st-order HIGH-PASS at f_a = c/(2*pi*a_tip).  A pure d/dt was
+            # +6 dB/oct FOREVER — it starved the radiated share of low end and
+            # over-brightened the top.  A big tip lowers f_a: the fat pipe IS a
+            # low-frequency horn (口径越大低频辐射越强), from geometry.
+            a_tip = max(sim.engine.exhaust_radius_m, 0.012) \
+                * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)
+            f_a = min(343.0 / (2.0 * math.pi * a_tip), self.sample_rate * 0.4)
+            if _HAVE_SCIPY:
+                bR, aR = self._bw(1, f_a, btype="high")
+                if not hasattr(self, "_radhp_zi"):
+                    self._radhp_zi = np.zeros(1)
+                drv, self._radhp_zi = lfilter(bR, aR, sig, zi=self._radhp_zi)
+            else:                              # fallback: the old derivative
+                ext = np.empty(frames + 1, dtype=np.float64)
+                ext[0] = self._rad_prev
+                ext[1:] = sig
+                self._rad_prev = float(sig[-1])
+                drv = np.diff(ext) * (self.sample_rate / (2.0 * math.pi * 500.0))
             sig = (1.0 - rad) * sig + rad * drv
-        self._tap("radiation", sig)           # in-duct -> free-field derivative
+        self._tap("radiation", sig)           # in-duct -> free-field radiation
 
         # --- (8) tail-pipe air-shear: the gas tearing out of the tip into still
         # air — a broadband roar/hiss swelling with exhaust mass-flow (rpm x load).
@@ -2178,6 +2228,7 @@ class Synthesizer:
         tail = sig
         if geo["d_tail"]:
             tail = self._pov_delay(tail, "tail_d", geo["d_tail"])
+        tail_pre = tail                       # pre-partition (for structure paths)
         if geo["tail_fc"] is not None:
             tail = self._pov_partition(tail, "tail_p",
                                        geo["tail_alpha"], geo["tail_fc"])
@@ -2207,6 +2258,14 @@ class Synthesizer:
             # ...and the cabin standing-wave boom re-peaks what DOES get in
             bbm, abm = self._pk(geo["boom_f"], 2.2, 5.0)
             sig, self._boom_zi = lfilter(bbm, abm, sig, zi=self._boom_zi)
+        if geo.get("chassis", 0.0) > 0.0:
+            # CHASSIS-BORNE exhaust LF: the hangers shake the floor pan and the
+            # panels re-radiate the pipe's low band INSIDE the cabin — the chest
+            # thump ("胸口能感觉到的震动").  A STRUCTURE path: it legitimately
+            # bypasses both the airborne partition and the stiffness HP (that HP
+            # models AIRBORNE transmission only).
+            chas = self._pov_lp(tail_pre, "chassis", 100.0)
+            sig = sig + geo["chassis"] * chas
 
         # --- the SPACE, per perspective: the open air behind the car (chase)
         # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
