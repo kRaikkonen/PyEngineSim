@@ -768,7 +768,8 @@ class App:
                 ("F5 eng_series", vx.get("engine_series", True)),
                 ("F6 rad_hp", vx.get("rad_hp", True)),
                 ("F7 noise", vx.get("noise", True)),
-                ("F9 bipolar", vx.get("bipolar", True))]
+                ("F9 bipolar", vx.get("bipolar", True)),
+                ("F10 vacuum", vx.get("vacuum", True))]
         w, rh = 172, 15
         h = rh * (len(rows) + 2) + 22
         x, y = WIDTH - w - 14, 60
@@ -1294,6 +1295,12 @@ class App:
                                                                      True)
                     self._flash("bipolar "
                                 + ("ON" if self.synth.vx["bipolar"] else "OFF"))
+                elif e.key == pygame.K_F10:    # deep-vacuum overrun physics
+                    self.synth.vx["vacuum"] = not self.synth.vx.get("vacuum",
+                                                                    True)
+                    self._flash("deep vacuum "
+                                + ("ON (physical)" if self.synth.vx["vacuum"]
+                                   else "OFF (arcade overrun)"))
                 elif e.key == pygame.K_F11:    # TEMP: voicing debug panel
                     self.voicing_dbg = not getattr(self, "voicing_dbg", True)
                 elif e.key == pygame.K_F12:    # TEMP: gas-flow gain staging

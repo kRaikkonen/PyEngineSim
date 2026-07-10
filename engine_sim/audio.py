@@ -676,7 +676,8 @@ class Synthesizer:
         # bisect which serve the sound and which broke it.  All default ON.
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
                        engine_series=True, rad_hp=True, noise=True,
-                       bipolar=True)   # F9: AC-couple the source pulses
+                       bipolar=True,   # F9: AC-couple the source pulses
+                       vacuum=True)    # F10: physical deep-vacuum overrun
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
@@ -1602,7 +1603,13 @@ class Synthesizer:
                 lb = getattr(sim, "last_blowdown", None)
                 if lb is not None and j < len(lb):
                     rel = lb[j] / max(p_open + 1.05 * P_ATM, 2.0 * P_ATM)
-                    amp_j *= min(max(rel, 0.06), 1.5) ** 0.8
+                    # DEEP-VACUUM effect (F10): ON = physical — a motored
+                    # cylinder behind a shut throttle blows down at ~1/10 the
+                    # fired pressure, so the overrun goes genuinely quiet
+                    # (burble/pops carry the voice).  OFF = arcade overrun —
+                    # floor the pulse so the engine keeps barking on lift.
+                    lo = 0.06 if self.vx.get("vacuum", True) else 0.30
+                    amp_j *= min(max(rel, lo), 1.5) ** 0.8
                 phi = np.mod(crank + off + self._header_offset[j]
                              + self._tjit[j], 720.0)
                 d = phi - VALVE_OPEN
