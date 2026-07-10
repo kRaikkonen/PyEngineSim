@@ -1141,8 +1141,11 @@ class Synthesizer:
         # bright, screaming.  This rpm-dependent brightness is the whole reason a
         # low idle sounds nothing like a redline pull.
         rpm_frac = min(self.sim.rpm / max(eng.redline_rpm, 1.0), 1.0)
-        # mostly rpm-driven (throttle just nudges it open a bit)
-        drive = min(rpm_frac + 0.30 * min(max(self.sim.throttle, 0.0), 1.0), 1.0)
+        # mostly rpm-driven — a real active flap follows rpm/back-pressure maps
+        # and many stay OPEN on decel (the burble path).  0.30 throttle weight
+        # slammed a whole brightness step shut on every lift (Leo's "是不是
+        # 某个阀门关闭" — yes, this one, partially).
+        drive = min(rpm_frac + 0.15 * min(max(self.sim.throttle, 0.0), 1.0), 1.0)
         valve = min(max((drive - 0.28) / 0.45, 0.0), 1.0)
         # NONLINEAR opening curve (was linear): a real flap/gas-path brightens
         # slowly off idle then rushes open up top — and loudness perception is
@@ -1908,7 +1911,13 @@ class Synthesizer:
             # drops the harsh treble that read as "air noise covering the engine".
             nz_b = 0.5 * (nz_b + np.concatenate(([self._burble_prev], nz_b[:-1])))
             self._burble_prev = float(nz_b[-1])
-            sig = sig + (0.22 * ov) * np.abs(wet) * nz_b
+            # modulate by the ACTUAL in-duct wave |sig|, not |wet|: the wet
+            # field collapsed on open cars under the transmitted-vs-reverberant
+            # law, and the burble (tied to it) died with it — the main reason
+            # lift-off went dead-silent on the raspy cars (长期问题).  The
+            # overrun VOICE of a real car IS this burble + the pops; the
+            # motored pulses are physically ~-26 dB and stay that way.
+            sig = sig + (0.30 * ov) * np.abs(sig) * nz_b
         # --- F1 / race-engine HIGH-RPM REGIME --------------------------------
         # Above ~600 fires/second the discrete blowdown pulses are only ~50
         # samples apart: they physically merge into a continuous tone, and the

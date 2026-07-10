@@ -58,8 +58,8 @@ def exhaust_acoustics(eng):
     # of the field the OPEN end throws away (see res2's law below).
     open_frac0 = min(max(getattr(eng, "exhaust_openness", 0.7), 0.2), 1.0)
     r_step = abs(a_col - a_prim) / (a_col + a_prim)
-    res1 = min(max(0.45 * r_step / 0.55 * (1.0 - 0.55 * open_frac0), 0.04),
-               0.50)                                       # 0.55 = typical step
+    res1 = min(max(0.45 * r_step / 0.55 * (1.0 - 0.72 * open_frac0), 0.03),
+               0.45)                                       # 0.55 = typical step
 
     # --- res2: full-system resonance = the open tailpipe end reflecting back
     # THROUGH the muffler.  Open end reflects strongly at low f; a reflective
@@ -85,9 +85,11 @@ def exhaust_acoustics(eng):
     # BACKWARDS (more open -> bigger field), which buried the Aventador's rasp
     # under a comb it physically doesn't have.  Now the field COLLAPSES with
     # openness; the direct share grows to match (see audio.py sig combine).
+    # (collapse steepened again per Leo's 0.04-slider calibration: the open
+    # cars want the field at near-garnish level; the direct wave is the voice)
     tail_ratio = a_tail / a_col
-    res2 = min(max(1.00 * muff_return * (1.15 - 0.75 * open_frac)
-                   / max(tail_ratio, 0.5), 0.05), 0.72)
+    res2 = min(max(1.00 * muff_return * (1.02 - 0.82 * open_frac)
+                   / max(tail_ratio, 0.5), 0.04), 0.68)
 
     # --- wall: viscothermal + radiation loss ~ 1/radius (thin pipe = more wall
     # interaction, duller ring) scaled by the system length (more pipe = more
