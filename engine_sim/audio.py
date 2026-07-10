@@ -568,7 +568,11 @@ class Synthesizer:
                                   #   EVERYTHING (a big hidden muffle); the POV
                                   #   stage now owns distance, so default near
             "super_vol": 0.6,     # mechanical supercharger (roots/centrifugal) whine
-            "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
+            "turbo_vol": 0.40,    # turbo spool whistle + BOV/flutter.  0.21 was
+                                  #   calibrated pre-POV when induction injected
+                                  #   into the full exhaust bus; through the bay
+                                  #   bright path (1/r + leak) it needs ~2x —
+                                  #   Leo: flutter buried, turbo too quiet
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "shear": 0.08,        # tail-pipe air-shear roar at the exit (mass-flow)
@@ -1067,7 +1071,10 @@ class Synthesizer:
             # (high Q), and how open the system is (un-muffled).  Driving it purely
             # off length/diameter mis-fired — it left every high-revving exotic flat
             # and gave a short-pipe F1 car ZERO whine.  Redline is the lead term.
-            rev = min(max((eng.redline_rpm - 6500.0) / 3500.0, 0.0), 1.25)
+            # knee softened (fleet audit: (rl-6500)/3500 hard-ZEROED the whine
+            # for all 26 cars with redlines <= 6500 — a cliff, not physics; a
+            # 6000 rpm muscle V8 still carries a little pipe whistle)
+            rev = min(max((eng.redline_rpm - 5000.0) / 5000.0, 0.0), 1.25)
             bore = min(max((0.028 - r) / 0.011, 0.0), 1.0)
             self._whine_amt = min(rev * (0.55 + 0.30 * bore
                                          + 0.25 * eng.exhaust_openness), 1.1)
@@ -1090,7 +1097,9 @@ class Synthesizer:
             # in the real world that pure scream lacks.  Low-shelf gain scales with
             # litres-per-cylinder (a 0.5 L+ cyl thunders, a 0.25 L screamer barely).
             cyl_l = (eng.total_displacement * 1000.0) / max(eng.num_cylinders, 1)
-            g_thunder = min(max((cyl_l - 0.30) * 12.0, 0.0), 7.5)
+            # knee softened (fleet audit: (cyl_l-0.30)*12 hard-ZEROED thunder
+            # for 8 small-cylinder cars — same defect class as the F1 rumble)
+            g_thunder = min(max((cyl_l - 0.16) * 8.5, 0.0), 7.5)
             self._thunder = (_peaking(78.0, 0.5, g_thunder, sr)
                              if g_thunder > 0.1 else None)
             self._thunder_zi = np.zeros(2)
@@ -2177,6 +2186,7 @@ class Synthesizer:
                                  / (0.6 * max(f_sys, 1.0))) ** 2)
                 g_sys *= (0.45 + 0.55 * getattr(self, "_flow", 0.0)) \
                     * (0.7 + 0.9 * ovl)
+                self._dbg_gsys, self._dbg_fsys = g_sys, f_sys   # audit stash
                 bS, aS = self._pk(f_sys, 1.0, g_sys)
                 if not hasattr(self, "_sysres_zi"):
                     self._sysres_zi = np.zeros(2)
@@ -2324,7 +2334,11 @@ class Synthesizer:
             # is what you actually HEAR.  Duck the engine note by the BOV envelope so
             # the valve event is EXPOSED instead of buried under the note (and the
             # AGC can no longer normalise it away to the same loudness as the note).
-            duck = min(0.80 * getattr(self, "_bov_env", 0.0), 0.80)
+            # duck recalibrated for the POV era: 0.80 was sized when the BOV
+            # injected into the full bus at unity — through the bay bright path
+            # (~0.4x) it dug a -16 dB hole the flutter couldn't fill (Leo:
+            # "flutter 搞坏了").  The engine now dips, the valve rides on top.
+            duck = min(0.40 * getattr(self, "_bov_env", 0.0), 0.40)
             sig = (1.0 - duck) * sig          # exhaust collapses on the lift...
             bayi = bayi + ind + gw            # whine/BOV: intake tract + dump
                                               # vent to open air, not the pipe
@@ -2397,6 +2411,7 @@ class Synthesizer:
                 # the 0.3 L F1 cylinders had zeroed their rumble share
                 # (Leo: the F1 needs MORE bass, not less)
                 g_rmb = max(g_rmb, 0.26)
+            self._dbg_grmb = g_rmb            # fleet-audit stash
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
                 ph2 = np.mod(self._audio_crank + dps * np.arange(frames),
