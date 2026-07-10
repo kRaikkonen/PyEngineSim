@@ -2575,6 +2575,7 @@ class Synthesizer:
                         * (0.35 + 0.65 * min(max(sim.throttle, 0.0), 1.0)),
                         320.0)
             jet_amp = min(max((u_abs / 150.0) ** 2, 0.5), 6.0)
+            self._u_abs = u_abs               # Mach input for the flyby crackle
             shear_gain = P.get("shear", 0.10) * flow * jet_amp \
                 * (0.30 + 0.70 * getattr(self, "_comb_load", 1.0))
             if not self.vx.get("noise", True):
@@ -2808,6 +2809,10 @@ class Synthesizer:
             gmax = 2.2 + 3.8 * getattr(self, "_comb_load", 1.0)
             gain = min(0.22 / (self._level + 1e-6), gmax)
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
+            if self.pov == "trackside":
+                # near-freeze: the fly-by's 1/r loudness sweep IS the drama —
+                # a tracking AGC was flattening the pass to ~9 dB (real: ~20)
+                rate *= 0.06
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
         else:
@@ -2843,7 +2848,9 @@ class Synthesizer:
         # rides heavy programme compression — the wall is DENSE, the dynamic
         # range small.  Soft block compressor, screamers only: fast attack,
         # slow release, 3:1 above threshold, makeup gain.
-        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0:
+        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0                 and self.pov != "trackside":
+            # (broadcast compression is the TV/onboard character — the
+            # TRACKSIDE ear hears the raw 20 dB fly-by sweep uncompressed)
             if not hasattr(self, "_f1c_env"):
                 self._f1c_env, self._f1c_g = 0.0, 1.0
             _r = float(np.sqrt(np.mean(sig * sig)))
