@@ -677,7 +677,9 @@ class Synthesizer:
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
                        engine_series=True, rad_hp=True, noise=True,
                        bipolar=True,   # F9: AC-couple the source pulses
-                       vacuum=True)    # F10: physical deep-vacuum overrun
+                       vacuum=False)   # F10: deep-vacuum overrun — Leo prefers
+                                       # the arcade lift-off bark as DEFAULT;
+                                       # F10 turns the physical quiet ON
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
@@ -1670,11 +1672,14 @@ class Synthesizer:
                 # Adaptive AC-coupling at half the firing rate turns each lump
                 # into that bipolar wave: pedestal gone, attack kept.
                 if _HAVE_SCIPY and self.vx.get("bipolar", True) and dps > 1e-12:
-                    # corner at QUARTER the firing rate (was half): the coupling
-                    # only needs to kill the DC/infra pedestal — at fire/2 it was
-                    # also shaving the audible bass band (Leo: F9 weakened bass)
+                    # corner at QUARTER the firing rate, CAPPED AT 70 Hz: at
+                    # revs the old 120 Hz cap shaved the audible low band (why
+                    # F9-off sounded bassier — plus the pedestal feeds the
+                    # downstream nonlinearities which re-generate audible LF).
+                    # 70 Hz still kills the DC/infra pedestal at idle without
+                    # eating the bass at speed.
                     f_hp = min(max(0.25 * sim.rpm * len(self._offsets) / 120.0,
-                                   25.0), 120.0)
+                                   18.0), 70.0)
                     bhp2, ahp2 = self._bw(1, f_hp, btype="high")
                     zi = self._bip_zi.get(ci)
                     if zi is None:
