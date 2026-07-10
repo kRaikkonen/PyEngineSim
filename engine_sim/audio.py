@@ -316,6 +316,28 @@ class _BlockDelay:
         return out
 
 
+class _TapDelay:
+    """Write-once, multi-tap read delay line — the EARLY-REFLECTION front of
+    the in-pipe reverb (the first few discrete passes down the full run)."""
+
+    def __init__(self, size):
+        self.buf = np.zeros(int(size) + 4, dtype=np.float64)
+        self.wp = 0
+
+    def process(self, x, delays):
+        n = len(x)
+        N = len(self.buf)
+        wi = (self.wp + np.arange(n)) % N
+        self.buf[wi] = x
+        outs = []
+        for d in delays:
+            d = int(min(max(d, 1), N - n - 2))
+            ri = (self.wp + np.arange(n) - d) % N
+            outs.append(self.buf[ri].copy())
+        self.wp = (self.wp + n) % N
+        return outs
+
+
 class _FlybyDelay:
     """Fractional delay line whose delay RAMPS per sample — a moving source's
     propagation delay.  Changing path length IS the Doppler effect (physically
@@ -1222,6 +1244,41 @@ class Synthesizer:
         g3 = min(g * _rend(c / (4.0 * l_mid)), 0.995)
         g2 = min(g * _rend(c / (4.0 * l_total)), 0.995)
 
+        # ---- IN-PIPE REVERB NETWORK (管内混响) — the system's own tail, not
+        # an effect.  RT60 derives from the hardware: a big stock box STORES
+        # energy and releases it slowly (long, dark tail, 0.2-0.35 s); a
+        # straight-through pipe radiates immediately (short, dry, 0.05-0.1 s);
+        # packing shortens everything.  EVERY network feedback derives from it
+        # via the comb relation g = 10^(-3D / (RT60*sr)) — one reverb
+        # personality per car.
+        v_box = max(getattr(eng, "muffler_volume_m3", 0.003), 1e-5)
+        rt60 = (0.06 + 0.24 * (1.0 - eng.exhaust_openness)
+                + 0.05 * min(v_box / 0.004, 1.0))
+        if absorptive:
+            rt60 *= 0.75
+        self._rt60 = min(max(rt60, 0.05), 0.35)
+        # extra REFLECTION POINTS: the catalyst brick mid-run + the box's
+        # front/rear chambers.  Chambers are closed-ish -> NON-inverting
+        # (half-wave) modal families that interleave with the quarter-wave
+        # pipe series = the dense wall.
+        l_cat = l_primary + 0.35 * (l_total - l_primary)
+        l_box = max(eng.muffler_neck_len_m * 4.0, 0.15)
+        self._rvD = (round(2.0 * l_cat * sr / c),
+                     round(2.0 * l_box * 0.42 * sr / c),
+                     round(2.0 * l_box * 0.58 * sr / c))
+        self._rvG = tuple(min(10.0 ** (-3.0 * D / (self._rt60 * sr)), 0.985)
+                          for D in self._rvD)
+        # the HF reverb time is FAR shorter than LF (open end + fibre eat the
+        # top): the in-loop pole sets RT_HF/RT_LF
+        self._rv_lp = math.exp(-2.0 * math.pi
+                               * (900.0 + 2600.0 * eng.exhaust_openness) / sr)
+        # tail-end FREQUENCY-DEPENDENT reflection for the full-system guide:
+        # lows re-ring (|R| -> 1) while highs escape out the tip — an extra
+        # in-loop pole at the tip's radiation corner, so the LF tail hums long
+        # and the top stays clean.
+        fc_end = 0.7 * c / (2.0 * math.pi * a_tip)
+        self._lp_a_end = math.exp(-2.0 * math.pi * min(fc_end, fc) / sr)
+
         # Helmholtz muffler/chamber resonance
         A, V = eng.muffler_neck_area_m2, eng.muffler_volume_m3
         r_neck = math.sqrt(A / math.pi)
@@ -1619,12 +1676,14 @@ class Synthesizer:
             # band fills with interleaved modal peaks — the SPECTRAL WALL —
             # instead of two lonely comb series.
             prim = wg_primary.process(src, D1, g1, s, lp_a)
-            if self.vx.get("series_wg", True):
+            lp_end = getattr(self, "_lp_a_end", lp_a)   # tip: lows re-ring,
+            if self.vx.get("series_wg", True):          # highs escape (item 5)
                 mid = wg_mid.process(0.5 * src + 0.7 * prim, D3, g3, s, lp_a)
-                total = wg_total.process(0.35 * src + 0.7 * mid, D2, g2, s, lp_a)
+                total = wg_total.process(0.35 * src + 0.7 * mid, D2, g2, s,
+                                         lp_end)
             else:                              # classic parallel wiring (F1 key)
                 mid = wg_mid.process(src, D3, g3, s, lp_a)
-                total = wg_total.process(src, D2, g2, s, lp_a)
+                total = wg_total.process(src, D2, g2, s, lp_end)
             res_mid = 0.55 * max(P["res1"], P["res2"])
             wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         inv = 1.0 / self._nchan
@@ -1638,6 +1697,40 @@ class Synthesizer:
         # even-order richness of the real wave.  (0.45 overshot -> 0.25.)
         if self.vx.get("asym", True):
             dry = dry + 0.25 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
+
+        # ================== IN-PIPE REVERB (管内混响) =======================
+        # The sound bounces up and down the SYSTEM many times before it dies —
+        # the tail is the pipe's own physical property, every number from
+        # geometry (see _resonance_params: RT60, reflection points, tip pole).
+        # (1) EARLY REFLECTIONS: the first three discrete passes down the full
+        # run, each later one darker and weaker — what makes it read as a PIPE
+        # WITH LENGTH instead of a point source.  Spacing = the full-system
+        # round trip, so a long truck system echoes wide, a stubby race exit
+        # tight.
+        if not hasattr(self, "_er_dl"):
+            self._er_dl = _TapDelay(int(self.sample_rate * 0.45) + 8)
+            self._xc = (ExhaustWaveguide(2600), ExhaustWaveguide(2600),
+                        ExhaustWaveguide(2600))
+        t1, t2, t3 = self._er_dl.process(dry, (D2, 2 * D2, 3 * D2))
+        d2 = 0.5 * (t2 + np.concatenate(([t2[0]], t2[:-1])))      # darker
+        d3_ = 0.5 * (t3 + np.concatenate(([t3[0]], t3[:-1])))
+        d3_ = 0.5 * (d3_ + np.concatenate(([d3_[0]], d3_[:-1])))  # darkest
+        wet = wet + 0.34 * t1 + 0.20 * d2 + 0.11 * d3_
+        # (2) MULTI-CHAMBER REVERB COMBS: catalyst brick + the box's two
+        # chambers, feedback derived from the system RT60 (a stock box hums
+        # 0.2-0.35 s, a straight pipe dies in 0.05-0.1 s), the in-loop pole
+        # keeping the HF tail far shorter than the LF hum — the '经过消音器'
+        # tail character.  (y - x) extracts the pure reverberant part.
+        rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
+        if rvD is not None:
+            rlp = self._rv_lp
+            rv = (0.40 * (self._xc[0].process(wet, rvD[0], rvG[0], 1.0, rlp)
+                          - wet)
+                  + 0.30 * (self._xc[1].process(wet, rvD[1], rvG[1], 1.0, rlp)
+                            - wet)
+                  + 0.22 * (self._xc[2].process(wet, rvD[2], rvG[2], 1.0, rlp)
+                            - wet))
+            wet = wet + rv
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
