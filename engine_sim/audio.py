@@ -629,7 +629,8 @@ class Synthesizer:
         # bisect which serve the sound and which broke it.  All default ON.
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
                        engine_series=True, rad_hp=True, noise=True,
-                       bipolar=True)   # F9: AC-couple the source pulses
+                       bipolar=True,   # F9: AC-couple the source pulses
+                       scream=True)    # F10: F1 additive scream layer on/off
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # straight-cut gearbox whine — on by default for cars that actually have
         # a straight-cut (dog) box (race cars), off otherwise.
@@ -1705,7 +1706,14 @@ class Synthesizer:
         # scream IS its harmonic series at these speeds), keeping the pulse
         # model underneath for body.  Gated to genuine screamers (redline >=
         # 11 krpm) so ordinary engines are untouched.
-        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0:
+        # F10 gates the whole ADDITIVE SCREAM layer: it was built to paper over
+        # the per-pulse model degenerating at F1 fire rates — but the pulse path
+        # has since gained the bipolar AC source, series waveguides, wave
+        # steepening and the megaphone horn, so the PHYSICAL path may now beat
+        # the synthetic stack outright.  OFF = the pulse machine carries the F1
+        # alone (no stack, no duck, no tear).  The ear decides.
+        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0 \
+                and self.vx.get("scream", True):
             fire_hz = sim.rpm * len(self._offsets) / 120.0
             if fire_hz > 500.0:
                 m = min((fire_hz - 500.0) / 600.0, 1.0)

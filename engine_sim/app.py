@@ -1211,6 +1211,12 @@ class App:
                                                                      True)
                     self._flash("bipolar "
                                 + ("ON" if self.synth.vx["bipolar"] else "OFF"))
+                elif e.key == pygame.K_F10:    # F1 additive scream layer
+                    self.synth.vx["scream"] = not self.synth.vx.get("scream",
+                                                                    True)
+                    self._flash("scream stack "
+                                + ("ON" if self.synth.vx["scream"] else
+                                   "OFF (pulse machine only)"))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",
