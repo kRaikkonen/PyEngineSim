@@ -2432,17 +2432,30 @@ class Synthesizer:
             a_tip = max(sim.engine.exhaust_radius_m, 0.012) \
                 * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)
             f_a = min(343.0 / (2.0 * math.pi * a_tip), self.sample_rate * 0.4)
+            # the far-field dQ/dt term (crisp puff edges) exists at ANY range
+            ext = np.empty(frames + 1, dtype=np.float64)
+            ext[0] = self._rad_prev
+            ext[1:] = sig
+            self._rad_prev = float(sig[-1])
+            drv_far = np.diff(ext) * (self.sample_rate / (2.0 * math.pi * 500.0))
             if _HAVE_SCIPY and self.vx.get("rad_hp", True):
+                # SUPERPOSED radiation (Leo's blend verdict, and the physics
+                # agrees): an open end radiates BOTH a near-field piston term
+                # (the HP shape — keeps the body) and the far-field dQ/dt term.
+                # Near field dies as 1/r^2 vs 1/r, so the mix follows the
+                # LISTENER'S RANGE: cockpit hears mostly piston, trackside
+                # mostly derivative, chase in between.  (Binary HP-vs-diff was
+                # the modelling shortcut; the blend is the real field.)
                 bR, aR = self._bw(1, f_a, btype="high")
                 if not hasattr(self, "_radhp_zi"):
                     self._radhp_zi = np.zeros(1)
-                drv, self._radhp_zi = lfilter(bR, aR, sig, zi=self._radhp_zi)
-            else:                              # fallback: the old derivative
-                ext = np.empty(frames + 1, dtype=np.float64)
-                ext[0] = self._rad_prev
-                ext[1:] = sig
-                self._rad_prev = float(sig[-1])
-                drv = np.diff(ext) * (self.sample_rate / (2.0 * math.pi * 500.0))
+                hp_near, self._radhp_zi = lfilter(bR, aR, sig,
+                                                  zi=self._radhp_zi)
+                w_near = {"cockpit": 0.60, "chase": 0.45,
+                          "trackside": 0.28}.get(self.pov, 0.45)
+                drv = w_near * hp_near + (1.0 - w_near) * drv_far
+            else:                              # classic pure derivative (F6 off)
+                drv = drv_far
             sig = (1.0 - rad) * sig + rad * drv
         self._tap("radiation", sig)           # in-duct -> free-field radiation
 
