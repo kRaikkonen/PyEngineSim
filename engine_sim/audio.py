@@ -571,7 +571,7 @@ class Synthesizer:
             "turbo_vol": 0.21,    # turbo spool whistle + BOV (0.45->0.30->0.21, -30%)
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
-            "shear": 0.10,        # tail-pipe air-shear roar at the exit (mass-flow)
+            "shear": 0.08,        # tail-pipe air-shear roar at the exit (mass-flow)
                                   #   — part of the un-pitched noise share a real
                                   #   engine carries (the fixed underlay)
             "whine": 1.0,         # high-rpm standing-wave whine/scream amount
@@ -1103,7 +1103,17 @@ class Synthesizer:
     def _resonance_params(self):
         """Everything tuning the pipe resonance, DERIVED FROM PHYSICS."""
         sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
-        c = sim.exhaust_sound_speed()                  # hot-gas speed of sound
+        # hot-gas speed of sound WITH THERMAL INERTIA: the instantaneous EGT
+        # follows load within a block, but the PIPE's resonances are set by the
+        # whole gas column + the metal's heat capacity — seconds, not
+        # milliseconds.  Un-smoothed, a throttle blip jumped c 494 -> 603 m/s
+        # in one block and every pipe resonance pitch-bent +22 % instantly
+        # (Leo: "物理反应不对" — the rubber-band pipe).  tau ~ 3 s.
+        c_now = sim.exhaust_sound_speed()
+        if not hasattr(self, "_c_sm"):
+            self._c_sm = c_now
+        self._c_sm += (c_now - self._c_sm) * min(BLOCK / sr / 3.0, 1.0)
+        c = self._c_sm
         # Round-trip travel = 2L (down and back); the inverting open-end (s=-1)
         # then makes the comb a quarter-wave resonator at odd multiples of
         # fs/(2D) = c/(4*L_eff) -- exactly the open-closed pipe fundamental.
@@ -1670,7 +1680,7 @@ class Synthesizer:
                 # transpose with rpm — the fixed underlay that separates an
                 # internal-combustion machine from a synthesizer.  (0.008 was
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
-                nfl = 0.014 if self.vx.get("noise", True) else 0.008
+                nfl = 0.010 if self.vx.get("noise", True) else 0.008
                 fizz_chans[ci] = e * noise + nfl * noise
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
@@ -1689,7 +1699,7 @@ class Synthesizer:
             # gas-rush turbulence (noise ringing the combs = the dense resonant
             # texture a bare tonal excitation can never give the wall)
             src = self._src_verb[ci].process(
-                chans[ci] + 0.5 * P["turbulence"] * fizz_chans[ci])
+                chans[ci] + 0.25 * P["turbulence"] * fizz_chans[ci])
             dry += src
             wg_primary, wg_total, wg_mid = self._wg[ci]
             # THREE-SECTION SERIES waveguide, the way the gas actually travels:
@@ -1702,13 +1712,18 @@ class Synthesizer:
             prim = wg_primary.process(src, D1, g1, s, lp_a)
             lp_end = getattr(self, "_lp_a_end", lp_a)   # tip: lows re-ring,
             if self.vx.get("series_wg", True):          # highs escape (item 5)
-                mid = wg_mid.process(0.5 * src + 0.7 * prim, D3, g3, s, lp_a)
-                total = wg_total.process(0.35 * src + 0.7 * mid, D2, g2, s,
+                # ENERGY-CONSERVING junctions: a real area step SPLITS the wave
+                # (T+R<=1) — feeding each section's full resonant gain into the
+                # next multiplied the peaks (resonance-of-resonance: too loud
+                # AND unphysical double-peaks).  Couple at 0.5 with lighter
+                # direct bleeds so the cascade colours instead of compounding.
+                mid = wg_mid.process(0.35 * src + 0.5 * prim, D3, g3, s, lp_a)
+                total = wg_total.process(0.20 * src + 0.5 * mid, D2, g2, s,
                                          lp_end)
             else:                              # classic parallel wiring (F1 key)
                 mid = wg_mid.process(src, D3, g3, s, lp_a)
                 total = wg_total.process(src, D2, g2, s, lp_end)
-            res_mid = 0.55 * max(P["res1"], P["res2"])
+            res_mid = 0.40 * max(P["res1"], P["res2"])
             wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         inv = 1.0 / self._nchan
         dry *= inv
@@ -1860,11 +1875,11 @@ class Synthesizer:
         if rvD is not None:
             ring_in = sig + 0.36 * combustion
             rlp = self._rv_lp
-            rv = (0.40 * (self._xc[0].process(ring_in, rvD[0], rvG[0], 1.0,
+            rv = (0.30 * (self._xc[0].process(ring_in, rvD[0], rvG[0], 1.0,
                                               rlp) - ring_in)
-                  + 0.30 * (self._xc[1].process(ring_in, rvD[1], rvG[1], 1.0,
+                  + 0.22 * (self._xc[1].process(ring_in, rvD[1], rvG[1], 1.0,
                                                 rlp) - ring_in)
-                  + 0.22 * (self._xc[2].process(ring_in, rvD[2], rvG[2], 1.0,
+                  + 0.16 * (self._xc[2].process(ring_in, rvD[2], rvG[2], 1.0,
                                                 rlp) - ring_in))
             sig = sig + rv
 
@@ -2448,7 +2463,7 @@ class Synthesizer:
                 edg, self._edge_zi = lfilter(
                     be, ae, self._rng.standard_normal(frames),
                     zi=getattr(self, "_edge_zi", np.zeros(2)))
-                sig = sig + a_fl * (0.55 * vex + 0.18 * edg)
+                sig = sig + a_fl * (0.40 * vex + 0.12 * edg)
         self._tap("tailpipe exit", sig)       # gas tearing out of the tip
 
         # --- OVERRUN DARKENING: a motoring engine (DFCO / no combustion) has no

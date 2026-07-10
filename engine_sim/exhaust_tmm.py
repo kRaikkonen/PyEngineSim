@@ -56,7 +56,7 @@ def exhaust_acoustics(eng):
     # A big step (small primary into a fat collector) reflects hard -> strong,
     # peaky runner resonance; a gentle step barely reflects.
     r_step = abs(a_col - a_prim) / (a_col + a_prim)
-    res1 = min(max(0.60 * r_step / 0.55, 0.07), 0.80)     # 0.55 = typical step
+    res1 = min(max(0.45 * r_step / 0.55, 0.06), 0.62)     # 0.55 = typical step
 
     # --- res2: full-system resonance = the open tailpipe end reflecting back
     # THROUGH the muffler.  Open end reflects strongly at low f; a reflective
@@ -74,9 +74,12 @@ def exhaust_acoustics(eng):
     # resonance.  New anchor puts the reference (open absorptive V12) at
     # res2 ~ 0.75 so the PIPE IS THE MEDIUM; per-car spread is unchanged
     # geometry.  (One calibration constant, not per-car.)
+    # (re-anchored DOWN after the in-pipe reverb network + 3-section series
+    # chain landed: the resonant field now has three more contributors, so the
+    # waveguide levels return toward the middle — aven res2 ~ 0.52.)
     tail_ratio = a_tail / a_col
-    res2 = min(max(1.44 * muff_return * (0.6 + 0.6 * open_frac)
-                   / max(tail_ratio, 0.5), 0.15), 1.10)
+    res2 = min(max(1.00 * muff_return * (0.6 + 0.6 * open_frac)
+                   / max(tail_ratio, 0.5), 0.12), 0.85)
 
     # --- wall: viscothermal + radiation loss ~ 1/radius (thin pipe = more wall
     # interaction, duller ring) scaled by the system length (more pipe = more
