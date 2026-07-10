@@ -496,6 +496,7 @@ class Synthesizer:
 
         self._rng = np.random.default_rng()
         self._jit = np.ones(ncyl)
+        self._tjit = np.zeros(ncyl)   # per-cylinder firing-phase scatter (deg)
         self._level = 0.05
         self._gain = 1.0
         self.agc_enabled = True   # off (fixed gain) for isolated-pop auditioning
@@ -508,10 +509,10 @@ class Synthesizer:
         # sound of a bench dyno with the mic at the header.  A car on the street
         # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 0.92,         # direct through-wave level.  0.62 gutted the
-                                 #   combustion punch entirely (the whole chain went
-                                 #   mushy/distant) — 0.92 keeps the pipe field
-                                 #   dominant but the bang present.  Live slider.
+            "dry": 0.80,         # direct through-wave level (Leo-tuned by ear:
+                                 #   0.62 too mushy, 0.92 a touch bangy — 0.80
+                                 #   keeps the pipe field dominant with the bang
+                                 #   present).  Live slider.
             "res1": 0.42,         # primary pipe resonance (runner) — fallback only,
             "res2": 0.75,         # normally overridden by exhaust_tmm geometry;
                                   #   re-anchored so the standing-wave field rivals
@@ -1308,7 +1309,7 @@ class Synthesizer:
                 # exhaust hangers bolt the pipe to the floor: the panels re-
                 # radiate its LF INSIDE (chest thump), bypassing BOTH the
                 # airborne partition and the stiffness HP — it's structure.
-                chassis=(0.60 if race else 0.45),
+                chassis=(0.60 if race else 0.45), chassis_fc=90.0,
                 boom_f=c / (2.0 * 2.4), ground=None)
         elif self.pov == "trackside":
             # fixed mic 12 m off the racing line; the CAR MOVES PAST it.  The
@@ -1336,8 +1337,13 @@ class Synthesizer:
                 # deleted the intake/valvetrain texture (a hidden muffle).
                 bay_alpha=(0.35 if race else 0.22), bay_fc=fc_mass(6.3),
                 tail_alpha=None, tail_fc=None,
-                struct=0.0, struct_fc=800.0,           # (mounts shake the CABIN,
-                chassis=0.0,                           #  not the street)
+                struct=0.0, struct_fc=800.0,   # (mounts shake the cabin, not
+                                               #  the street...)
+                # ...but the whole BODY SHELL is a large panel radiator: it
+                # re-radiates the engine/exhaust SUB band (<~70 Hz) into the
+                # air omnidirectionally — the outdoor listener's chest-feel
+                # (Leo: 次低频结构传导通路).
+                chassis=0.30, chassis_fc=70.0,
                 boom_f=0.0, ground=(int(delta / c * sr), 0.8))
         self._pov_cache = (key, geo)
         return geo
@@ -1418,8 +1424,19 @@ class Synthesizer:
             p_cyl = p_open + 1.05 * P_ATM                  # absolute blowdown pressure
             pr = (1.05 * P_ATM) / max(p_cyl, 1.05 * P_ATM)   # back/cylinder ratio (0,1]
             choke = min(max((0.54 - pr) / 0.54, 0.0), 1.0)   # 0 subsonic .. 1 choked
-            self._jit += (1.0 + 0.12 * (self._rng.random(len(self._jit)) - 0.5)
-                          - self._jit) * 0.25
+            # CYCLE-TO-CYCLE combustion variability — the physical line
+            # broadener.  Scatter grows with rpm ceiling (burn time shrinks,
+            # turbulence scatter rises): a screamer's harmonics smear into the
+            # WALL of sound instead of clean synthesizer lines.  Amplitude
+            # scatter (here) + firing-PHASE scatter (_tjit, degrees — phase
+            # modulation broadens the HIGH harmonics hardest).
+            wall = 1.0 + 2.0 * min(max(
+                (sim.engine.redline_rpm - 9000.0) / 6000.0, 0.0), 1.0)
+            self._jit += (1.0 + (0.12 * wall)
+                          * (self._rng.random(len(self._jit)) - 0.5)
+                          - self._jit) * min(0.25 + 0.20 * (wall - 1.0), 0.6)
+            self._tjit += ((self._rng.random(len(self._jit)) - 0.5)
+                           * (0.8 * wall) - self._tjit) * 0.30
 
             # Cylinder spread ~3x stronger than before, and bigger still at low
             # rpm (valve shut), where the spaced pops make each cylinder's own
@@ -1456,7 +1473,8 @@ class Synthesizer:
                 if lb is not None and j < len(lb):
                     rel = lb[j] / max(p_open + 1.05 * P_ATM, 2.0 * P_ATM)
                     amp_j *= min(max(rel, 0.06), 1.5) ** 0.8
-                phi = np.mod(crank + off + self._header_offset[j], 720.0)
+                phi = np.mod(crank + off + self._header_offset[j]
+                             + self._tjit[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
                 dd = np.clip(d, 0.0, None)
@@ -1888,6 +1906,16 @@ class Synthesizer:
                 if getattr(sim.engine, "muffler_type",
                            "reflective") == "absorptive":
                     g_sys *= 0.6
+                # DYNAMIC with rpm (Leo): the box is driven hardest when the
+                # FIRING order sweeps through its resonance — the real cruise
+                # 'drone' physics: the boom blooms as the revs pass f_sys and
+                # relaxes away from it — and it scales with the mean flow
+                # actually pumping the box (quiet at idle, full under load).
+                fire_now = sim.rpm * len(self._offsets) / 120.0
+                ovl = math.exp(-((fire_now - f_sys)
+                                 / (0.6 * max(f_sys, 1.0))) ** 2)
+                g_sys *= (0.45 + 0.55 * getattr(self, "_flow", 0.0)) \
+                    * (0.7 + 0.9 * ovl)
                 bS, aS = self._pk(f_sys, 1.0, g_sys)
                 if not hasattr(self, "_sysres_zi"):
                     self._sysres_zi = np.zeros(2)
@@ -2319,7 +2347,8 @@ class Synthesizer:
             # thump ("胸口能感觉到的震动").  A STRUCTURE path: it legitimately
             # bypasses both the airborne partition and the stiffness HP (that HP
             # models AIRBORNE transmission only).
-            chas = self._pov_lp(tail_pre, "chassis", 100.0)
+            chas = self._pov_lp(tail_pre, "chassis",
+                                geo.get("chassis_fc", 100.0))
             sig = sig + geo["chassis"] * chas
         if geo.get("flyby"):
             # TRACKSIDE FLY-BY: the car drives past a fixed mic (posts every
