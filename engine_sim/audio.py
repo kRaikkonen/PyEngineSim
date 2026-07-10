@@ -2806,7 +2806,8 @@ class Synthesizer:
                 nz2 = self._rng.standard_normal(frames)
                 nz2, self._roadn_lp_zi = lfilter(self._roadn_lp[0], self._roadn_lp[1],
                                                  nz2, zi=self._roadn_lp_zi)
-                sig = sig + rn * spd * (1.6 * nz + 0.5 * nz2)
+                # wind/road wash halved (Leo: cabin/room 风噪太大)
+                sig = sig + rn * spd * (0.8 * nz + 0.25 * nz2)
 
         # (injector + valvetrain clatter now radiate from the BAY bus above —
         # they used to be bolted on here, post-reverb and bone-dry.)
