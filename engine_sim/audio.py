@@ -554,8 +554,9 @@ class Synthesizer:
                                   #   head/port cavity is TINY; 0.48 smeared the
                                   #   pulse transients into mush (wet complaint)
             "reverb": 0.21,      # spatial reverb mix — an exhaust mic is OUTDOORS
-            "rad_near": 0.45,     # radiation near/far-field blend (slider): the
-                                  #   POV adds its range offset on top
+            "rad_near": 0.20,     # radiation near/far-field blend (slider):
+                                  #   Leo's chase calibration = 0.20; the POV
+                                  #   adds its range offset on top
                                  #   in free field; 0.4 was a small room, far too wet
             "intake": 0.11,       # induction roar level (halved — was too windy)
             "eq_low": 0.0,        # dB
@@ -1960,6 +1961,8 @@ class Synthesizer:
             # air pumping.  A cheap 1-pole low-pass (running mean of the noise)
             # drops the harsh treble that read as "air noise covering the engine".
             nz_b = 0.5 * (nz_b + np.concatenate(([self._burble_prev], nz_b[:-1])))
+            nz_b = 0.5 * (nz_b + np.concatenate(([self._burble_prev], nz_b[:-1])))
+            nz_b = 0.5 * (nz_b + np.concatenate(([self._burble_prev], nz_b[:-1])))
             self._burble_prev = float(nz_b[-1])
             # modulate by the ACTUAL in-duct wave |sig|, not |wet|: the wet
             # field collapsed on open cars under the transmitted-vs-reverberant
@@ -2541,9 +2544,9 @@ class Synthesizer:
                     self._radhp_zi = np.zeros(1)
                 hp_near, self._radhp_zi = lfilter(bR, aR, sig,
                                                   zi=self._radhp_zi)
-                w_near = min(max(P.get("rad_near", 0.45)
-                                 + {"cockpit": 0.15, "chase": 0.0,
-                                    "trackside": -0.17}.get(self.pov, 0.0),
+                w_near = min(max(P.get("rad_near", 0.20)
+                                 + {"cockpit": 0.25, "chase": 0.0,
+                                    "trackside": -0.12}.get(self.pov, 0.0),
                                  0.0), 0.90)
                 drv = w_near * hp_near + (1.0 - w_near) * drv_far
             else:                              # classic pure derivative (F6 off)
@@ -2557,7 +2560,7 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             flow = rpm_frac * (0.35 + 0.65 * sim.throttle)
-            shear_gain = P.get("shear", 0.10) * flow
+            shear_gain = P.get("shear", 0.10) * flow                 * (0.30 + 0.70 * getattr(self, "_comb_load", 1.0))
             if not self.vx.get("noise", True):
                 shear_gain *= 0.7             # classic quieter underlay (F7)
             if shear_gain > 1e-4:

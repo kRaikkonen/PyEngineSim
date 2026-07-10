@@ -760,7 +760,7 @@ class App:
         debugging — green = ON, red = OFF, updated every frame.  F11 hides it.
         Delete together with the bisect flags once the verdicts are locked."""
         sy = self.synth
-        if sy is None or not getattr(self, "voicing_dbg", True):
+        if sy is None or not getattr(self, "voicing_dbg", False):
             return
         vx = getattr(sy, "vx", {})
         rows = [("F1 series_wg", vx.get("series_wg", True)),
@@ -1304,7 +1304,7 @@ class App:
                                 + ("ON (physical)" if self.synth.vx["vacuum"]
                                    else "OFF (arcade overrun)"))
                 elif e.key == pygame.K_F11:    # TEMP: voicing debug panel
-                    self.voicing_dbg = not getattr(self, "voicing_dbg", True)
+                    self.voicing_dbg = not getattr(self, "voicing_dbg", False)
                 elif e.key == pygame.K_F12:    # TEMP: gas-flow gain staging
                     self.flow_dbg = not getattr(self, "flow_dbg", False)
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
