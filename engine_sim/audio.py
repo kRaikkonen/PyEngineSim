@@ -554,6 +554,8 @@ class Synthesizer:
                                   #   head/port cavity is TINY; 0.48 smeared the
                                   #   pulse transients into mush (wet complaint)
             "reverb": 0.21,      # spatial reverb mix — an exhaust mic is OUTDOORS
+            "rad_near": 0.45,     # radiation near/far-field blend (slider): the
+                                  #   POV adds its range offset on top
                                  #   in free field; 0.4 was a small room, far too wet
             "intake": 0.11,       # induction roar level (halved — was too windy)
             "eq_low": 0.0,        # dB
@@ -2539,8 +2541,10 @@ class Synthesizer:
                     self._radhp_zi = np.zeros(1)
                 hp_near, self._radhp_zi = lfilter(bR, aR, sig,
                                                   zi=self._radhp_zi)
-                w_near = {"cockpit": 0.60, "chase": 0.45,
-                          "trackside": 0.28}.get(self.pov, 0.45)
+                w_near = min(max(P.get("rad_near", 0.45)
+                                 + {"cockpit": 0.15, "chase": 0.0,
+                                    "trackside": -0.17}.get(self.pov, 0.0),
+                                 0.0), 0.90)
                 drv = w_near * hp_near + (1.0 - w_near) * drv_far
             else:                              # classic pure derivative (F6 off)
                 drv = drv_far
@@ -2797,6 +2801,8 @@ class Synthesizer:
         # street, not strapped to a dyno.  Low band-passed noise swelling with road
         # speed (and a touch of throttle), sitting under the exhaust note.
         rn = P.get("road_noise", 0.22)
+        if self.pov == "cockpit":
+            rn = 0.0                     # Leo: the cockpit hears NO wind, any form
         if _HAVE_SCIPY and rn > 1e-3:
             spd = min(getattr(sim.drivetrain, "v", 0.0) / 32.0, 1.0)   # ~115 km/h full
             if spd > 0.015:
@@ -2808,6 +2814,21 @@ class Synthesizer:
                                                  nz2, zi=self._roadn_lp_zi)
                 # wind/road wash halved (Leo: cabin/room 风噪太大)
                 sig = sig + rn * spd * (0.8 * nz + 0.25 * nz2)
+
+        # --- F1 BROADCAST COMPRESSION: a real F1 feed (and every racing game)
+        # rides heavy programme compression — the wall is DENSE, the dynamic
+        # range small.  Soft block compressor, screamers only: fast attack,
+        # slow release, 3:1 above threshold, makeup gain.
+        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0:
+            if not hasattr(self, "_f1c_env"):
+                self._f1c_env, self._f1c_g = 0.0, 1.0
+            _r = float(np.sqrt(np.mean(sig * sig)))
+            self._f1c_env += (_r - self._f1c_env)                 * (0.45 if _r > self._f1c_env else 0.10)
+            _th, _ratio = 0.16, 3.0
+            _gt = 1.0 if self._f1c_env <= _th                 else (_th / self._f1c_env) ** (1.0 - 1.0 / _ratio)
+            _gp = self._f1c_g
+            self._f1c_g += (_gt - _gp) * 0.5
+            sig = sig * np.linspace(_gp, self._f1c_g, frames) * 1.30
 
         # (injector + valvetrain clatter now radiate from the BAY bus above —
         # they used to be bolted on here, post-reverb and bone-dry.)
@@ -3070,9 +3091,9 @@ class Synthesizer:
                         thump = 0.5 * (thump + np.concatenate(([self._bov_prev],
                                                                thump[:-1])))
                         self._bov_prev = float(noise[-1])
-                    mono = bov * (u * u) * 2.6           # monopole ~ u^2: the body
+                    mono = bov * (u * u) * 3.9           # monopole ~ u^2: the body
                     out += ((mono * (1.6 + 0.9 * bfrac)) * thump
-                            + (amp * 0.7) * jet) * pulse
+                            + (amp * 1.0) * jet) * pulse
                 else:                                    # recirc: darkened by the
                     drk = 0.5 * (jet + np.concatenate(([self._bov_prev],
                                                        jet[:-1])))   # intake pipe run
