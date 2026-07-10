@@ -1,7 +1,7 @@
 # PyEngineSim（中文）
 
 **用纯 Python 编写的实时引擎 *声音 + 机械* 模拟器。**
-作者 **Leo** · `v0.9` · [🇬🇧 English README](README.md) · 🇨🇳 中文（本文件）
+作者 **Leo** · `v1.0` · [🇬🇧 English README](README.md) · 🇨🇳 中文（本文件）
 
 ![PyEngineSim — 福特 GT 3.5 V6](docs/screenshot_fordgt.png)
 
@@ -52,7 +52,7 @@ ECU 包络建模，而不是糊弄。
 |---|---|
 | **Windows（快）** | 解压 `PyEngineSim-onedir.zip`，运行 `PyEngineSim/PyEngineSim.exe` |
 | **Windows（单文件）** | `PyEngineSim-onefile.zip` → 单个 `.exe`（首次启动较慢） |
-| **安卓（arm64）** | 侧载 `pyenginesim-0.9-arm64-v8a-debug.apk` —— 触屏 UI、SDL2 音频、不需要 scipy |
+| **安卓（arm64）** | 侧载 `pyenginesim-1.0-arm64-v8a-debug.apk` —— 触屏 UI、SDL2 音频、不需要 scipy |
 | **源码运行** | `pip install numpy scipy sounddevice pygame` → `python run.py` |
 
 启动默认加载 **兰博基尼 Aventador V12**；可在 **Demo cars ▾** 菜单切换任意发动机。
@@ -157,5 +157,5 @@ PyEngineSim 的灵感与最大的功劳来自
 
 ---
 
-*PyEngineSim `v0.9` —— 作者 **Leo**。一个纯 Python、完全白盒的发动机模拟器。特别感谢
+*PyEngineSim `v1.0` —— 作者 **Leo**。一个纯 Python、完全白盒的发动机模拟器。特别感谢
 **AngeTheGreat** 的 Engine Simulator。*

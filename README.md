@@ -1,7 +1,7 @@
 # PyEngineSim
 
 **A real-time engine *sound + mechanics* simulator, written in pure Python.**
-By **Leo** · `v0.9` · 🇬🇧 English (this file) · [🇨🇳 中文 README](README.zh.md)
+By **Leo** · `v1.0` · 🇬🇧 English (this file) · [🇨🇳 中文 README](README.zh.md)
 
 ![PyEngineSim — Ford GT 3.5 V6](docs/screenshot_fordgt.png)
 
@@ -59,7 +59,7 @@ running physics.
 |---|---|
 | **Windows (fast)** | Unzip `PyEngineSim-onedir.zip`, run `PyEngineSim/PyEngineSim.exe` |
 | **Windows (single file)** | `PyEngineSim-onefile.zip` → one `.exe` (slower first launch) |
-| **Android (arm64)** | Sideload `pyenginesim-0.9-arm64-v8a-debug.apk` — touch UI, SDL2 audio, no scipy needed |
+| **Android (arm64)** | Sideload `pyenginesim-1.0-arm64-v8a-debug.apk` — touch UI, SDL2 audio, no scipy needed |
 | **From source** | `pip install numpy scipy sounddevice pygame` → `python run.py` |
 
 Startup loads the **Lamborghini Aventador V12** by default; pick any engine from
@@ -175,5 +175,5 @@ and shares no code with it.
 
 ---
 
-*PyEngineSim `v0.9` — by **Leo**. A pure-Python, fully white-box engine simulator.
+*PyEngineSim `v1.0` — by **Leo**. A pure-Python, fully white-box engine simulator.
 With gratitude to **AngeTheGreat's** Engine Simulator.*

@@ -12,7 +12,7 @@ package.domain = com.pyenginesim
 source.dir = .
 source.include_exts = py,png,jpg,ttf,json,otf
 source.include_patterns = engine_sim/assets/*
-version = 0.9
+version = 1.0
 icon.filename = %(source.dir)s/engine_sim/assets/logo.png
 # scipy DROPPED: extremely painful to cross-compile with p4a, and audio.py
 # already has a pure-numpy fallback for every scipy call (_HAVE_SCIPY guards).
