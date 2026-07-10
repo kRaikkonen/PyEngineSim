@@ -710,6 +710,47 @@ class App:
         self._status = msg
         self._status_t = 3.0
 
+    def _draw_voicing_debug(self):
+        """TEMPORARY (Leo): live voicing-switchboard readout for ear A/B
+        debugging — green = ON, red = OFF, updated every frame.  F11 hides it.
+        Delete together with the bisect flags once the verdicts are locked."""
+        sy = self.synth
+        if sy is None or not getattr(self, "voicing_dbg", True):
+            return
+        vx = getattr(sy, "vx", {})
+        rows = [("F1 series_wg", vx.get("series_wg", True)),
+                ("F2 sys_helm", vx.get("sys_helm", True)),
+                ("F3 rumble", vx.get("rumble", True)),
+                ("F4 asym", vx.get("asym", True)),
+                ("F5 eng_series", vx.get("engine_series", True)),
+                ("F6 rad_hp", vx.get("rad_hp", True)),
+                ("F7 noise", vx.get("noise", True)),
+                ("F9 bipolar", vx.get("bipolar", True)),
+                ("F10 scream", vx.get("scream", True))]
+        w, rh = 172, 15
+        h = rh * (len(rows) + 2) + 22
+        x, y = WIDTH - w - 14, 60
+        srf = pygame.Surface((w, h), pygame.SRCALPHA)
+        srf.fill((8, 9, 12, 210))
+        self.screen.blit(srf, (x, y))
+        pygame.draw.rect(self.screen, (74, 82, 96), (x, y, w, h), 1)
+        self.screen.blit(self.font_small.render("VOICING DEBUG", True,
+                                                (152, 160, 174)), (x + 8, y + 4))
+        yy = y + 6 + rh
+        for lab, on in rows:
+            col = (110, 220, 130) if on else (235, 90, 90)
+            pygame.draw.circle(self.screen, col, (x + 13, yy + rh // 2 - 1), 4)
+            self.screen.blit(self.font_small.render(
+                lab, True, (206, 211, 221) if on else (122, 126, 136)),
+                (x + 24, yy))
+            yy += rh
+        self.screen.blit(self.font_small.render(
+            f"B pov: {getattr(sy, 'pov', 'chase')}", True, (150, 190, 255)),
+            (x + 8, yy))
+        yy += rh
+        self.screen.blit(self.font_small.render(
+            "F8 flip all · F11 hide", True, (112, 118, 130)), (x + 8, yy))
+
     def _apply_voice(self):
         self.synth.params.update(FIRING_VOICES[self.voice_idx][1])
 
@@ -1217,6 +1258,8 @@ class App:
                     self._flash("scream stack "
                                 + ("ON" if self.synth.vx["scream"] else
                                    "OFF (pulse machine only)"))
+                elif e.key == pygame.K_F11:    # TEMP: voicing debug panel
+                    self.voicing_dbg = not getattr(self, "voicing_dbg", True)
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",
@@ -1394,6 +1437,7 @@ class App:
             self._draw_toolbar()
             if self._open_menu is not None:
                 self._draw_menu()
+            self._draw_voicing_debug()      # TEMP: switchboard readout (F11)
             self._present()
             return
         self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
@@ -1420,6 +1464,7 @@ class App:
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
+        self._draw_voicing_debug()          # TEMP: switchboard readout (F11)
         self._present()
 
     def _present(self):
