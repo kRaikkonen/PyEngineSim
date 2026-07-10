@@ -56,7 +56,7 @@ def exhaust_acoustics(eng):
     # A big step (small primary into a fat collector) reflects hard -> strong,
     # peaky runner resonance; a gentle step barely reflects.
     r_step = abs(a_col - a_prim) / (a_col + a_prim)
-    res1 = min(max(0.34 * r_step / 0.55, 0.04), 0.45)     # 0.55 = typical step
+    res1 = min(max(0.60 * r_step / 0.55, 0.07), 0.80)     # 0.55 = typical step
 
     # --- res2: full-system resonance = the open tailpipe end reflecting back
     # THROUGH the muffler.  Open end reflects strongly at low f; a reflective
@@ -66,14 +66,17 @@ def exhaust_acoustics(eng):
     muff_return = 0.72 if reflective else 0.45           # fraction reflected back
     open_frac = min(max(getattr(eng, "exhaust_openness", 0.7), 0.2), 1.0)
     # a wider tailpipe radiates more away -> weaker standing wave (res2 down),
-    # but a more OPEN system rings longer (res2 up): net from geometry
-    # scale ANCHORED so the validated hand-tuned reference (open absorptive V12,
-    # the Aventador) reproduces its known-good res2 ~= 0.30; every other car then
-    # varies from there purely by its geometry.  (Same idea as map_model's
-    # K_BALANCE — one calibration constant against a real reference, not per-car.)
+    # but a more OPEN system rings longer (res2 up): net from geometry.
+    # RE-ANCHORED (Leo: "所有的管道都没质心，都没有管子的混响"): the old anchor
+    # (aven res2 ~ 0.30) calibrated the pipe as a GARNISH under a dominant direct
+    # bang — but in a real duct the transmitted spectrum rides a 6-12 dB modal
+    # ripple: the standing-wave field is comparable to the through-wave at
+    # resonance.  New anchor puts the reference (open absorptive V12) at
+    # res2 ~ 0.75 so the PIPE IS THE MEDIUM; per-car spread is unchanged
+    # geometry.  (One calibration constant, not per-car.)
     tail_ratio = a_tail / a_col
-    res2 = min(max(0.575 * muff_return * (0.6 + 0.6 * open_frac)
-                   / max(tail_ratio, 0.5), 0.06), 0.55)
+    res2 = min(max(1.44 * muff_return * (0.6 + 0.6 * open_frac)
+                   / max(tail_ratio, 0.5), 0.15), 1.10)
 
     # --- wall: viscothermal + radiation loss ~ 1/radius (thin pipe = more wall
     # interaction, duller ring) scaled by the system length (more pipe = more

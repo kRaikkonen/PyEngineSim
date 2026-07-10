@@ -474,11 +474,14 @@ class Synthesizer:
         # sound of a bench dyno with the mic at the header.  A car on the street
         # is mostly its exhaust SYSTEM talking: bang down ~20%, pipe body up ~50%.
         self.params = {
-            "dry": 1.44,         # combustion bang level (was cut to 1.28 — too far;
-                                 #   engines lost their DRY combustion punch/fizz)
-            "res1": 0.15,         # primary pipe resonance (runner)
-            "res2": 0.30,         # secondary pipe resonance (full system) — a
-                                  #   touch back UP: the radiation made it too dry
+            "dry": 1.10,         # direct through-wave level.  Dropped 1.44 -> 1.10
+                                 #   with the resonance re-anchor: the raw bang was
+                                 #   5-10x the pipe field, so the exhaust never
+                                 #   sounded like it CAME THROUGH a pipe
+            "res1": 0.42,         # primary pipe resonance (runner) — fallback only,
+            "res2": 0.75,         # normally overridden by exhaust_tmm geometry;
+                                  #   re-anchored so the standing-wave field rivals
+                                  #   the through-wave (real duct 6-12 dB ripple)
             "tail_rad": 0.26,     # tailpipe radiation mix: 0 = mic inside the duct,
                                   #   up = mic behind the car (dQ/dt far field).
                                   #   0.35 was TOO DRY — pulled back for body
@@ -1662,6 +1665,20 @@ class Synthesizer:
                     ctrl = self._rng.standard_normal(5)
                     jit = np.interp(np.linspace(0.0, 1.0, frames),
                                     np.linspace(0.0, 1.0, 5), ctrl)
+                    # CRANK-ORDER SIDEBANDS — why a real engine at 1500 fires/s
+                    # is NOT a drill: the banks/runners are never identical and
+                    # the cam breathes once per CYCLE, so the 'pure' firing-order
+                    # stack is amplitude-modulated at the crank rate (order 1)
+                    # and the cycle rate (order 0.5).  That fills the spectrum
+                    # between the firing harmonics with sideband content — the
+                    # subharmonic BODY under the scream.
+                    f_rev = sim.rpm / 60.0
+                    ph_r = getattr(self, "_rev_ph", 0.0) \
+                        + (2.0 * math.pi * f_rev / self.sample_rate) \
+                        * np.arange(1, frames + 1)
+                    self._rev_ph = float(ph_r[-1] % (4.0 * math.pi))
+                    am = 1.0 + 0.12 * np.sin(ph_r) + 0.08 * np.sin(0.5 * ph_r + 1.3)
+                    scream = scream * am
                     # sizzle RIDES the scream (8 kHz air shear), it must not
                     # dominate — at 0.68 in the old 3 kHz band it WAS the drill
                     scream = scream * (1.0 + 0.20 * m * jit) + (0.40 * m) * tear
@@ -2050,6 +2067,31 @@ class Synthesizer:
                 if self.road_pipe:                 # a cat car's tip is breathier
                     shear_gain *= 0.7
                 sig = sig + shear_gain * ns_
+            # --- KARMAN VORTEX STREET + EDGE TONE (flow-acoustic sources): the
+            # moving gas itself sings.  Vortices shed off the tip lip at the
+            # Strouhal rate f = 0.2*U/d_tip — a narrowband, hollow flutter that
+            # RISES with flow (dipole source, power ~ U^6 -> amplitude ~ flow^3);
+            # and the shear layer grazing the lip edge locks into an EDGE TONE at
+            # f = 0.2*U/t_lip (lip wall ~5 mm) — the thin high 'ripping' whistle
+            # of a hard pull.  U from the mean exhaust flow (~90 m/s at WOT
+            # redline), d from the car's real tip radius.  Both die at idle.
+            u_ex = 90.0 * flow
+            d_tip = 2.0 * max(getattr(sim.engine, "exhaust_radius_m", 0.03), 0.012) \
+                * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)
+            a_fl = flow ** 3
+            if a_fl > 0.003:
+                sr_ = self.sample_rate
+                f_v = min(max(0.2 * u_ex / d_tip, 60.0), 900.0)
+                bv, av = _bandpass(f_v, 6.0, sr_)
+                vex, self._vortex_zi = lfilter(
+                    bv, av, self._rng.standard_normal(frames),
+                    zi=getattr(self, "_vortex_zi", np.zeros(2)))
+                f_e = min(0.2 * u_ex / 0.005, sr_ * 0.42)
+                be, ae = _bandpass(f_e, 8.0, sr_)
+                edg, self._edge_zi = lfilter(
+                    be, ae, self._rng.standard_normal(frames),
+                    zi=getattr(self, "_edge_zi", np.zeros(2)))
+                sig = sig + a_fl * (0.55 * vex + 0.18 * edg)
         self._tap("tailpipe exit", sig)       # gas tearing out of the tip
 
         # --- OVERRUN DARKENING: a motoring engine (DFCO / no combustion) has no
