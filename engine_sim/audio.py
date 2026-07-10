@@ -586,7 +586,10 @@ class Synthesizer:
             "gear_grain": 1.0,    # gear-driven valvetrain whir mix (x eng.gear_grain)
             "mech": 0.16,         # valvetrain tick layer (cam/tappet clatter)
             "gear_mesh": 0.10,    # transmission mesh whine under load (helical, subtle)
-            "spool_reverb": 0.15, # dedicated reverb on the induction/spool sounds
+            "spool_reverb": 0.30, # induction-side reverb: the intercooler core
+                                  #   + charge piping is a big chamber — the
+                                  #   whine, BOV *and flutter* all ring it
+                                  #   (x2 per Leo's reverb audit)
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
             "fire_weight": 0.5,   # fire-tone pad X: thin/bright .. thick/fat body
@@ -645,8 +648,10 @@ class Synthesizer:
             # cylinder's exhaust port + header entry is a bigger chamber.
             _cyl_l = (_eng.total_displacement * 1000.0) / max(
                 _eng.num_cylinders, 1)
-            self.params["src_reverb"] = min(0.20 + 0.12 * min(_cyl_l / 0.70,
-                                                              1.2), 0.36)
+            # x2 per Leo's ear: the port/head cavity carries far more
+            # reverberant energy than first modelled
+            self.params["src_reverb"] = min(0.40 + 0.24 * min(_cyl_l / 0.70,
+                                                              1.2), 0.68)
             # INTAKE ROAR level from the induction hardware: an exposed race
             # airbox / ITB trumpet set breathes loud; a filtered plenum is shy.
             self.params["intake"] = min(0.10
@@ -1931,19 +1936,10 @@ class Synthesizer:
         op_d = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
         direct = 0.20 + 0.62 * op_d
         sig = direct * combustion + wet
-        # MULTI-CHAMBER REVERB COMBS (catalyst brick + box front/rear; feedback
-        # from the system RT60, in-loop pole = HF tail << LF hum).  Input is
-        # the system output itself — combustion already rings inside it.
-        rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
-        if rvD is not None:
-            rlp = self._rv_lp
-            rv = (0.30 * (self._xc[0].process(sig, rvD[0], rvG[0], 1.0,
-                                              rlp) - sig)
-                  + 0.22 * (self._xc[1].process(sig, rvD[1], rvG[1], 1.0,
-                                                rlp) - sig)
-                  + 0.16 * (self._xc[2].process(sig, rvD[2], rvG[2], 1.0,
-                                                rlp) - sig))
-            sig = sig + rv
+        # (the chamber reverb combs now live INLINE at their own stages —
+        # catalyst can after the cat, box chambers after the muffler — so the
+        # tails STACK along the physical chain instead of being one shared
+        # network bolted to the end.  Leo: "reverb 一个一个叠加起来".)
 
         # --- TURBULENT BACKFLOW (湍流回涌): on the overrun the mean flow
         # collapses and the REFLECTED wave dominates at the collector — shear
@@ -2067,6 +2063,14 @@ class Synthesizer:
                 wn = self._rng.standard_normal(frames)
                 bws, aws = self._pk(3200.0, 1.4, 9.0)
                 wn, self._wgate_zi = lfilter(bws, aws, wn, zi=self._wgate_zi)
+                # the screamer PIPE is a real ~0.4 m duct: the BREE rings it
+                # (its own tiny reverb) instead of being a dry noise patch
+                if not hasattr(self, "_wg_gate"):
+                    self._wg_gate = ExhaustWaveguide(240)
+                d_g = max(int(round(2.0 * 0.4 * self.sample_rate / c_runner)),
+                          6)
+                wn = wn + 0.55 * (self._wg_gate.process(wn, d_g, 0.82, -1.0,
+                                                        self._rv_lp) - wn)
                 sig = sig + (0.16 * wg) * np.tanh(wn * 3.0)
         self._tap("head/port", sig)
 
@@ -2085,6 +2089,13 @@ class Synthesizer:
         if self.gpf and _HAVE_SCIPY:
             bg, ag = self._bw(1, min(4500.0, self.sample_rate * 0.45))
             sig, self._gpf_lp_zi = lfilter(bg, ag, sig, zi=self._gpf_lp_zi)
+        # CATALYST CAN reverb: the brick sits in its own expansion casing —
+        # a real small chamber, so it RINGS as well as absorbs (RT60-derived
+        # feedback, in-loop pole keeps the HF tail short).
+        rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
+        if rvD is not None:
+            sig = sig + 0.30 * (self._xc[0].process(sig, rvD[0], rvG[0], 1.0,
+                                                    self._rv_lp) - sig)
         self._tap("catalytic", sig)
 
         # --- (4b) main-pipe HIGH-ORDER STANDING-WAVE WHINE ------------------
@@ -2267,6 +2278,15 @@ class Synthesizer:
                 sig = (1.0 - bl) * sig + bl * bypass
         else:
             sig = np.diff(sig, prepend=sig[:1])
+        # MUFFLER CHAMBER reverbs, inline: the box's front/rear cavities ring
+        # their stored energy right where the box sits in the chain.
+        if getattr(self, "_rvD", None) is not None:
+            rvD, rvG = self._rvD, self._rvG
+            sig = (sig
+                   + 0.24 * (self._xc[1].process(sig, rvD[1], rvG[1], 1.0,
+                                                 self._rv_lp) - sig)
+                   + 0.18 * (self._xc[2].process(sig, rvD[2], rvG[2], 1.0,
+                                                 self._rv_lp) - sig))
         self._tap("valve bypass", sig)        # active-valve straight-through mix
 
         # --- intake / induction roar (the OTHER half a real car you hear) ---
@@ -2385,6 +2405,17 @@ class Synthesizer:
             bH, aH = self._pk(min(self._mega_f * 2.4, self.sample_rate * 0.44),
                               0.7, -3.5 * self._mega_amt)
             sig, self._mega_hi_zi = lfilter(bH, aH, sig, zi=self._mega_hi_zi)
+        if getattr(self, "_mega_f", 0.0) > 0.0:
+            # HORN BODY: the diverging cone is a real air column (~0.6 m) — it
+            # rings a short bright tail of its own on top of the formant.
+            if not hasattr(self, "_wg_horn"):
+                self._wg_horn = ExhaustWaveguide(400)
+            d_h = max(int(round(2.0 * 0.6 * self.sample_rate / c_runner)), 8)
+            g_h = min(10.0 ** (-3.0 * d_h /
+                               (max(getattr(self, "_rt60", 0.1), 0.05)
+                                * self.sample_rate)), 0.90)
+            sig = sig + 0.22 * (self._wg_horn.process(sig, d_h, g_h, 1.0,
+                                                      self._rv_lp) - sig)
         self._tap("megaphone", sig)           # exit-horn mid bark + top trim
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
         # under the note (so a Ferrari V12 thunders, not just screams).
