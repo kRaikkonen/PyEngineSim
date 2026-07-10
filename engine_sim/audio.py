@@ -553,7 +553,7 @@ class Synthesizer:
             "src_reverb": 0.26,   # reverb on the explosion itself (pre-pipe) — a
                                   #   head/port cavity is TINY; 0.48 smeared the
                                   #   pulse transients into mush (wet complaint)
-            "reverb": 0.26,      # spatial reverb mix — an exhaust mic is OUTDOORS
+            "reverb": 0.21,      # spatial reverb mix — an exhaust mic is OUTDOORS
                                  #   in free field; 0.4 was a small room, far too wet
             "intake": 0.11,       # induction roar level (halved — was too windy)
             "eq_low": 0.0,        # dB
@@ -2185,7 +2185,7 @@ class Synthesizer:
                 # an absorptive muffler damps it further.  A high-Q boost here
                 # reads as a one-note drone (不悦耳) — the real thing is a
                 # broad warm lift.
-                g_sys = min(3.0 + 1.0 * math.log10(1.0 + v_mf / 0.002), 3.4)
+                g_sys = min(2.8 + 0.9 * math.log10(1.0 + v_mf / 0.002), 3.0)
                 if getattr(sim.engine, "muffler_type",
                            "reflective") == "absorptive":
                     g_sys *= 0.6
