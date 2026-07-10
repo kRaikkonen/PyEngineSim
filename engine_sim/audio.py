@@ -1732,7 +1732,10 @@ class Synthesizer:
         d2 = 0.5 * (t2 + np.concatenate(([t2[0]], t2[:-1])))      # darker
         d3_ = 0.5 * (t3 + np.concatenate(([t3[0]], t3[:-1])))
         d3_ = 0.5 * (d3_ + np.concatenate(([d3_[0]], d3_[:-1])))  # darkest
-        er_add = 0.34 * t1 + 0.20 * d2 + 0.11 * d3_   # joins wet in pass 2
+        # discrete reflections also collapse with openness (a free tail end
+        # barely reflects the passes back)
+        er_sc = 1.0 - 0.6 * min(max(sim.engine.exhaust_openness, 0.2), 1.0)
+        er_add = er_sc * (0.34 * t1 + 0.20 * d2 + 0.11 * d3_)  # -> wet, pass 2
         # The three firing voices must be TIMBRALLY distinct, or they all read as
         # one 'ignition' blob:
         #   dry   = the low broadband combustion THUMP (the punch)
@@ -1867,9 +1870,14 @@ class Synthesizer:
             wet += P["res1"] * prim + res_mid * mid + P["res2"] * total
         wet *= inv
         wet += er_add
-        # the direct through-wave survives only as the structure/wall leak;
-        # the note is the SYSTEM's output (which now CONTAINS the voiced bang)
-        sig = 0.14 * combustion + wet
+        # DIRECT SHARE FOLLOWS THE HARDWARE (the fix for aven's lost chainsaw):
+        # an open system transmits most of the wave on the FIRST pass — the raw
+        # torn direct sound IS its voice; a chambered system blocks it and the
+        # reverberant field carries the note instead.  A fixed 0.14 leak had
+        # starved every open car of its rasp while over-ringing it.
+        op_d = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
+        direct = 0.20 + 0.62 * op_d
+        sig = direct * combustion + wet
         # MULTI-CHAMBER REVERB COMBS (catalyst brick + box front/rear; feedback
         # from the system RT60, in-loop pole = HF tail << LF hum).  Input is
         # the system output itself — combustion already rings inside it.

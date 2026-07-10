@@ -710,6 +710,49 @@ class App:
         self._status = msg
         self._status_t = 3.0
 
+    _FLOW_STAGES = ("block", "header", "head/port", "catalytic",
+                    "standing-wave", "resonator", "muffler", "valve bypass",
+                    "induction+gears", "wall de-honk", "metal ring",
+                    "megaphone", "thunder", "reflection", "radiation",
+                    "tailpipe exit", "EQ", "cabin/room", "output")
+
+    def _draw_flow_debug(self):
+        """TEMPORARY (Leo): gas-flow GAIN STAGING — a live RMS meter for every
+        exhaust stage tap, so you can SEE where energy blooms or dies along
+        the pipe.  F12 toggles.  Requires the taps (auto-enabled while open)."""
+        sy = self.synth
+        if sy is None or not getattr(self, "flow_dbg", False):
+            return
+        taps = getattr(sy, "_stage_taps", {})
+        rows = [(nm, taps.get(nm)) for nm in self._FLOW_STAGES]
+        w, rh = 250, 15
+        h = rh * len(rows) + 26
+        x, y = 14, 60
+        srf = pygame.Surface((w, h), pygame.SRCALPHA)
+        srf.fill((8, 9, 12, 214))
+        self.screen.blit(srf, (x, y))
+        pygame.draw.rect(self.screen, (74, 82, 96), (x, y, w, h), 1)
+        self.screen.blit(self.font_small.render(
+            "GAS FLOW · stage levels (dB)", True, (152, 160, 174)),
+            (x + 8, y + 4))
+        yy = y + 22
+        for nm, arr in rows:
+            if arr is not None and len(arr):
+                rms = float(np.sqrt(np.mean(np.asarray(arr) ** 2)))
+                db = 20.0 * math.log10(max(rms, 1e-5))     # -100..0-ish
+                fr = min(max((db + 60.0) / 60.0, 0.0), 1.0)
+                col = ((110, 220, 130) if fr < 0.75 else
+                       (250, 200, 90) if fr < 0.92 else (240, 90, 90))
+                pygame.draw.rect(self.screen, (30, 34, 42),
+                                 (x + 96, yy + 3, 120, 9))
+                pygame.draw.rect(self.screen, col,
+                                 (x + 96, yy + 3, int(120 * fr), 9))
+                self.screen.blit(self.font_small.render(
+                    f"{db:5.1f}", True, (200, 205, 215)), (x + 219, yy))
+            self.screen.blit(self.font_small.render(
+                nm[:13], True, (170, 176, 188)), (x + 8, yy))
+            yy += rh
+
     def _draw_voicing_debug(self):
         """TEMPORARY (Leo): live voicing-switchboard readout for ear A/B
         debugging — green = ON, red = OFF, updated every frame.  F11 hides it.
@@ -1253,6 +1296,8 @@ class App:
                                 + ("ON" if self.synth.vx["bipolar"] else "OFF"))
                 elif e.key == pygame.K_F11:    # TEMP: voicing debug panel
                     self.voicing_dbg = not getattr(self, "voicing_dbg", True)
+                elif e.key == pygame.K_F12:    # TEMP: gas-flow gain staging
+                    self.flow_dbg = not getattr(self, "flow_dbg", False)
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",
@@ -1449,7 +1494,8 @@ class App:
         # the exhaust-path stage scopes only sample audio while the overlay is up;
         # in low-quality mode they're suppressed entirely (only the TOTAL EXHAUST
         # FLOW scope stays) to keep the frame cheap for the audio thread.
-        stage_scopes = self.scope_open and not self.low_quality
+        stage_scopes = (self.scope_open and not self.low_quality) \
+            or getattr(self, "flow_dbg", False)
         if self.synth is not None:
             self.synth.scope_enabled = stage_scopes
         if stage_scopes:
@@ -1458,6 +1504,7 @@ class App:
             self._draw_menu()
         self._draw_touch_overlay()
         self._draw_voicing_debug()          # TEMP: switchboard readout (F11)
+        self._draw_flow_debug()             # TEMP: gas-flow gain staging (F12)
         self._present()
 
     def _present(self):

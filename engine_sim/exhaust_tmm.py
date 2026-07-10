@@ -54,9 +54,12 @@ def exhaust_acoustics(eng):
 
     # --- res1: primary-runner resonance = |R| at the runner->collector expansion.
     # A big step (small primary into a fat collector) reflects hard -> strong,
-    # peaky runner resonance; a gentle step barely reflects.
+    # peaky runner resonance; a gentle step barely reflects.  Scaled by how much
+    # of the field the OPEN end throws away (see res2's law below).
+    open_frac0 = min(max(getattr(eng, "exhaust_openness", 0.7), 0.2), 1.0)
     r_step = abs(a_col - a_prim) / (a_col + a_prim)
-    res1 = min(max(0.45 * r_step / 0.55, 0.06), 0.62)     # 0.55 = typical step
+    res1 = min(max(0.45 * r_step / 0.55 * (1.0 - 0.55 * open_frac0), 0.04),
+               0.50)                                       # 0.55 = typical step
 
     # --- res2: full-system resonance = the open tailpipe end reflecting back
     # THROUGH the muffler.  Open end reflects strongly at low f; a reflective
@@ -74,12 +77,17 @@ def exhaust_acoustics(eng):
     # resonance.  New anchor puts the reference (open absorptive V12) at
     # res2 ~ 0.75 so the PIPE IS THE MEDIUM; per-car spread is unchanged
     # geometry.  (One calibration constant, not per-car.)
-    # (re-anchored DOWN after the in-pipe reverb network + 3-section series
-    # chain landed: the resonant field now has three more contributors, so the
-    # waveguide levels return toward the middle — aven res2 ~ 0.52.)
+    # THE TRANSMITTED-vs-REVERBERANT LAW (Leo's 0.05 slider experiment): an
+    # OPEN system transmits nearly everything on the first pass — that's why
+    # it's loud and raw (the chainsaw) — and its standing-wave field is only a
+    # ripple; a CHAMBERED quiet system blocks the direct wave, so what exits
+    # is mostly the reverberant field.  The old (0.6+0.6*open) factor had this
+    # BACKWARDS (more open -> bigger field), which buried the Aventador's rasp
+    # under a comb it physically doesn't have.  Now the field COLLAPSES with
+    # openness; the direct share grows to match (see audio.py sig combine).
     tail_ratio = a_tail / a_col
-    res2 = min(max(1.00 * muff_return * (0.6 + 0.6 * open_frac)
-                   / max(tail_ratio, 0.5), 0.12), 0.85)
+    res2 = min(max(1.00 * muff_return * (1.15 - 0.75 * open_frac)
+                   / max(tail_ratio, 0.5), 0.05), 0.72)
 
     # --- wall: viscothermal + radiation loss ~ 1/radius (thin pipe = more wall
     # interaction, duller ring) scaled by the system length (more pipe = more
