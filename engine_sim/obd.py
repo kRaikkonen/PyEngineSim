@@ -197,7 +197,13 @@ class _SerialLink:
 
     def __init__(self, port: str, baud: int = 38400, timeout: float = 3.0):
         import serial                       # optional dependency, imported late
-        self.ser = serial.Serial(port, baud, timeout=0.05)
+        if "://" in port:
+            # pyserial URL handlers: rfcomm and friends on Linux, plus
+            # socket:// and loop:// which let the whole serial path be tested
+            # against the fake adapter with no hardware attached.
+            self.ser = serial.serial_for_url(port, baudrate=baud, timeout=0.05)
+        else:
+            self.ser = serial.Serial(port, baud, timeout=0.05)
         self.timeout = timeout
         self.buf = b""
 
@@ -209,8 +215,15 @@ class _SerialLink:
         while b">" not in self.buf:
             if time.monotonic() > end:
                 break
-            chunk = self.ser.read(256)
+            # read(256) would sit out the WHOLE port timeout waiting for 256
+            # bytes that never come - a reply is ~20.  Block for one byte, then
+            # take whatever else already arrived: the reply is served the
+            # moment it lands instead of on the next timeout tick.
+            chunk = self.ser.read(1)
             if chunk:
+                extra = getattr(self.ser, "in_waiting", 0)
+                if extra:
+                    chunk += self.ser.read(extra)
                 self.buf += chunk
         if b">" in self.buf:
             head, _, self.buf = self.buf.partition(b">")
@@ -223,6 +236,15 @@ class _SerialLink:
             self.ser.close()
         except Exception:
             pass
+
+
+def list_serial_ports() -> list:
+    """[(device, description)] for every serial port - which COM is the dongle."""
+    try:
+        from serial.tools import list_ports
+    except Exception:
+        return []
+    return [(p.device, p.description or "") for p in list_ports.comports()]
 
 
 # --------------------------------------------------------------------------

@@ -40,7 +40,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 from engine_sim import presets
 from engine_sim.audio import Synthesizer, list_output_devices
 from engine_sim.obd import (CAR_PROFILES, OBDTelemetry, RpmMap,
-                            ShiftDetector)
+                            ShiftDetector, list_serial_ports)
 from engine_sim.simulator import Simulator
 from engine_sim.units import rpm_to_rads
 
@@ -101,6 +101,8 @@ def main(argv=None):
                    help="request rate ceiling (the adapter is the real limit)")
     g.add_argument("--demo", action="store_true",
                    help="no hardware: run a simulated car on localhost")
+    g.add_argument("--list-serial", action="store_true",
+                   help="print serial ports (which COM is the dongle) and exit")
 
     g = ap.add_argument_group("audio")
     g.add_argument("--volume", type=float, default=1.0, help="0..1")
@@ -111,6 +113,10 @@ def main(argv=None):
                    help="output device index or name substring")
     g.add_argument("--list-devices", action="store_true",
                    help="print audio output devices and exit")
+    g.add_argument("--host-latency", type=float, default=0.02,
+                   help="output buffer in seconds.  Car mode draws nothing, so "
+                        "it can run far tighter than the GUI's 0.06 default; "
+                        "raise it if the audio crackles")
     g.add_argument("--out-latency", type=float, default=0.0,
                    help="seconds of output lag to predict ahead of "
                         "(Bluetooth to a car stereo is roughly 0.2)")
@@ -129,6 +135,13 @@ def main(argv=None):
     if args.list_devices:
         for line in list_output_devices():
             print(" ", line)
+        return 0
+    if args.list_serial:
+        ports = list_serial_ports()
+        if not ports:
+            print("  no serial ports (is pyserial installed?  pip install pyserial)")
+        for dev, desc in ports:
+            print("  %-8s %s" % (dev, desc))
         return 0
     if args.engine not in presets.ALL:
         print("unknown engine %r (try --list-engines)" % args.engine)
@@ -174,6 +187,7 @@ def main(argv=None):
     synth = None
     if not args.no_audio:
         synth = Synthesizer(sim, sample_rate=args.rate, device=args.device)
+        synth.host_latency = max(args.host_latency, 0.005)
         synth.pov = args.pov
         synth.volume = max(0.0, min(args.volume, 1.0))
         synth.start()
@@ -182,8 +196,11 @@ def main(argv=None):
     print("  map: %s   your car %.0f-%.0f rpm  ->  %.0f-%.0f rpm"
           % (rmap.mode, rmap.car_idle, rmap.car_redline, eng.idle_rpm,
              eng.redline_rpm))
-    print("  link: %s   POV: %s   Ctrl-C to stop"
-          % (args.serial_port or ("%s:%d" % (host, port)), args.pov))
+    out_ms = ("%.0f ms" % synth.latency_ms) if (
+        synth is not None and synth.latency_ms) else "n/a"
+    print("  link: %s   POV: %s   output buffer: %s"
+          % (args.serial_port or ("%s:%d" % (host, port)), args.pov, out_ms))
+    print("  Ctrl-C to stop")
 
     # ------------------------------------------------------------ loop
     dtr = sim.drivetrain

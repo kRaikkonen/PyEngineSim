@@ -116,7 +116,8 @@ py car.py --demo
 | `py car.py --demo` | no hardware — a simulated car, to hear what it does |
 | `py car.py --engine aven --map stretch` | ...or a Lamborghini V12 |
 | `py car.py --map-preview` | print the rpm mapping table and exit |
-| `py car.py --serial COM5` | Bluetooth-SPP / USB dongle instead (needs pyserial) |
+| `py car.py --serial COM5` | Bluetooth-SPP / USB dongle instead (`pip install pyserial`) |
+| `py car.py --list-serial` | which COM port is the dongle |
 
 - **rpm mapping** — your car stops at 6500; an Aventador does not stop until
   8500. `--map stretch` (default) puts your redline on its redline, `--map
@@ -126,6 +127,9 @@ py car.py --demo
 - **Pedal, not throttle plate** — it prefers the accelerator-pedal PID, which on
   a turbo car leads the crankshaft by 100-300 ms (that lag *is* the turbo
   spooling), so the note starts when your foot moves.
+- **Output buffer** — car mode draws nothing, so nothing can stall the GIL and
+  it asks for a much tighter output buffer than the GUI (25 ms vs 65 ms here).
+  `--host-latency` raises it again if you hear crackle.
 - **Latency is the whole game** — Bluetooth into a car stereo costs 150-300 ms
   and nothing in software can fix that. Use a **wired** speaker in the cabin;
   it then mixes with the real engine exactly the way a factory sound actuator

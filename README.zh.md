@@ -105,7 +105,8 @@ py car.py --demo
 | `py car.py --demo` | 不需要硬件 —— 用模拟的车先听听效果 |
 | `py car.py --engine aven --map stretch` | ……或者换成兰博基尼 V12 |
 | `py car.py --map-preview` | 打印转速映射表后退出 |
-| `py car.py --serial COM5` | 改用蓝牙 SPP / USB 狗（需要 pyserial） |
+| `py car.py --serial COM5` | 改用蓝牙 SPP / USB 狗（`pip install pyserial`） |
+| `py car.py --list-serial` | 看哪个 COM 口是狗 |
 
 - **转速映射** —— 你的车 6500 断油，Aventador 到 8500 才停。`--map stretch`（默认）
   把你的红线映射到它的红线；`--map direct` 是 1:1；`--map ratio` 是固定倍率。转速区间
@@ -113,6 +114,7 @@ py car.py --demo
   也会在一次驾驶内自我修正。
 - **用油门踏板，不用节气门** —— 优先取踏板位置 PID：涡轮车上踏板比曲轴**领先
   100–300 毫秒**（这段滞后正是涡轮在建立压力），所以你脚一动声音就起来了。
+- **输出缓冲** —— 车载模式什么都不画，没东西会卡住 GIL，所以它要的输出缓冲比GUI 小得多（实测 25 ms vs 65 ms）。听到爆音就用`--host-latency` 调大。
 - **延迟决定成败** —— 蓝牙进车机要付 150–300 毫秒，软件治不了。请用**有线**音箱放在
   车内，它和真实引擎声在空气里混合，恰恰就是原厂 Soundaktor 的做法。非要无线的话，
   `--out-latency 0.2` 会把转速往前预测这么多（持续拉转时准，换挡瞬间会错约 100 毫秒）。

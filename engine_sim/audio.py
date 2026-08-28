@@ -765,6 +765,10 @@ class Synthesizer:
         self.latency_ms = 0.0
         self.mode = "off"
         self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
+        # Host output buffer (seconds).  Generous by default because a
+        # heavy pure-Python frame must never underrun the audio; car mode
+        # has no frame to draw and asks for much less.
+        self.host_latency = 0.06
 
     # --------------------------------------------------------- rate-dependent
     def _build_audio(self):
@@ -3337,7 +3341,10 @@ class Synthesizer:
         # internal buffers), but ask for a generous ~60ms host buffer so a long
         # pure-Python draw can stall the GIL without underrunning the audio.
         # (Exclusive mode above stays tiny for the latency purists who opt in.)
-        OB, OL = BLOCK, 0.06
+        # CAR MODE draws NOTHING, so nothing can stall the GIL -- it lowers
+        # host_latency to buy that 60 ms back, where every ms is a ms your foot
+        # is ahead of the sound.
+        OB, OL = BLOCK, self.host_latency
         if self._device is not None:
             attempts.append(("shared", dict(
                 device=self._device, samplerate=self.sample_rate, channels=2,

@@ -138,6 +138,44 @@ def test_shift_detector():
     check(d.shifts == 0, "a rev-matching blip is not a shift")
 
 
+# ------------------------------------------------------------- serial transport
+def test_serial_path():
+    """The COM-port / Bluetooth-SPP transport, exercised with no hardware.
+
+    pyserial's ``socket://`` URL handler gives a real Serial object whose bytes
+    go to a TCP peer, so _SerialLink -- the same class a USB or paired-BT
+    dongle uses -- is driven end to end against the fake adapter.
+    """
+    print("\nserial / Bluetooth-SPP transport")
+    try:
+        import serial                                   # noqa: F401
+    except ImportError:
+        print("  skip (pyserial not installed)")
+        return
+    srv = FakeELM327(latency=0.02)
+    host, port = srv.start()
+    tm = OBDTelemetry(serial_port="socket://%s:%d" % (host, port))
+    tm.start()
+    try:
+        for _ in range(100):
+            if tm.is_live():
+                break
+            time.sleep(0.1)
+        check(tm.is_live(), "serial link came up")
+        check(tm.pedal_src == PID_PEDAL_REL, "discovery works over serial too")
+        check(tm.multi_pid, "multi-PID negotiated over serial")
+        t0 = time.monotonic()
+        seen = []
+        while time.monotonic() - t0 < 6.0:
+            seen.append(tm.raw_rpm)
+            time.sleep(0.05)
+        check(max(seen) - min(seen) > 500.0, "rpm moves over the serial link")
+        check(tm.hz > 8.0, "serial sample rate %.1f Hz" % tm.hz)
+    finally:
+        tm.stop()
+        srv.stop()
+
+
 # ------------------------------------------------------------------ end to end
 def test_link():
     print("\nend-to-end link against the fake ELM327")
@@ -198,4 +236,5 @@ if __name__ == "__main__":
     test_gear_learner()
     test_shift_detector()
     test_link()
+    test_serial_path()
     print("\nAll OBD / car-mode checks passed.")
