@@ -99,6 +99,49 @@ PyEngineSim listens and revs the engine to match the game.
 
 ---
 
+## 🚙 Drive it in your OWN car (car mode)
+
+`car.py` is a **headless** build — no window, no gauges, no mixer, nothing drawn
+— that plays whichever engine you pick at **your real car's rpm**, read from an
+ELM327 dongle in the OBD-II port. Put a small wired speaker in the cabin and
+your commuter sounds like a five-cylinder RS3, or a V12.
+
+```bash
+py car.py --demo
+```
+
+| | |
+|---|---|
+| `py car.py` | WiFi ELM327 at `192.168.0.10:35000`, playing the 8Y RS3 five-pot |
+| `py car.py --demo` | no hardware — a simulated car, to hear what it does |
+| `py car.py --engine aven --map stretch` | ...or a Lamborghini V12 |
+| `py car.py --map-preview` | print the rpm mapping table and exit |
+| `py car.py --serial COM5` | Bluetooth-SPP / USB dongle instead (needs pyserial) |
+
+- **rpm mapping** — your car stops at 6500; an Aventador does not stop until
+  8500. `--map stretch` (default) puts your redline on its redline, `--map
+  direct` is 1:1, `--map ratio` is a plain multiplier. The rev range is seeded
+  from a car profile (`--car a3`) and then **learned** from what your car
+  actually does, so a wrong seed self-corrects within one drive.
+- **Pedal, not throttle plate** — it prefers the accelerator-pedal PID, which on
+  a turbo car leads the crankshaft by 100-300 ms (that lag *is* the turbo
+  spooling), so the note starts when your foot moves.
+- **Latency is the whole game** — Bluetooth into a car stereo costs 150-300 ms
+  and nothing in software can fix that. Use a **wired** speaker in the cabin;
+  it then mixes with the real engine exactly the way a factory sound actuator
+  does. If you must go wireless, `--out-latency 0.2` predicts the rpm that far
+  ahead (good on a sustained pull, wrong for ~100 ms at a shift).
+- **Gears and shifts** — gearbox ratios are learned from the rpm/speed plateaus
+  (no ratio table needed), and an upshift is spotted from the rpm collapse and
+  cuts the throttle, so the exhaust bangs like the real torque interruption.
+- Your real manifold pressure drives the simulated compressor, so the turbo
+  spools when yours does.
+
+All of it is testable without a dongle or a driveway: `py test_obd.py` runs the
+real client against a fake ELM327 speaking the real protocol over a real socket.
+
+---
+
 ## ⚡ Performance modes
 
 The bay rendering is the heavy part (a W16 has a lot to draw); the physics + audio
