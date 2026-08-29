@@ -12,6 +12,7 @@ to :class:`~engine_sim.carmode.CarMode` and hands the synthesizer an
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 import toga
@@ -68,6 +69,17 @@ class PyEngineSim(toga.App):
         self.main_window = toga.MainWindow(title=self.formal_name)
         self.main_window.content = box
         self.main_window.show()
+
+        # Autostart.  In the car you do not want to be tapping a screen, and in
+        # the simulator there is nothing to tap with -- so the same switch
+        # serves both.  PYENGINESIM_AUTOSTART=demo also flips the fake adapter
+        # on, which is how the audio path is exercised with no dongle.
+        auto = os.environ.get("PYENGINESIM_AUTOSTART", "")
+        if auto:
+            if auto.lower() == "demo":
+                self.demo_sw.value = True
+            loop = getattr(self, "loop", None) or asyncio.get_event_loop()
+            loop.call_later(1.0, self._start)
 
     # ------------------------------------------------------------- helpers
     def _selected_key(self) -> str:
