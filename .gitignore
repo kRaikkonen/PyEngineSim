@@ -52,3 +52,8 @@ build_log.txt
 _srcstage/
 
 agent.py
+
+# Golden audio reference: 25 MB and fully deterministic, so regenerate it
+# rather than storing it --  py tools/golden.py make
+tools/golden_reference.npz
+tools/*.check.npz

@@ -211,6 +211,51 @@ def _one_pole(v, pole, y_prev):
     return out, y_prev
 
 
+_ONEPOLE_POW = {}
+
+
+def _one_pole_real(v, p, y_prev):
+    """Real y[n] = p*y[n-1] + v[n].  Same closed form as _one_pole, without
+    the complex arithmetic -- and these are usually 14-sample segments, so the
+    overhead IS the cost."""
+    n = v.shape[0]
+    if n == 0:
+        return v, y_prev
+    ap = abs(p)
+    if ap < 1e-12:
+        out = v.copy()
+        out[0] += p * y_prev
+        return out, out[-1]
+    step = n if ap >= 0.999999 else max(1, min(n, int(27.6 / -math.log(ap)) + 1))
+    if step >= n:
+        key = (p, n)
+        got = _ONEPOLE_POW.get(key)
+        if got is None:
+            if len(_ONEPOLE_POW) > 512:
+                _ONEPOLE_POW.clear()
+            pw = np.empty(n)
+            pw[0] = 1.0
+            if n > 1:
+                np.cumprod(np.full(n - 1, p), out=pw[1:])
+            got = _ONEPOLE_POW[key] = (pw, 1.0 / pw)
+        pw, ipw = got
+        out = pw * (p * y_prev + np.cumsum(v * ipw))
+        return out, out[-1]
+    out = np.empty(n)
+    i = 0
+    while i < n:
+        k = min(step, n - i)
+        pw = np.empty(k)
+        pw[0] = 1.0
+        if k > 1:
+            np.cumprod(np.full(k - 1, p), out=pw[1:])
+        seg = pw * (p * y_prev + np.cumsum(v[i:i + k] / pw))
+        out[i:i + k] = seg
+        y_prev = seg[-1]
+        i += k
+    return out, y_prev
+
+
 def _np_lfilter(b, a, x, zi=None):
     """scipy-compatible enough for this file: returns (y, zf).
 
@@ -218,6 +263,27 @@ def _np_lfilter(b, a, x, zi=None):
     pass it straight back.  Zeros of any length mean "at rest", which is
     exactly how every call site initialises it.
     """
+    # --- first order: over half of all calls, and the short ones.  Straight
+    # real arithmetic, no cache lookups, no complex, no np.convolve.
+    if len(a) == 2 and len(b) <= 2 and a[0] == 1.0:
+        x = np.asarray(x, dtype=np.float64)
+        p = -float(a[1])
+        b0 = float(b[0])
+        b1 = float(b[1]) if len(b) > 1 else 0.0
+        x_prev = y_prev = 0.0
+        if zi is not None and len(zi) >= 2:
+            x_prev = float(np.real(zi[0]))
+            y_prev = float(np.real(zi[1]))
+        if b1:
+            v = b0 * x
+            v[1:] += b1 * x[:-1]
+            v[0] += b1 * x_prev
+        else:
+            v = b0 * x
+        y, y_end = _one_pole_real(v, p, y_prev)
+        last_x = float(x[-1]) if x.shape[0] else x_prev
+        return y, np.array([last_x, y_end])
+
     b = np.asarray(b, dtype=np.float64)
     a = np.asarray(a, dtype=np.float64)
     x = np.asarray(x, dtype=np.float64)
@@ -699,7 +765,8 @@ class CylinderVoicing:
 class Synthesizer:
     """Streams physics-driven engine audio from a live :class:`Simulator`."""
 
-    def __init__(self, simulator, sample_rate: int = None, device=None):
+    def __init__(self, simulator, sample_rate: int = None, device=None,
+                 seed=None):
         self.sim = simulator
         self.volume = 1.0   # mute switch (M): 1.0 on, 0.0 muted
         self.enabled = _HAVE_SD or ON_ANDROID
@@ -743,11 +810,18 @@ class Synthesizer:
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
         # is what gives a multi-cylinder exhaust its rich, layered waveform.
+        # A fixed seed makes a render bit-exact reproducible, which is what
+        # lets a reimplementation be compared against this one stage by
+        # stage instead of by ear (see tools/golden.py).
         rngf = np.random.default_rng(20240517)
         self._cyl_tau = rngf.uniform(-1.0, 1.0, ncyl)   # decay -> pop pitch/brightness
         self._cyl_amp = rngf.uniform(-1.0, 1.0, ncyl)   # loudness
 
-        self._rng = np.random.default_rng()
+        self._rng = np.random.default_rng(seed)
+        # full-resolution stage capture for the golden reference; the UI's
+        # scopes use the decimated path below
+        self.capture_stages = False
+        self._stage_full = {}
         self._jit = np.ones(ncyl)
         self._tjit = np.zeros(ncyl)   # per-cylinder firing-phase scatter (deg)
         self._level = 0.05
@@ -1597,7 +1671,12 @@ class Synthesizer:
     def _tap(self, name: str, sig: np.ndarray) -> None:
         """Snapshot a decimated copy of one exhaust-stage waveform for the UI's
         per-stage refresh scopes.  No-op unless the scope overlay is open."""
-        if not self.scope_enabled or sig is None or not len(sig):
+        if sig is None or not len(sig):
+            return
+        if self.capture_stages:
+            self._stage_full.setdefault(name, []).append(
+                np.asarray(sig, dtype=np.float64).copy())
+        if not self.scope_enabled:
             return
         step = max(1, len(sig) // 96)
         self._stage_taps[name] = sig[::step][:96].astype(np.float64).copy()
