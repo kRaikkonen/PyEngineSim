@@ -53,6 +53,17 @@ requires = [
     "numpy",
 ]
 
+[tool.briefcase.app.pyenginesim.iOS.info]
+# Keep making sound with the screen off and while another app is in front --
+# in a car the phone is locked in a cradle, not being looked at.  Without this
+# iOS suspends us the moment the screen sleeps.
+UIBackgroundModes = ["audio"]
+# Expose Documents/ in the Files app so pyenginesim.log can be pulled off the
+# phone.  On the road there is no console attached; that file is the only
+# diagnostic there is.
+UIFileSharingEnabled = true
+LSSupportsOpeningDocumentsInPlace = true
+
 # macOS is kept only so the same shell can be run on the laptop while
 # iterating -- it is not a shipping target (that is run.py).
 [tool.briefcase.app.pyenginesim.macOS]
