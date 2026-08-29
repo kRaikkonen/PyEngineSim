@@ -43,6 +43,12 @@ final class PulseTests: XCTestCase {
         let g3: Double
         let lp_a: Double
         let lp_end: Double
+        let header: [Double]
+        let head_port: [Double]
+        let flow: Double
+        let cold: Double
+        let throttle: Double
+        let idle_rpm: Double
     }
 
     func fixture(_ name: String) throws -> Data {
@@ -272,6 +278,75 @@ final class PulseTests: XCTestCase {
             let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
             print("  \(key) pipes: rel rms \(rel)")
             XCTAssertLessThan(rel, 1e-9, "\(key) pipe system diverges")
+        }
+    }
+
+    /// Burble, shear and the head duct.  Runs the whole chain from the top so
+    /// the RNG stays in step -- which is the only way this can be exact.
+    func testHeaderAndHeadMatchPython() throws {
+        let voicings = try VoicingSetup.load(jsonData: fixture("engine_voicing"))
+        let cases = try JSONDecoder().decode([String: Case].self,
+                                             from: fixture("pulses"))
+        for (key, c) in cases {
+            guard let setup = voicings[key] else { continue }
+            let cache = FilterCache(sampleRate: c.sample_rate)
+            let train = PulseTrain(setup: setup, sampleRate: c.sample_rate)
+            let bf = BangFizz(nchan: setup.nchan, nCylinders: c.ncyl,
+                              sampleRate: c.sample_rate, cache: cache)
+            let src = SourceStage(sampleRate: c.sample_rate, nchan: setup.nchan,
+                                  cache: cache)
+            src.fireChordIndex = c.fire_chord
+            let blk = BlockStage(setup: setup, sampleRate: c.sample_rate,
+                                 cache: cache)
+            let pipes = PipeStage(nchan: setup.nchan)
+            let hdr = HeaderStage(sampleRate: c.sample_rate, cache: cache)
+            let rng = PortableRNG(seed: c.seed)
+
+            let chans = train.render(frames: c.frames, rpm: c.rpm,
+                                     degPerSample: c.dps, load: c.load,
+                                     soundSpeed: c.sound_speed, valve: c.valve,
+                                     cylScale: c.cyl_scale, rng: rng)
+            let bfOut = bf.process(chans: chans, strength: c.strength,
+                                   rpm: c.rpm, degPerSample: c.dps, rng: rng)
+            let sOut = src.process(bang: bfOut.bang, fizz: bfOut.fizz,
+                                   rpm: c.rpm, nCylinders: c.ncyl,
+                                   exhaustOpenness: c.exhaust_openness,
+                                   choke: c.choke, d2: c.d2, params: c.params)
+            let inv = 1.0 / Double(setup.nchan)
+            var fizzSum = [Double](repeating: 0, count: c.frames)
+            for ch in bfOut.fizz { for i in 0..<c.frames { fizzSum[i] += ch[i] } }
+            var combustion = [Double](repeating: 0, count: c.frames)
+            let turb = c.params["turbulence"] ?? 0.5
+            for i in 0..<c.frames {
+                combustion[i] = sOut.voiced[i] + turb * (fizzSum[i] * inv)
+            }
+            let sealed = blk.process(combustion).sealed
+            let wet = pipes.process(srcs: sOut.srcs, combustion: sealed,
+                                    d1: c.d1, d2: c.d2, d3: c.d3,
+                                    g1: c.g1, g2: c.g2, g3: c.g3, s: -1.0,
+                                    lpA: c.lp_a, lpEnd: c.lp_end,
+                                    res1: c.params["res1"] ?? 0.1,
+                                    res2: c.params["res2"] ?? 0.1)
+            let direct = PipeStage.directShare(exhaustOpenness: c.exhaust_openness)
+            var sig = [Double](repeating: 0, count: c.frames)
+            for i in 0..<c.frames {
+                sig[i] = direct * sealed[i] + wet[i] + sOut.er[i]
+            }
+            let out = hdr.process(sig, throttle: c.throttle, rpm: c.rpm,
+                                  idleRpm: c.idle_rpm, flow: c.flow,
+                                  choke: c.choke, cold: c.cold,
+                                  degPerSample: c.dps, rng: rng)
+            for (name, got, want) in [("header", out.header, c.header),
+                                      ("head/port", out.head, c.head_port)] {
+                var sumSq = 0.0, refSq = 0.0
+                for i in 0..<min(got.count, want.count) {
+                    let d = got[i] - want[i]
+                    sumSq += d * d; refSq += want[i] * want[i]
+                }
+                let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
+                print("  \(key) \(name): rel rms \(rel)")
+                XCTAssertLessThan(rel, 1e-9, "\(key) \(name) diverges")
+            }
         }
     }
 }
