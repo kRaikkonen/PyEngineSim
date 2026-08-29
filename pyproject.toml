@@ -15,8 +15,9 @@ project_name = "PyEngineSim"
 bundle = "com.pyenginesim"
 version = "1.0"
 url = "https://github.com/kRaikkonen/PyEngineSim"
-license = "MIT"
-license-files = ["LICENSE"]
+# No LICENSE file exists in this repo and the project has never declared one,
+# so nothing is asserted here.  Add a real license + file before this is ever
+# distributed to anyone else; for a sideloaded personal build it is inert.
 author = "Leo"
 author_email = "noreply@pyenginesim.dev"
 
