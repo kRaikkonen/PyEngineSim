@@ -118,6 +118,7 @@ py car.py --demo
 | `py car.py --map-preview` | print the rpm mapping table and exit |
 | `py car.py --serial COM5` | Bluetooth-SPP / USB dongle instead (`pip install pyserial`) |
 | `py car.py --list-serial` | which COM port is the dongle |
+| `py car.py --probe --serial COM5` | is this dongle any good?  answer in 10 s, before making a sound |
 
 - **rpm mapping** — your car stops at 6500; an Aventador does not stop until
   8500. `--map stretch` (default) puts your redline on its redline, `--map
@@ -140,6 +141,12 @@ py car.py --demo
   cuts the throttle, so the exhaust bangs like the real torque interruption.
 - Your real manifold pressure drives the simulated compressor, so the turbo
   spools when yours does.
+
+> **A VAG-KKL / 409.1 cable is NOT an ELM327.** It is a bare K-line level
+> shifter with no OBD interpreter in it, and K-line diagnostics are not
+> wired to the engine ECU on a CAN-era car anyway. Buy something that
+> says **ELM327** and **ISO 15765-4 CAN**; `--probe` will tell you in ten
+> seconds whether the one you bought can do the job.
 
 All of it is testable without a dongle or a driveway: `py test_obd.py` runs the
 real client against a fake ELM327 speaking the real protocol over a real socket.

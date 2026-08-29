@@ -426,6 +426,8 @@ class OBDTelemetry:
         self._running = False
         self.error = None
         self.status = "idle"
+        self.adapter_id = ""            # ATI  - what the dongle calls itself
+        self.protocol_name = ""         # ATDP - what it actually negotiated
 
         # --- Forza-compatible surface (see engine_sim/telemetry.py) ---
         self.is_race_on = True
@@ -524,6 +526,8 @@ class OBDTelemetry:
             # car speaks; protocol "0" lets the adapter hunt for it instead
             # (costs a slow first request).
             self._cmd("ATSP" + str(self.protocol), 2.0)
+            self.adapter_id = " ".join(self._cmd("ATI", 1.5).split())
+            self.protocol_name = " ".join(self._cmd("ATDP", 2.0).split())
             self._discover()
             self.status = "live"
             return True

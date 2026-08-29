@@ -176,6 +176,41 @@ def test_serial_path():
         srv.stop()
 
 
+# ------------------------------------------------------- degraded adapter
+def test_cheap_clone():
+    """A bad dongle must still work, just worse -- and say so.
+
+    Round-robin polling and the throttle-plate fallback are the paths a cheap
+    clone forces us down, so they get tested rather than assumed.
+    """
+    print("\ncheap clone (few PIDs, no multi-PID)")
+    srv = FakeELM327(latency=0.01, allow_multi_pid=False,
+                     supported={0x0C, 0x0D, 0x11})
+    host, port = srv.start()
+    tm = OBDTelemetry(host=host, port=port)
+    tm.start()
+    try:
+        for _ in range(100):
+            if tm.is_live():
+                break
+            time.sleep(0.1)
+        check(tm.is_live(), "still comes up on a stripped-down adapter")
+        check(not tm.multi_pid, "multi-PID refusal detected, not assumed")
+        check(tm.pedal_src == 0x11,
+              "falls back to the throttle plate when no pedal PID exists")
+        check(0x5A not in tm.supported, "does not claim PIDs the car lacks")
+        seen = []
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 8.0:
+            seen.append(tm.raw_rpm)
+            time.sleep(0.05)
+        check(max(seen) - min(seen) > 500.0,
+              "rpm still tracks through round-robin polling")
+    finally:
+        tm.stop()
+        srv.stop()
+
+
 # ------------------------------------------------------------------ end to end
 def test_link():
     print("\nend-to-end link against the fake ELM327")
@@ -237,4 +272,5 @@ if __name__ == "__main__":
     test_shift_detector()
     test_link()
     test_serial_path()
+    test_cheap_clone()
     print("\nAll OBD / car-mode checks passed.")

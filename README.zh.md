@@ -107,6 +107,7 @@ py car.py --demo
 | `py car.py --map-preview` | 打印转速映射表后退出 |
 | `py car.py --serial COM5` | 改用蓝牙 SPP / USB 狗（`pip install pyserial`） |
 | `py car.py --list-serial` | 看哪个 COM 口是狗 |
+| `py car.py --probe --serial COM5` | 验货：10 秒内告诉你这根狗能不能用 |
 
 - **转速映射** —— 你的车 6500 断油，Aventador 到 8500 才停。`--map stretch`（默认）
   把你的红线映射到它的红线；`--map direct` 是 1:1；`--map ratio` 是固定倍率。转速区间
@@ -122,6 +123,8 @@ py car.py --demo
 - **挡位与换挡** —— 变速箱速比从 rpm/车速的平台自己学出来（不需要给速比表）；升挡由
   转速塌陷识别并切油门，于是排气像真实的扭矩中断那样炸一下。
 - 你真车的进气歧管压力驱动模拟涡轮，所以它和你的涡轮同时起压。
+
+> **VAG-KKL / 409.1 线不是 ELM327。** 它只是一根 K 线电平转换线，里面没有解释 OBD 命令的单片机；而且 CAN 时代的车子根本没把 K 线接到发动机 ECU。请买明确写 **ELM327** 且支持 **ISO 15765-4 CAN** 的；`--probe` 会在十秒内告诉你买对了没有。
 
 这一切不用狗、不用停车场就能验证：`py test_obd.py` 让真实客户端去对接一个说真协议、
 走真 socket 的假 ELM327。

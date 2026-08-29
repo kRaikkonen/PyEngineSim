@@ -33,10 +33,10 @@ REDLINE = 6400.0
 GEARS = (110.0, 66.0, 45.0, 33.0, 26.0, 21.0, 17.0)
 
 
-def _mask_for(base: int) -> list:
+def _mask_for(base: int, supported=None) -> list:
     """Build the 4-byte supported-PID bitmask for the 0x00/0x20/0x40 groups."""
     out = [0, 0, 0, 0]
-    for pid in SUPPORTED:
+    for pid in (SUPPORTED if supported is None else supported):
         if base < pid <= base + 0x20:
             idx = pid - base - 1
             out[idx // 8] |= 1 << (7 - (idx % 8))
@@ -106,19 +106,20 @@ class _FakeCar:
             return [30 + 40]                 # intake air temp
         if pid == 0x1C:
             return [6]
-        if pid == 0x20:
-            return _mask_for(0x20)
-        if pid == 0x40:
-            return _mask_for(0x40)
         return None
 
 
 class FakeELM327:
     """TCP server that answers like a WiFi ELM327 clone."""
 
-    def __init__(self, host="127.0.0.1", port=0, latency=0.03):
+    def __init__(self, host="127.0.0.1", port=0, latency=0.03,
+                 supported=None, allow_multi_pid=True):
         self.host, self.port = host, port
         self.latency = latency               # per-request round trip to imitate
+        # A cheap clone answers fewer PIDs and often refuses the multi-PID
+        # request; being able to BE one keeps the degraded paths tested.
+        self.supported = SUPPORTED if supported is None else set(supported)
+        self.allow_multi_pid = allow_multi_pid
         self.sock = None
         self.thread = None
         self.running = False
@@ -178,7 +179,12 @@ class FakeELM327:
                         echo = cmd.endswith("1")
                     elif cmd.startswith("ATS"):
                         spaces = cmd.endswith("1")
-                    out += ("ELM327 v1.5\r" if cmd == "ATZ" else "OK\r")
+                    if cmd in ("ATZ", "ATI"):
+                        out += "ELM327 v1.5\r"
+                    elif cmd == "ATDP":
+                        out += "ISO 15765-4 (CAN 11/500)\r"
+                    else:
+                        out += "OK\r"
                 elif cmd.startswith("01"):
                     out += self._mode01(cmd[2:], car, spaces)
                 else:
@@ -196,11 +202,13 @@ class FakeELM327:
         pids = [int(arg[i:i + 2], 16) for i in range(0, len(arg) - 1, 2)]
         if not pids:
             return "?\r"
+        if len(pids) > 1 and not self.allow_multi_pid:
+            return "?\r"                            # pre-1.4 clone behaviour
         payload = [0x41]
         for pid in pids:
-            if pid == 0x00:
-                data = _mask_for(0x00)
-            elif pid in SUPPORTED:
+            if pid in (0x00, 0x20, 0x40):
+                data = _mask_for(pid, self.supported)
+            elif pid in self.supported:
                 data = car.value(pid)
             else:
                 continue

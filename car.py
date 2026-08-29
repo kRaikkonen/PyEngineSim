@@ -58,6 +58,72 @@ def _fmt_status(tm, rpm_out, eng_label, shift):
                 tm.hz, tm.rtt * 1000.0, eng_label, "  *SHIFT*" if shift else ""))
 
 
+def _probe(tm, seconds=10.0):
+    """Report whether this adapter + car can actually drive car mode.
+
+    Everything printed is measured or read from the car, never assumed: the
+    adapter names itself (ATI), states the protocol it negotiated (ATDP), and
+    the PID list comes from the car's own supported-PID bitmasks.
+    """
+    print("  probing... (ignition ON, engine idling is best)")
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds and not tm.is_live():
+        time.sleep(0.2)
+    if not tm.is_live():
+        print("  NO DATA from the adapter.")
+        print("    status : %s" % tm.status)
+        if tm.error:
+            print("    error  : %s" % tm.error)
+        print("    checks : is the ignition on?  is this really an ELM327")
+        print("             (a VAG-KKL / K-line cable is NOT one)?  try")
+        print("             --protocol 0 to let the adapter auto-detect.")
+        return 1
+
+    t0 = time.monotonic()                     # let the rate estimate settle
+    while time.monotonic() - t0 < min(seconds, 6.0):
+        time.sleep(0.2)
+
+    names = {0x5A: "0x5A relative accelerator pedal",
+             0x49: "0x49 accelerator pedal D",
+             0x4A: "0x4A accelerator pedal E",
+             0x11: "0x11 throttle PLATE (not the pedal)",
+             0x04: "0x04 calculated load (last resort)"}
+    print("  adapter  : %s" % (tm.adapter_id or "(no ATI reply)"))
+    print("  protocol : %s" % (tm.protocol_name or "(no ATDP reply)"))
+    print("  PIDs     : %s"
+          % " ".join("%02X" % p for p in sorted(tm.supported)))
+    print("  pedal    : %s" % names.get(tm.pedal_src, "none found"))
+    print("  multi-PID: %s" % ("yes - one round trip per sample" if tm.multi_pid
+                               else "NO - falling back to round-robin"))
+    print("  measured : %.1f Hz, round trip %.0f ms" % (tm.hz, tm.rtt * 1000.0))
+    print("  live     : %.0f rpm, pedal %.0f %%, speed %.0f km/h, MAP %.0f kPa"
+          % (tm.raw_rpm, tm.throttle * 100.0, tm.speed * 3.6, tm.map_kpa))
+
+    warn = []
+    if tm.raw_rpm < 200.0:
+        warn.append("rpm reads zero - start the engine and probe again")
+    if tm.pedal_src in (None, 0x04):
+        warn.append("no real pedal channel: response will lag the throttle")
+    elif tm.pedal_src == 0x11:
+        warn.append("only the throttle PLATE is available - on a drive-by-wire "
+                    "turbo it trails your foot, so you lose the free head start")
+    if not tm.multi_pid:
+        warn.append("no multi-PID: each channel costs its own round trip")
+    if tm.hz < 10.0:
+        warn.append("under 10 Hz - the pitch will step rather than sweep")
+    if tm.map_kpa <= 0.0:
+        warn.append("no manifold pressure: the simulated turbo will be modelled "
+                    "rather than following yours")
+
+    if warn:
+        print("  verdict  : usable, with caveats")
+        for w in warn:
+            print("     - %s" % w)
+    else:
+        print("  verdict  : GOOD - everything car mode wants is here")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="PyEngineSim car mode - real car in, engine note out.",
@@ -103,6 +169,8 @@ def main(argv=None):
                    help="no hardware: run a simulated car on localhost")
     g.add_argument("--list-serial", action="store_true",
                    help="print serial ports (which COM is the dongle) and exit")
+    g.add_argument("--probe", action="store_true",
+                   help="connect, report what the adapter and car support, exit")
 
     g = ap.add_argument_group("audio")
     g.add_argument("--volume", type=float, default=1.0, help="0..1")
@@ -182,6 +250,14 @@ def main(argv=None):
                       baud=args.baud, protocol=args.protocol,
                       out_latency=args.out_latency, poll_hz=args.poll_hz)
     tm.start()
+
+    if args.probe:
+        try:
+            return _probe(tm)
+        finally:
+            tm.stop()
+            if fake is not None:
+                fake.stop()
 
     # ----------------------------------------------------------- audio
     synth = None
