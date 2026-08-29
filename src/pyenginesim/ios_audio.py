@@ -24,6 +24,7 @@ Nothing here touches the voicing; it is strictly downstream of the render.
 
 from __future__ import annotations
 
+import math
 import threading
 
 import numpy as np
@@ -85,8 +86,15 @@ class IOSAudioSink:
         self._session.setPreferredIOBufferDuration(0.010, error=None)
         self._session.setActive(True, error=None)
 
-        # what we actually got -- ask, never assume
+        # What we actually got.  setPreferredSampleRate is a REQUEST: the
+        # built-in speaker route is usually locked to 48 kHz whatever we ask
+        # for, and building the synth at the hardware rate then means asking
+        # for 24 kHz makes things *slower*, not faster.  So keep the two
+        # separate: render at render_rate, resample to sample_rate here.
         self.sample_rate = int(round(float(_val(self._session.sampleRate))))
+        self.render_rate = int(preferred_rate) or self.sample_rate
+        self._rs_prev = 0.0
+        self._rs_frac = 0.0
         # route-driven small-speaker correction; None = decide from the route
         self.small_speaker = None
         self.route = "?"
@@ -118,6 +126,31 @@ class IOSAudioSink:
         else:
             self._compensate = bool(self.small_speaker)
 
+    def _resample(self, x):
+        """render_rate -> sample_rate, linear, phase-continuous across blocks.
+
+        One np.interp per block is nothing next to running the whole synth at
+        a higher rate; this is what lets the render rate be a free choice
+        instead of whatever the hardware happened to lock to.
+        """
+        if self.render_rate == self.sample_rate:
+            return x
+        step = self.render_rate / float(self.sample_rate)
+        n_in = x.shape[0]
+        e = np.empty(n_in + 1)
+        e[0] = self._rs_prev
+        e[1:] = x
+        count = int(math.floor((n_in - self._rs_frac) / step)) + 1
+        if count <= 0:
+            self._rs_frac -= n_in
+            self._rs_prev = float(x[-1])
+            return np.zeros(0)
+        pos = self._rs_frac + np.arange(count) * step
+        y = np.interp(pos, np.arange(n_in + 1), e)
+        self._rs_frac = pos[-1] + step - n_in
+        self._rs_prev = float(x[-1])
+        return y
+
     def _apply_small_speaker(self, mono):
         if self._hp_ba is None:
             from engine_sim.audio import _np_butter
@@ -145,6 +178,9 @@ class IOSAudioSink:
         # convert into cheaply (one column per channel).
         self._fmt = AVAudioFormat.alloc().initStandardFormatWithSampleRate(
             float(self.sample_rate), channels=2)
+        # a resampled block can be longer than the render block
+        self._cap = int(frames_per_block * self.sample_rate
+                        / max(self.render_rate, 1)) + 8
 
         self._engine = AVAudioEngine.alloc().init()
         self._player = AVAudioPlayerNode.alloc().init()
@@ -157,7 +193,7 @@ class IOSAudioSink:
         self._frames = frames_per_block
         self._buffers = [
             AVAudioPCMBuffer.alloc().initWithPCMFormat(
-                self._fmt, frameCapacity=frames_per_block)
+                self._fmt, frameCapacity=self._cap)
             for _ in range(self.queue_depth + 1)
         ]
 
@@ -184,24 +220,26 @@ class IOSAudioSink:
             self._route_countdown = 100
             self._refresh_route()
 
+        left = self._resample(block[:, 0])
+        if self._compensate:
+            left = self._apply_small_speaker(left)
+        n = left.shape[0]
+        if n == 0:
+            self._slots.release()
+            return
+
         buf = self._buffers[self._next % len(self._buffers)]
         self._next += 1
-        n = min(block.shape[0], self._frames)
+        n = min(n, self._cap)
         try:
             buf.frameLength = n
         except Exception:            # older rubicon: plain setter selector
             buf.setFrameLength(n)
 
-        left = block[:n, 0]
-        right = block[:n, 1]
-        if self._compensate:
-            left = self._apply_small_speaker(left)
-            right = left           # a phone speaker is mono anyway
-
         # deinterleave straight into CoreAudio's own memory
         chans = _val(buf.floatChannelData)
-        np.ctypeslib.as_array(chans[0], shape=(n,))[:] = left
-        np.ctypeslib.as_array(chans[1], shape=(n,))[:] = right
+        np.ctypeslib.as_array(chans[0], shape=(n,))[:] = left[:n]
+        np.ctypeslib.as_array(chans[1], shape=(n,))[:] = left[:n]
 
         from rubicon.objc import Block
         done = Block(lambda: self._slots.release(), None)

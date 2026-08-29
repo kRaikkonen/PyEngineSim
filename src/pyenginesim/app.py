@@ -46,16 +46,18 @@ def log(msg):
 
 TICK_HZ = 50.0                 # control loop; the synth runs at audio rate
 DEFAULT_ENGINE = "rs3"         # the 8Y RS3 five-cylinder
-DEFAULT_HOST = "192.168.0.10"  # what almost every WiFi ELM327 answers on
-DEFAULT_PORT = 35000
 DEFAULT_RATE = 32000
 
 POVS = ("chase", "cockpit", "trackside")
 SPEAKERS = ("auto", "small", "full-range")
 RATES = ("device", "32000", "24000")
 BLOCKS = ("256", "512")
-# a thumbful worth cycling; anything else by typing its key
+# a thumbful worth cycling with prev/next stepping the full 130
 QUICK = ("rs3", "s1", "aven", "8", "9", "conti", "787b")
+# The three addresses WiFi ELM327 clones actually ship with.  A button, not a
+# text field: iOS puts up a keyboard that Toga gives you no way to dismiss --
+# the same trap as the picker wheel.  No text input anywhere in this view.
+HOSTS = ("192.168.0.10:35000", "192.168.4.1:35000", "10.0.0.1:35000")
 
 
 class _Cycle:
@@ -100,9 +102,7 @@ class PyEngineSim(toga.App):
         eng_row.add(toga.Button("< prev", on_press=lambda w: self._step(-1)))
         eng_row.add(toga.Button("next >", on_press=lambda w: self._step(1)))
         eng_row.add(toga.Button("quick", on_press=self._quick))
-        self.engine_in = toga.TextInput(value=self.engine_key,
-                                        on_confirm=self._typed)
-
+        self.dongle = _Cycle("dongle", HOSTS)
         self.pov = _Cycle("listener", POVS, self._pov_changed)
         self.spk = _Cycle("speaker", SPEAKERS, self._spk_changed)
         self.rate = _Cycle("rate", RATES)
@@ -116,8 +116,6 @@ class PyEngineSim(toga.App):
         self.rpm_label = toga.Label("rpm 1200")
         self.thr_label = toga.Label("throttle 30%")
 
-        self.host_in = toga.TextInput(value=DEFAULT_HOST)
-        self.port_in = toga.TextInput(value=str(DEFAULT_PORT))
         self.demo_sw = toga.Switch("Demo (no dongle)", value=False)
         self.stretch_sw = toga.Switch("Stretch rpm to its redline", value=True)
 
@@ -127,13 +125,12 @@ class PyEngineSim(toga.App):
         self.audio_lbl = toga.Label("")
 
         box = toga.Box(style=Pack(direction="column"))
-        for w in (self.engine_lbl, eng_row, self.engine_in,
+        for w in (self.engine_lbl, eng_row,
                   self.pov.button, self.spk.button,
-                  self.rate.button, self.block.button,
+                  self.rate.button, self.block.button, self.dongle.button,
                   self.manual_sw,
                   self.rpm_label, self.rpm_slider,
                   self.thr_label, self.thr_slider,
-                  self.host_in, self.port_in,
                   self.demo_sw, self.stretch_sw,
                   self.button, self.status, self.detail, self.audio_lbl):
             box.add(w)
@@ -174,7 +171,6 @@ class PyEngineSim(toga.App):
             return
         self.engine_key = key
         self.engine_lbl.text = self._engine_text()
-        self.engine_in.value = key
         self._sync_slider_range()
         if self.mode is not None:
             self.mode.set_engine(key)
@@ -190,9 +186,6 @@ class PyEngineSim(toga.App):
             return
         i = picks.index(self.engine_key) if self.engine_key in picks else -1
         self._set_engine(picks[(i + 1) % len(picks)])
-
-    def _typed(self, widget):
-        self._set_engine((self.engine_in.value or "").strip())
 
     def _sync_slider_range(self):
         """Slider spans THIS engine's rev range, so the ends mean something."""
@@ -237,7 +230,8 @@ class PyEngineSim(toga.App):
     def _start(self):
         if self.manual_sw.value:
             return self._start_manual()
-        host, port = self.host_in.value.strip(), int(self.port_in.value or 0)
+        host, port_s = self.dongle.value.split(":")
+        port = int(port_s)
         if self.demo_sw.value:
             # The fake adapter runs in-process, so the whole chain can be heard
             # at a desk with no dongle and no car.
@@ -291,8 +285,12 @@ class PyEngineSim(toga.App):
                                             else int(want)))
         self._sink = sink
         self._spk_changed(self.spk.value)
-        log("audio %d Hz (asked %s), block %d" % (sink.sample_rate, want, blk))
-        synth = Synthesizer(sim, sample_rate=sink.sample_rate)
+        # RENDER at what we asked for and let the sink resample: the hardware
+        # route usually refuses to leave 48 kHz, and building the synth at the
+        # hardware rate made asking for 24 kHz *more* expensive, not less.
+        log("audio: render %d Hz -> device %d Hz, block %d"
+            % (sink.render_rate, sink.sample_rate, blk))
+        synth = Synthesizer(sim, sample_rate=sink.render_rate)
         synth.pov = self.pov.value
         synth.sink = sink
         return synth
@@ -357,9 +355,9 @@ class PyEngineSim(toga.App):
         if sink is None:
             self.audio_lbl.text = ""
         else:
-            self.audio_lbl.text = "load %.0f%%  under %d  %d Hz  %s%s" % (
+            self.audio_lbl.text = "load %.0f%%  under %d  %d/%d Hz  %s%s" % (
                 100.0 * getattr(synth, "load", 0.0), sink.underruns,
-                sink.sample_rate,
+                sink.render_rate, sink.sample_rate,
                 str(sink.route).replace("AVAudioSessionPort", ""),
                 " +spk" if getattr(sink, "_compensate", False) else "")
 
