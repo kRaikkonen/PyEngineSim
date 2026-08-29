@@ -132,38 +132,75 @@ just `UIBackgroundModes: audio` and an `AVAudioSession` in `.playback`.
 
 ---
 
-## Build steps, riskiest first
+## The Mac (verified 2026-08-29)
 
-1. **numpy for iOS.** iOS wheel building was merged into numpy on 2026-07-17
-   ([PR #28759](https://github.com/numpy/numpy/pull/28759)), milestone **2.6.0**
-   — which at the time of writing is **not yet released** (latest stable 2.5.2).
-   So either build from main or wait:
+    ziyuliu@100.124.3.111   MacBookPro14,1 -- 2017 13" Intel i5-7360U
+    2 cores / 8 GB RAM / 38 GB free       macOS 13.7.8 Ventura
+    Xcode 15.2 + iOS 17.2 SDK (device and simulator)
 
-   ```
-   CIBW_PLATFORM=ios CIBW_ENVIRONMENT="IPHONEOS_DEPLOYMENT_TARGET=17.0" \
-       cibuildwheel --arch arm64_iphoneos
-   ```
+Two consequences of the hardware:
 
-   Needs Xcode with the iOS SDK, cibuildwheel >= 4.1.0, ninja. Do this first —
-   it is the one step that can sink the schedule. Check whether BeeWare publish a
-   prebuilt iOS wheel before compiling one.
+- **Intel host, so the iOS Simulator is x86_64**, not arm64. Simulator wheels
+  for x86_64 do exist (below), but that is the path numpy's own CI does not
+  test -- prefer the real device when something looks wrong.
+- Ventura caps Xcode at 15.2, which is fine: iOS 17.2 SDK matches the
+  `IPHONEOS_DEPLOYMENT_TARGET=17.0` the iOS wheels are built against.
 
-2. **Briefcase skeleton.** A minimal iOS app; add the `engine_sim` package and
-   the numpy wheel. `pygame` is *not* needed. Confirm `import engine_sim` and a
-   `CarMode` tick run on the simulator before touching audio.
+**No sudo was needed anywhere, and none should be.** `xcode-select` points at
+CommandLineTools, but exporting `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
+overrides it without admin. Python came from `uv`, into userspace.
 
-3. **The audio sink.** `rubicon-objc` -> `AVAudioEngine` /
-   `AVAudioSourceNode`, fed from `synth.sink`. Set `AVAudioSession` category
-   `.playback` and `UIBackgroundModes: audio` so it keeps playing with the
-   screen off. Start with a large buffer, then tighten and measure.
+    export PATH="$HOME/.local/bin:$PATH"
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    cd ~/pyenginesim-ios && . .venv/bin/activate    # py 3.13.15, briefcase 0.4.4
+    cd src                                          # the repo clone
 
-4. **A minimal Toga view.** Engine picker + rpm/link readout, both straight from
-   `mode.status()`. iOS needs *a* view; it does not need the engine bay.
+## numpy for iOS: solved, no compiling
 
-5. **In the car.** WiFi-join the dongle's AP, USB CarPlay, `--probe` equivalent
-   first, then listen.
+**Prebuilt iOS wheels already exist** in the BeeWare channel Briefcase uses as
+its secondary repository (`https://anaconda.org/beeware/repo`), so the
+cibuildwheel step that was the schedule risk is simply not needed:
 
----
+    numpy-2.5.0.post1-cp313-cp313-ios_17_0_arm64_iphoneos.whl          <- the phone
+    numpy-2.5.0.post1-cp313-cp313-ios_13_0_x86_64_iphonesimulator.whl  <- this Mac's simulator
+    ... also cp314 / cp315, and arm64 simulator slices
+
+(PyPI itself still publishes no iOS wheels for numpy: iOS wheel *building* was
+merged on 2026-07-17 for the 2.6.0 milestone, and 2.6.0 is not released. The
+BeeWare channel is the source to use.)
+
+## Verified running on the Mac
+
+CPython 3.13.15 + numpy 2.5.2, **with sounddevice not installed at all** --
+i.e. exactly the iOS situation:
+
+    sounddevice available: False
+    start=True mode=sink blocks=188 rate=32069 frames/s peak=0.54
+    All headless checks passed.
+    All OBD / car-mode checks passed.
+
+That run found and fixed the one bug that would have stopped the port at its
+first audio call: `Synthesizer.start()` gated the sink behind `enabled`
+(`_HAVE_SD or ON_ANDROID`), so on any machine without PortAudio the synth
+refused to start even with a sink supplied. Fixed in 51742a3; the test now
+sets `enabled = False` before starting the sink, so the guarantee is "works
+with no audio backend at all".
+
+## Remaining steps
+
+1. **Briefcase iOS project.** Add a `[tool.briefcase]` config; app requires
+   `numpy` only (no pygame). Build for the simulator first, confirm
+   `import engine_sim` and a `CarMode` tick run on-device.
+2. **The audio sink.** `rubicon-objc` -> `AVAudioEngine` / `AVAudioSourceNode`
+   fed from `synth.sink`. `AVAudioSession` category `.playback` plus
+   `UIBackgroundModes: audio` so it keeps playing with the screen off. Start
+   with a large buffer, then tighten and measure.
+3. **A minimal Toga view.** Engine picker + rpm/link readout, straight from
+   `mode.status()`.
+4. **Signing** (needs the GUI and an Apple ID in Xcode; free account = the app
+   expires every 7 days) and **on-device run**.
+5. **In the car.** WiFi-join the dongle AP, wired CarPlay, then the three
+   measurements that decide the Swift question.
 
 ## Rules that still apply
 
