@@ -312,8 +312,9 @@ class PyEngineSim(toga.App):
         self.status.text = "%s   %.0f -> %.0f rpm" % (
             st["link"], st["car_rpm"], st["sim_rpm"])
         sink = getattr(self, "_sink", None)
-        audio = "" if sink is None else "  %d Hz  under %d  %s%s" % (
-            sink.sample_rate, sink.underruns,
+        synth = getattr(self.mode, "synth", None) if self.mode else None
+        audio = "" if sink is None else "  %d Hz  load %.0f%%  under %d  %s%s" % (
+            sink.sample_rate, 100.0 * getattr(synth, "load", 0.0), sink.underruns,
             str(sink.route).replace("AVAudioSessionPort", ""),
             " +smallspk" if getattr(sink, "_compensate", False) else "")
         self.detail.text = "pedal %3.0f%%  g%d  %+.2f bar  %.0f Hz link%s" % (

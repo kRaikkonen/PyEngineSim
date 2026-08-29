@@ -28,7 +28,11 @@ import threading
 
 import numpy as np
 
-QUEUE_DEPTH = 3          # buffers in flight; more = safer, later
+QUEUE_DEPTH = 6          # buffers in flight: 6 x 256 @ 32 kHz = 48 ms of
+                         # cushion.  Python's jitter -- GC, the UI loop,
+                         # a slow block -- has to fit inside this or the
+                         # speaker hears the gap.  Costs latency, and the
+                         # OBD round trip already costs more.
 DEFAULT_RATE = 32000     # what we ask the session for (the Android rate too)
 
 # An iPhone's own speaker is a few millimetres across.  A quarter to a half of

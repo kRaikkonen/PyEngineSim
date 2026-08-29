@@ -125,6 +125,21 @@ def _impulse_response(b, a, n):
     return h
 
 
+_POW_CACHE = {}
+
+
+def _pole_powers(pole, n):
+    """pole**[0..n-1] and its reciprocal, cached: identical every block."""
+    key = (pole.real, pole.imag, n)
+    got = _POW_CACHE.get(key)
+    if got is None:
+        if len(_POW_CACHE) > 256:
+            _POW_CACHE.clear()
+        pw = pole ** np.arange(n)
+        got = _POW_CACHE[key] = (pw, 1.0 / pw)
+    return got
+
+
 def _one_pole(v, pole, y_prev):
     """y[n] = pole*y[n-1] + v[n]: exact, vectorised, overflow-safe.
 
@@ -144,15 +159,19 @@ def _one_pole(v, pole, y_prev):
         step = n
     else:
         step = max(1, min(n, int(27.6 / -math.log(ap)) + 1))
+    if step >= n:                       # the common case: one shot, no loop
+        pw, ipw = _pole_powers(pole, n)
+        out = pw * (pole * y_prev + np.cumsum(v * ipw))
+        return out, out[-1]
     out = np.empty(n, dtype=np.complex128)
+    pw, ipw = _pole_powers(pole, step)
     i = 0
     while i < n:
-        j = min(i + step, n)
-        pw = pole ** np.arange(j - i)
-        seg = pw * (pole * y_prev + np.cumsum(v[i:j] / pw))
-        out[i:j] = seg
+        k = min(step, n - i)
+        seg = pw[:k] * (pole * y_prev + np.cumsum(v[i:i + k] * ipw[:k]))
+        out[i:i + k] = seg
         y_prev = seg[-1]
-        i = j
+        i += k
     return out, y_prev
 
 
@@ -177,10 +196,15 @@ def _np_lfilter(b, a, x, zi=None):
         # fast-decaying poles: a short FIR IS the filter, to ~1e-10, and one
         # convolve is much cheaper than a pole cascade
         ir = _impulse_response(b, a, 48) if (len(poles) and radius < 0.62) else None
+        pair = None
+        if ir is None and len(poles) == 2 and abs(poles[0].imag) > 1e-12 \
+                and abs(poles[0] - np.conj(poles[1])) < 1e-12:
+            # A = p / (p - conj(p)); y = 2*Re(A * onepole(v, p))
+            pair = (poles[0], poles[0] / (poles[0] - poles[1]))
         if len(_IR_CACHE) > 400:
             _IR_CACHE.clear()
-        cached = _IR_CACHE[key] = (poles, ir)
-    poles, ir = cached
+        cached = _IR_CACHE[key] = (poles, ir, pair)
+    poles, ir, pair = cached
 
     if ir is not None:
         keep = len(ir) - 1
@@ -200,9 +224,14 @@ def _np_lfilter(b, a, x, zi=None):
 
     buf = np.concatenate([past[::-1], x]) if n_in else x
     v = np.convolve(buf, b)[n_in:n_in + len(x)].astype(np.complex128)
-    for idx, pole in enumerate(poles):
-        v, pole_state[idx] = _one_pole(v, pole, pole_state[idx])
-    y = np.real(v)
+    if pair is not None:                    # conjugate pair: one pass, not two
+        pole, amp = pair
+        s1, pole_state[0] = _one_pole(v, pole, pole_state[0])
+        y = 2.0 * np.real(amp * s1)
+    else:
+        for idx, pole in enumerate(poles):
+            v, pole_state[idx] = _one_pole(v, pole, pole_state[idx])
+        y = np.real(v)
 
     newpast = (buf[-n_in:][::-1] if n_in else np.zeros(0))
     return y, np.concatenate([newpast.astype(np.complex128), pole_state])
@@ -929,6 +958,10 @@ class Synthesizer:
         self._sink_run = False        # generic sink feeder thread (see _start_sink)
         self._sink_thread = None
         self._sink_blocks = 0
+        # fraction of real time spent rendering: the number that says whether a
+        # dropout is overload (load near 1) or mere jitter (load low, but the
+        # sink still starved).  Read it, do not guess.
+        self.load = 0.0
         self._pg_run = False          # pygame.mixer feeder thread (Android backend)
         self._pg_thread = None
         self.latency_ms = 0.0
@@ -3592,12 +3625,15 @@ class Synthesizer:
         buf = np.empty((CH, 2), dtype=np.float32)
         deadline = time.monotonic()
         while self._sink_run:
+            t_start = time.monotonic()
             try:
                 mono = self._render_block(CH)
                 ang = self.params["spatial_x"] * (math.pi * 0.5)
                 buf[:, 0] = mono * math.cos(ang)
                 buf[:, 1] = mono * math.sin(ang)
                 np.clip(buf, -1.0, 1.0, out=buf)
+                spent = time.monotonic() - t_start   # render only, before the sink
+                self.load += (spent / period - self.load) * 0.05
                 self.sink(buf)
                 self._sink_blocks += 1
             except Exception:
