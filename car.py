@@ -28,7 +28,6 @@ WHY IT SOUNDS LATE, AND WHAT TO DO
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 import time
@@ -39,23 +38,20 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from engine_sim import presets
 from engine_sim.audio import Synthesizer, list_output_devices
+from engine_sim.carmode import CarMode
 from engine_sim.obd import (CAR_PROFILES, OBDTelemetry, RpmMap,
-                            ShiftDetector, list_serial_ports)
-from engine_sim.simulator import Simulator
-from engine_sim.units import rpm_to_rads
+                            list_serial_ports)
 
 LOOP_HZ = 100.0          # sim update rate; the synth integrates crank at audio rate
 
 
-def _fmt_status(tm, rpm_out, eng_label, shift):
-    link = "LIVE" if tm.is_live() else (tm.status or "waiting")
-    boost = ""
-    if tm.map_kpa:
-        boost = " | boost %+.2f bar" % ((tm.map_kpa - tm.baro_kpa) * 0.01)
+def _fmt_status(st):
+    boost = "" if not st["boost_bar"] else " | boost %+.2f bar" % st["boost_bar"]
     return ("  %-4s | %5.0f -> %5.0f rpm | pedal %3.0f%% | g%d%s | %4.1f Hz "
             "| rtt %3.0f ms | %s%s" % (
-                link, tm.raw_rpm, rpm_out, tm.throttle * 100.0, tm.gear, boost,
-                tm.hz, tm.rtt * 1000.0, eng_label, "  *SHIFT*" if shift else ""))
+                st["link"], st["car_rpm"], st["sim_rpm"], st["pedal"] * 100.0,
+                st["gear"], boost, st["hz"], st["rtt_ms"], st["engine"],
+                "  *SHIFT*" if st["shifting"] else ""))
 
 
 def _probe(tm, seconds=10.0):
@@ -222,12 +218,10 @@ def main(argv=None):
                   car_redline=args.car_redline if args.car_redline else red_seed,
                   ratio=args.ratio, learn=not args.no_learn)
 
-    sim = Simulator(presets.ALL[args.engine]())
-    eng = sim.engine
-    label = next((l for k, l, _ in presets.PRESETS if k == args.engine),
-                 args.engine)
-
     if args.map_preview:
+        eng = presets.ALL[args.engine]()
+        label = next((l for k, l, _ in presets.PRESETS if k == args.engine),
+                     args.engine)
         print("  %s   idle %.0f, redline %.0f" % (label, eng.idle_rpm,
                                                   eng.redline_rpm))
         print("  your car (%s): idle %.0f, redline %.0f   [%s]"
@@ -259,71 +253,44 @@ def main(argv=None):
             if fake is not None:
                 fake.stop()
 
-    # ----------------------------------------------------------- audio
-    synth = None
-    if not args.no_audio:
-        synth = Synthesizer(sim, sample_rate=args.rate, device=args.device)
-        synth.host_latency = max(args.host_latency, 0.005)
-        synth.pov = args.pov
-        synth.volume = max(0.0, min(args.volume, 1.0))
-        synth.start()
+    # -------------------------------------------------- car mode + audio
+    def make_synth(sim):
+        syn = Synthesizer(sim, sample_rate=args.rate, device=args.device)
+        syn.host_latency = max(args.host_latency, 0.005)
+        syn.pov = args.pov
+        syn.volume = max(0.0, min(args.volume, 1.0))
+        return syn
 
-    print("  PyEngineSim car mode - %s" % label)
+    mode = CarMode(engine_key=args.engine, telemetry=tm, rpm_map=rmap,
+                   synth_factory=None if args.no_audio else make_synth,
+                   shift_pop=not args.no_shift_pop)
+    mode.start()
+
+    out_ms = ("%.0f ms" % mode.synth.latency_ms) if (
+        mode.synth is not None and mode.synth.latency_ms) else "n/a"
+    print("  PyEngineSim car mode - %s" % mode.label)
     print("  map: %s   your car %.0f-%.0f rpm  ->  %.0f-%.0f rpm"
-          % (rmap.mode, rmap.car_idle, rmap.car_redline, eng.idle_rpm,
-             eng.redline_rpm))
-    out_ms = ("%.0f ms" % synth.latency_ms) if (
-        synth is not None and synth.latency_ms) else "n/a"
+          % (rmap.mode, rmap.car_idle, rmap.car_redline,
+             mode.sim.engine.idle_rpm, mode.sim.engine.redline_rpm))
     print("  link: %s   POV: %s   output buffer: %s"
           % (args.serial_port or ("%s:%d" % (host, port)), args.pov, out_ms))
     print("  Ctrl-C to stop")
 
     # ------------------------------------------------------------ loop
-    dtr = sim.drivetrain
-    sim.ignition_on = True
     period = 1.0 / LOOP_HZ
     last = time.monotonic()
-    shifter = ShiftDetector()
-    shifting = False
     next_status = 0.0
     show_status = not args.quiet
     tty = sys.stdout.isatty()
     try:
         while True:
             now = time.monotonic()
-            dt = min(now - last, 0.1)
+            mode.update(now - last)
             last = now
-
-            if tm.is_live():
-                rmap.observe(tm.raw_rpm, tm.throttle)
-                rpm_out = rmap(tm.rpm, eng.idle_rpm, eng.redline_rpm)
-
-                shifting = (not args.no_shift_pop) and shifter.update(
-                    dt, tm.raw_rpm, tm.throttle, tm.speed)
-                # an ignition cut IS a closed throttle as far as the exhaust
-                # is concerned - that is the bang
-                sim.throttle = 0.0 if shifting else tm.throttle
-
-                target = rpm_to_rads(rpm_out)
-                sim.omega += (target - sim.omega) * min(22.0 * dt, 1.0)
-                dtr.v = tm.speed if tm.speed_valid else 0.0
-                dtr.gear = max(tm.gear, 0)
-                if eng.induction != "na":
-                    if tm.map_kpa:          # your REAL boost drives its compressor
-                        sim.boost = max(0.0, (tm.map_kpa - tm.baro_kpa) * 0.01)
-                    else:
-                        sim._update_boost(dt)
-            else:
-                sim.throttle = 0.0
-                idle = rpm_to_rads(eng.idle_rpm)
-                sim.omega += (idle - sim.omega) * min(3.0 * dt, 1.0)
-                rpm_out = sim.omega * 60.0 / (2.0 * math.pi)
-
-            sim.crank_angle += sim.omega * dt
 
             if show_status and now >= next_status:
                 next_status = now + (0.2 if tty else 1.0)
-                line = _fmt_status(tm, rpm_out, label, shifting)
+                line = _fmt_status(mode.status())
                 sys.stdout.write(("\r" + line) if tty else (line + "\n"))
                 sys.stdout.flush()
 
@@ -335,13 +302,12 @@ def main(argv=None):
     finally:
         if show_status and tty:
             sys.stdout.write("\n")
-        if synth is not None:
-            synth.stop()
+        mode.stop()
         tm.stop()
         if fake is not None:
             fake.stop()
-        if shifter.shifts:
-            print("  %d gearshifts heard" % shifter.shifts)
+        if mode.shifter.shifts:
+            print("  %d gearshifts heard" % mode.shifter.shifts)
         if rmap.learn and rmap.seen_max > 0.0:
             print("  learned: your car idles at %.0f, revved to %.0f"
                   % (rmap.car_idle, rmap.seen_max))

@@ -10,6 +10,7 @@ Run with:  py test_obd.py
 import time
 
 from engine_sim import presets
+from engine_sim.carmode import CarMode
 from engine_sim.obd import (OBDTelemetry, RpmMap, ShiftDetector, _GearLearner,
                             _clean_hex, _parse_mask, _parse_pids, PID_MAP,
                             PID_RPM, PID_SPEED, PID_PEDAL_REL)
@@ -211,6 +212,85 @@ def test_cheap_clone():
         srv.stop()
 
 
+# ------------------------------------------------------------------- carmode
+def test_carmode():
+    """CarMode is what an iOS app creates, ticks and reads.
+
+    Driven here with no audio and no display -- exactly the surface a Toga
+    view or a background timer would use.
+    """
+    print("\ncar mode object (the iOS-facing API)")
+    srv = FakeELM327(latency=0.02)
+    host, port = srv.start()
+    tm = OBDTelemetry(host=host, port=port)
+    tm.start()
+    rmap = RpmMap("stretch", car_idle=800.0, car_redline=6400.0, learn=False)
+    mode = CarMode(engine_key="rs3", telemetry=tm, rpm_map=rmap)
+    mode.start()
+    try:
+        check(mode.synth is None, "no synth_factory -> data path only, no audio")
+        st = mode.status()
+        check(set(st) >= {"live", "car_rpm", "sim_rpm", "pedal", "gear",
+                          "boost_bar", "hz", "engine"},
+              "status() exposes what a display needs")
+
+        for _ in range(100):
+            if tm.is_live():
+                break
+            time.sleep(0.1)
+        check(tm.is_live(), "link live")
+
+        eng = mode.sim.engine
+        pairs, boosts = [], []
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 14.0:
+            mode.update(0.01)
+            if tm.raw_rpm > 400.0:
+                pairs.append((tm.raw_rpm, mode.rpm_out))
+                boosts.append(mode.sim.boost)
+            time.sleep(0.01)
+
+        check(len(pairs) > 200, "ticked through a drive cycle")
+        # the map must actually be applied: a 6400 rpm car on a 7000 rpm engine
+        high = [s for c, s in pairs if c > 5500.0]
+        check(bool(high) and max(high) > 5900.0,
+              "mapped rpm climbs past the car's own (max %.0f)" % max(high or [0]))
+        check(max(s for _, s in pairs) <= eng.redline_rpm * 1.02,
+              "never played past the engine's rev limiter")
+        check(min(s for _, s in pairs) >= eng.idle_rpm * 0.5,
+              "never played below idle")
+        check(max(boosts) > 0.2, "real manifold pressure drove the sim boost")
+        check(mode.shifter.shifts >= 2,
+              "shifts heard through the object (%d)" % mode.shifter.shifts)
+
+        # crank must advance monotonically -- the synth reads it
+        a = mode.sim.crank_angle
+        mode.update(0.01)
+        check(mode.sim.crank_angle > a, "crank angle advances")
+
+        # engine swap: the thing a phone list-tap does
+        mode.set_engine("aven")
+        check(mode.engine_key == "aven" and "Aventador" in mode.label,
+              "set_engine swapped the car")
+        check(mode.sim.engine.redline_rpm > eng.redline_rpm,
+              "the new engine's own rev range is in force")
+        mode.update(0.01)
+        check(mode.rpm_out <= mode.sim.engine.redline_rpm * 1.02,
+              "rpm map follows the new engine")
+
+        # a dead link must idle quietly, not freeze or scream
+        mode.telemetry = None
+        for _ in range(300):
+            mode.update(0.01)
+        check(abs(mode.rpm_out - mode.sim.engine.idle_rpm)
+              < mode.sim.engine.idle_rpm * 0.5, "falls back to idle with no link")
+        check(mode.sim.throttle == 0.0, "throttle closed with no link")
+    finally:
+        mode.stop()
+        tm.stop()
+        srv.stop()
+
+
 # ------------------------------------------------------------------ end to end
 def test_link():
     print("\nend-to-end link against the fake ELM327")
@@ -272,5 +352,6 @@ if __name__ == "__main__":
     test_shift_detector()
     test_link()
     test_serial_path()
+    test_carmode()
     test_cheap_clone()
     print("\nAll OBD / car-mode checks passed.")
