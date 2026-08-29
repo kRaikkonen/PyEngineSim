@@ -23,6 +23,26 @@ from engine_sim.audio import Synthesizer
 from engine_sim.carmode import CarMode
 from engine_sim.obd import CAR_PROFILES, OBDTelemetry, RpmMap
 
+LOG_PATH = os.path.join(os.path.expanduser("~"), "Documents",
+                        "pyenginesim.log")
+
+
+def log(msg):
+    """Append a line to a file inside the app container.
+
+    print() on iOS goes through NSLog and is easy to lose; a file in Documents
+    survives, can be read out of the simulator container, and is the only
+    diagnostic that works on a phone in a car with no console attached.
+    """
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(LOG_PATH, "a") as fh:
+            fh.write("%.3f  %s\n" % (time.time(), msg))
+    except Exception:
+        pass
+    print("[pyenginesim] %s" % msg, flush=True)
+
+
 TICK_HZ = 50.0                 # control loop; the synth runs at audio rate
 DEFAULT_ENGINE = "rs3"         # the 8Y RS3 five-cylinder
 DEFAULT_HOST = "192.168.0.10"  # what almost every WiFi ELM327 answers on
@@ -31,6 +51,7 @@ DEFAULT_PORT = 35000
 
 class PyEngineSim(toga.App):
     def startup(self):
+        log("startup")
         self.mode = None
         self.telemetry = None
         self.fake = None
@@ -70,16 +91,27 @@ class PyEngineSim(toga.App):
         self.main_window.content = box
         self.main_window.show()
 
-        # Autostart.  In the car you do not want to be tapping a screen, and in
-        # the simulator there is nothing to tap with -- so the same switch
-        # serves both.  PYENGINESIM_AUTOSTART=demo also flips the fake adapter
-        # on, which is how the audio path is exercised with no dongle.
         auto = os.environ.get("PYENGINESIM_AUTOSTART", "")
-        if auto:
-            if auto.lower() == "demo":
-                self.demo_sw.value = True
-            loop = getattr(self, "loop", None) or asyncio.get_event_loop()
-            loop.call_later(1.0, self._start)
+        if auto.lower() == "demo":
+            self.demo_sw.value = True
+
+    async def on_running(self):  # noqa: D401
+        """Autostart, once there is actually a running event loop.
+
+        In the car you do not want to be tapping a screen, and in the simulator
+        there is nothing to tap with -- the same switch serves both.  This has
+        to happen HERE and not in startup(): during startup the loop is not
+        running yet, so anything scheduled on it is simply never executed.
+        """
+        log("on_running fired; autostart=%r"
+            % os.environ.get("PYENGINESIM_AUTOSTART", ""))
+        if os.environ.get("PYENGINESIM_AUTOSTART", ""):
+            try:
+                self._start()
+            except Exception as exc:
+                import traceback
+                log("autostart FAILED: %s" % exc)
+                log(traceback.format_exc())
 
     # ------------------------------------------------------------- helpers
     def _selected_key(self) -> str:
@@ -120,13 +152,21 @@ class PyEngineSim(toga.App):
 
         self.button.text = "Stop"
         self._last = time.monotonic()
-        loop = getattr(self, "loop", None) or asyncio.get_event_loop()
+        # _start is only ever reached from a button press or on_running, both
+        # of which run inside the loop -- so ask for the RUNNING one.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self.loop
         self._task = loop.create_task(self._tick_loop())
+        log("started: %s, link %s:%s, demo=%s"
+            % (self.mode.label, host, port, self.demo_sw.value))
 
     def _make_synth(self, sim):
         """Build the synth at the rate the DEVICE negotiated, not a guess."""
         from .ios_audio import IOSAudioSink
         sink = IOSAudioSink()
+        log("audio session negotiated %d Hz" % sink.sample_rate)
         synth = Synthesizer(sim, sample_rate=sink.sample_rate)
         synth.pov = "cockpit"
         synth.sink = sink
@@ -158,6 +198,7 @@ class PyEngineSim(toga.App):
     async def _tick_loop(self):
         period = 1.0 / TICK_HZ
         shown = 0.0
+        logged = 0.0
         try:
             while self.mode is not None:
                 now = time.monotonic()
@@ -166,6 +207,16 @@ class PyEngineSim(toga.App):
                 if now - shown > 0.25:
                     shown = now
                     self._refresh()
+                if now - logged > 5.0:
+                    logged = now
+                    st = self.mode.status()
+                    sink = getattr(self, "_sink", None)
+                    log("%s %.0f->%.0f rpm  pedal %.0f%%  g%d  link %.0f Hz"
+                        "  audio blocks=%s under=%s"
+                        % (st["link"], st["car_rpm"], st["sim_rpm"],
+                           st["pedal"] * 100.0, st["gear"], st["hz"],
+                           getattr(sink, "blocks", "-"),
+                           getattr(sink, "underruns", "-")))
                 await asyncio.sleep(period)
         except asyncio.CancelledError:
             pass

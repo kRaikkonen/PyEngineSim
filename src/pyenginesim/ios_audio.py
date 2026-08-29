@@ -32,6 +32,18 @@ QUEUE_DEPTH = 3          # buffers in flight; more = safer, later
 DEFAULT_RATE = 32000     # what we ask the session for (the Android rate too)
 
 
+def _val(attr):
+    """Read an Objective-C property whether rubicon exposes it as a value or
+    as a bound method.
+
+    rubicon-objc only knows something is a `@property` if it has the metadata
+    to say so; without it, `session.sampleRate` hands back an ObjCBoundMethod
+    instead of the number.  Which way round it lands varies by class and by
+    rubicon version, so never assume -- ask.
+    """
+    return attr() if callable(attr) else attr
+
+
 class IOSAudioSink:
     """Push rendered blocks into AVAudioEngine. Call :meth:`start` first."""
 
@@ -58,7 +70,7 @@ class IOSAudioSink:
         self._session.setActive(True, error=None)
 
         # what we actually got -- ask, never assume
-        self.sample_rate = int(round(float(self._session.sampleRate)))
+        self.sample_rate = int(round(float(_val(self._session.sampleRate))))
         self.queue_depth = queue_depth
         self._slots = threading.Semaphore(queue_depth)
         self._started = False
@@ -86,7 +98,7 @@ class IOSAudioSink:
         self._engine = AVAudioEngine.alloc().init()
         self._player = AVAudioPlayerNode.alloc().init()
         self._engine.attachNode(self._player)
-        self._engine.connect(self._player, to=self._engine.mainMixerNode,
+        self._engine.connect(self._player, to=_val(self._engine.mainMixerNode),
                              format=self._fmt)
 
         # A pool sized to the queue: a buffer can only be refilled once its
@@ -117,10 +129,13 @@ class IOSAudioSink:
         buf = self._buffers[self._next % len(self._buffers)]
         self._next += 1
         n = min(block.shape[0], self._frames)
-        buf.frameLength = n
+        try:
+            buf.frameLength = n
+        except Exception:            # older rubicon: plain setter selector
+            buf.setFrameLength(n)
 
         # deinterleave straight into CoreAudio's own memory
-        chans = buf.floatChannelData
+        chans = _val(buf.floatChannelData)
         np.ctypeslib.as_array(chans[0], shape=(n,))[:] = block[:n, 0]
         np.ctypeslib.as_array(chans[1], shape=(n,))[:] = block[:n, 1]
 
