@@ -1,11 +1,12 @@
 """PyEngineSim on iOS -- a shell around engine_sim.carmode.CarMode.
 
-Deliberately plain. Car mode has no graphics by design, and in a car you want
-a screen you never have to look at: pick an engine, press Start, drive. The
-readout exists to prove the link is alive, not to be watched.
+Deliberately plain, and deliberately built from BUTTONS.  Toga's Selection
+renders as a picker wheel on iOS that can be impossible to dismiss, and a
+control you cannot close is worse than useless in a car.  Every choice here is
+a button that cycles: one tap, big target, no modal state.
 
-Everything real happens in ``engine_sim`` -- this file only wires a Toga view
-to :class:`~engine_sim.carmode.CarMode` and hands the synthesizer an
+Everything real happens in ``engine_sim``; this file only wires a Toga view to
+:class:`~engine_sim.carmode.CarMode` and hands the synthesizer an
 :class:`~pyenginesim.ios_audio.IOSAudioSink`.
 """
 
@@ -31,8 +32,8 @@ def log(msg):
     """Append a line to a file inside the app container.
 
     print() on iOS goes through NSLog and is easy to lose; a file in Documents
-    survives, can be read out of the simulator container, and is the only
-    diagnostic that works on a phone in a car with no console attached.
+    survives, can be read out of the container, and is the only diagnostic that
+    works on a phone in a car with no console attached.
     """
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -48,101 +49,111 @@ DEFAULT_ENGINE = "rs3"         # the 8Y RS3 five-cylinder
 DEFAULT_HOST = "192.168.0.10"  # what almost every WiFi ELM327 answers on
 DEFAULT_PORT = 35000
 DEFAULT_RATE = 32000
+
 POVS = ("chase", "cockpit", "trackside")
+SPEAKERS = ("auto", "small", "full-range")
+RATES = ("device", "32000", "24000")
+BLOCKS = ("256", "512")
+# a thumbful worth cycling; anything else by typing its key
+QUICK = ("rs3", "s1", "aven", "8", "9", "conti", "787b")
+
+
+class _Cycle:
+    """A button that steps through a fixed list of choices."""
+
+    def __init__(self, label, options, on_change=None):
+        self.label = label
+        self.options = list(options)
+        self.index = 0
+        self.on_change = on_change
+        self.button = toga.Button(self._text(), on_press=self._press)
+
+    @property
+    def value(self):
+        return self.options[self.index]
+
+    def _text(self):
+        return "%s: %s" % (self.label, self.options[self.index])
+
+    def _press(self, widget):
+        self.index = (self.index + 1) % len(self.options)
+        self.button.text = self._text()
+        if self.on_change:
+            self.on_change(self.value)
 
 
 class PyEngineSim(toga.App):
     def startup(self):
-        log("startup")
         self.mode = None
         self.telemetry = None
         self.fake = None
         self._task = None
+        self._sink = None
 
-        labelled = [(k, "%s  --  %s" % (k, label))
-                    for k, label, _ in presets.PRESETS]
-        self._keys = [k for k, _ in labelled]
+        self._keys = [k for k, _, _ in presets.PRESETS]
+        self._labels = {k: l for k, l, _ in presets.PRESETS}
+        self.engine_key = (DEFAULT_ENGINE if DEFAULT_ENGINE in self._labels
+                           else self._keys[0])
 
-        self.engine_sel = toga.Selection(
-            items=[text for _, text in labelled],
-            on_change=self._engine_changed,
-        )
-        try:
-            self.engine_sel.value = next(
-                t for k, t in labelled if k == DEFAULT_ENGINE)
-        except StopIteration:
-            pass
+        self.engine_lbl = toga.Label(self._engine_text())
+        eng_row = toga.Box(style=Pack(direction="row"))
+        eng_row.add(toga.Button("< prev", on_press=lambda w: self._step(-1)))
+        eng_row.add(toga.Button("next >", on_press=lambda w: self._step(1)))
+        eng_row.add(toga.Button("quick", on_press=self._quick))
+        self.engine_in = toga.TextInput(value=self.engine_key,
+                                        on_confirm=self._typed)
 
-        self.host_in = toga.TextInput(value=DEFAULT_HOST)
-        self.port_in = toga.TextInput(value=str(DEFAULT_PORT))
-        self.demo_sw = toga.Switch("Demo (no dongle)", value=False)
-        self.stretch_sw = toga.Switch("Stretch rpm to its redline", value=True)
-        # Hand throttle: judge the SOUND without a car, a dongle, or a drive
-        # cycle to chase.  Hold an rpm, sweep it, compare with the desktop.
-        self.manual_sw = toga.Switch("Manual (hand throttle)", value=True,
-                                     on_change=self._manual_changed)
+        self.pov = _Cycle("listener", POVS, self._pov_changed)
+        self.spk = _Cycle("speaker", SPEAKERS, self._spk_changed)
+        self.rate = _Cycle("rate", RATES)
+        self.block = _Cycle("block", BLOCKS)
+
+        self.manual_sw = toga.Switch("Manual (hand throttle)", value=True)
         self.rpm_slider = toga.Slider(min=500, max=9000, value=1200,
                                       on_change=self._slider_changed)
         self.thr_slider = toga.Slider(min=0.0, max=1.0, value=0.3,
                                       on_change=self._slider_changed)
         self.rpm_label = toga.Label("rpm 1200")
         self.thr_label = toga.Label("throttle 30%")
-        # POV is the prime suspect for a wrong-sounding phone build: "cockpit"
-        # is the muffled through-the-firewall voice, and the desktop default is
-        # "chase".  Switchable, live.
-        self.pov_sel = toga.Selection(items=list(POVS), on_change=self._pov_changed)
-        self.pov_sel.value = "chase"
-        # auto = decide from the audio route (phone speaker vs headphones vs
-        # CarPlay).  The overrides are there for judging it by ear.
-        self.spk_sel = toga.Selection(items=["speaker: auto", "speaker: small",
-                                             "speaker: full-range"],
-                                      on_change=self._spk_changed)
-        # CPU knobs, both applied on the next Start.  A bigger block cuts the
-        # per-call numpy overhead (which is what the filter cost actually is)
-        # but slows the per-block jitter refresh; a lower rate is a straight
-        # trade of bandwidth for CPU.  Neither is free -- they are here so the
-        # ear decides, not a guess.
-        self.rate_sel = toga.Selection(items=["rate: device", "rate: 32000",
-                                              "rate: 24000"])
-        self.block_sel = toga.Selection(items=["block: 256", "block: 512"])
+
+        self.host_in = toga.TextInput(value=DEFAULT_HOST)
+        self.port_in = toga.TextInput(value=str(DEFAULT_PORT))
+        self.demo_sw = toga.Switch("Demo (no dongle)", value=False)
+        self.stretch_sw = toga.Switch("Stretch rpm to its redline", value=True)
 
         self.button = toga.Button("Start", on_press=self._toggle)
-        # three short lines: one long one runs off the side of a phone and
-        # the numbers that matter (load, underruns) are what gets cut
         self.status = toga.Label("idle")
         self.detail = toga.Label("")
         self.audio_lbl = toga.Label("")
 
         box = toga.Box(style=Pack(direction="column"))
-        for w in (toga.Label("Engine"), self.engine_sel,
-                  toga.Label("Listener"), self.pov_sel, self.spk_sel,
-                  self.rate_sel, self.block_sel,
+        for w in (self.engine_lbl, eng_row, self.engine_in,
+                  self.pov.button, self.spk.button,
+                  self.rate.button, self.block.button,
                   self.manual_sw,
                   self.rpm_label, self.rpm_slider,
                   self.thr_label, self.thr_slider,
-                  toga.Label("WiFi ELM327 address"), self.host_in, self.port_in,
+                  self.host_in, self.port_in,
                   self.demo_sw, self.stretch_sw,
                   self.button, self.status, self.detail, self.audio_lbl):
             box.add(w)
-        self._sync_slider_range()
 
         self.main_window = toga.MainWindow(title=self.formal_name)
         self.main_window.content = box
         self.main_window.show()
+        self._sync_slider_range()
 
-        auto = os.environ.get("PYENGINESIM_AUTOSTART", "")
-        if auto.lower() == "demo":
+        if os.environ.get("PYENGINESIM_AUTOSTART", "").lower() == "demo":
             self.demo_sw.value = True
+            self.manual_sw.value = False
 
-    async def on_running(self):  # noqa: D401
+    async def on_running(self):
         """Autostart, once there is actually a running event loop.
 
-        In the car you do not want to be tapping a screen, and in the simulator
-        there is nothing to tap with -- the same switch serves both.  This has
-        to happen HERE and not in startup(): during startup the loop is not
-        running yet, so anything scheduled on it is simply never executed.
+        It has to happen HERE and not in startup(): during startup the loop is
+        not running yet, so anything scheduled on it never executes.
         """
-        log("on_running fired; autostart=%r"
+        log("on_running; autostart=%r"
             % os.environ.get("PYENGINESIM_AUTOSTART", ""))
         if os.environ.get("PYENGINESIM_AUTOSTART", ""):
             try:
@@ -152,20 +163,41 @@ class PyEngineSim(toga.App):
                 log("autostart FAILED: %s" % exc)
                 log(traceback.format_exc())
 
-    # ------------------------------------------------------------- helpers
-    def _selected_key(self) -> str:
-        value = self.engine_sel.value or ""
-        return value.split("  --  ")[0].strip() or DEFAULT_ENGINE
+    # ------------------------------------------------------------ the engine
+    def _engine_text(self):
+        return "%s  --  %s" % (self.engine_key,
+                               self._labels.get(self.engine_key, "?"))
 
-    def _engine_changed(self, widget):
-        if self.mode is not None:
-            self.mode.set_engine(self._selected_key())
+    def _set_engine(self, key):
+        if key not in self._labels:
+            self.status.text = "no such engine: %s" % key
+            return
+        self.engine_key = key
+        self.engine_lbl.text = self._engine_text()
+        self.engine_in.value = key
         self._sync_slider_range()
+        if self.mode is not None:
+            self.mode.set_engine(key)
+        log("engine -> %s" % key)
+
+    def _step(self, delta):
+        i = self._keys.index(self.engine_key)
+        self._set_engine(self._keys[(i + delta) % len(self._keys)])
+
+    def _quick(self, widget):
+        picks = [k for k in QUICK if k in self._labels]
+        if not picks:
+            return
+        i = picks.index(self.engine_key) if self.engine_key in picks else -1
+        self._set_engine(picks[(i + 1) % len(picks)])
+
+    def _typed(self, widget):
+        self._set_engine((self.engine_in.value or "").strip())
 
     def _sync_slider_range(self):
         """Slider spans THIS engine's rev range, so the ends mean something."""
         try:
-            eng = presets.ALL[self._selected_key()]()
+            eng = presets.ALL[self.engine_key]()
         except Exception:
             return
         lo, hi = float(eng.idle_rpm), float(eng.redline_rpm)
@@ -173,32 +205,29 @@ class PyEngineSim(toga.App):
         self.rpm_slider.max = hi
         if not (lo <= self.rpm_slider.value <= hi):
             self.rpm_slider.value = lo + (hi - lo) * 0.25
+        self._slider_changed(None)
 
     def _slider_changed(self, widget):
         self.rpm_label.text = "rpm %.0f" % self.rpm_slider.value
         self.thr_label.text = "throttle %.0f%%" % (self.thr_slider.value * 100.0)
 
-    def _manual_changed(self, widget):
-        if self.mode is not None:      # takes effect on the next Start
-            self.status.text = "press Stop then Start to switch mode"
-
-    def _spk_changed(self, widget):
-        sink = getattr(self, "_sink", None)
-        if sink is None:
-            return
-        v = self.spk_sel.value or ""
-        sink.small_speaker = (None if "auto" in v else ("small" in v))
-        sink._refresh_route()
-        log("speaker mode -> %s (route %s, compensating=%s)"
-            % (v, sink.route, sink._compensate))
-
-    def _pov_changed(self, widget):
+    # ----------------------------------------------------------- live tweaks
+    def _pov_changed(self, value):
         synth = getattr(self.mode, "synth", None) if self.mode else None
         if synth is not None:
-            synth.pov = self.pov_sel.value
-        log("pov -> %s" % self.pov_sel.value)
+            synth.pov = value
+        log("pov -> %s" % value)
 
-    # -------------------------------------------------------- start / stop
+    def _spk_changed(self, value):
+        sink = self._sink
+        if sink is None:
+            return
+        sink.small_speaker = (None if value == "auto" else (value == "small"))
+        sink._refresh_route()
+        log("speaker -> %s (route %s, compensating=%s)"
+            % (value, sink.route, sink._compensate))
+
+    # --------------------------------------------------------- start / stop
     def _toggle(self, widget):
         if self.mode is None:
             self._start()
@@ -222,33 +251,25 @@ class PyEngineSim(toga.App):
         idle_seed, red_seed = CAR_PROFILES["a3"]
         rmap = RpmMap(mode="stretch" if self.stretch_sw.value else "direct",
                       car_idle=idle_seed, car_redline=red_seed)
-
-        self.mode = CarMode(engine_key=self._selected_key(),
+        self.mode = CarMode(engine_key=self.engine_key,
                             telemetry=self.telemetry, rpm_map=rmap,
                             synth_factory=self._make_synth)
         self.mode.start()
-
-        self.button.text = "Stop"
-        self._last = time.monotonic()
-        # _start is only ever reached from a button press or on_running, both
-        # of which run inside the loop -- so ask for the RUNNING one.
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = self.loop
-        self._task = loop.create_task(self._tick_loop())
-        log("started: %s, link %s:%s, demo=%s"
-            % (self.mode.label, host, port, self.demo_sw.value))
+        self._after_start("link %s:%s demo=%s" % (host, port,
+                                                  self.demo_sw.value))
 
     def _start_manual(self):
         """No link at all: the sliders ARE the telemetry."""
         self.telemetry = ManualSource(rpm=self.rpm_slider.value,
                                       throttle=self.thr_slider.value)
         # direct, never stretched: a hand-set rpm is already the rpm to hear
-        self.mode = CarMode(engine_key=self._selected_key(),
+        self.mode = CarMode(engine_key=self.engine_key,
                             telemetry=self.telemetry, rpm_map=RpmMap("direct"),
                             synth_factory=self._make_synth, shift_pop=False)
         self.mode.start()
+        self._after_start("manual")
+
+    def _after_start(self, how):
         self.button.text = "Stop"
         self._last = time.monotonic()
         try:
@@ -256,25 +277,24 @@ class PyEngineSim(toga.App):
         except RuntimeError:
             loop = self.loop
         self._task = loop.create_task(self._tick_loop())
-        log("started MANUAL: %s, pov=%s" % (self.mode.label, self.pov_sel.value))
+        log("started %s: %s, pov=%s" % (how, self.mode.label, self.pov.value))
 
     def _make_synth(self, sim):
         """Build the synth at the rate the DEVICE negotiated, not a guess."""
         from .ios_audio import IOSAudioSink
         import engine_sim.audio as _audio
-        blk = int((self.block_sel.value or "block: 256").split(": ")[1])
+        blk = int(self.block.value)
         if blk != _audio.BLOCK:
             _audio.BLOCK = blk          # read when the Synthesizer is built
-            log("render block -> %d" % blk)
-        want = (self.rate_sel.value or "rate: device").split(": ")[1]
+        want = self.rate.value
         sink = IOSAudioSink(preferred_rate=(DEFAULT_RATE if want == "device"
                                             else int(want)))
-        log("audio session negotiated %d Hz (asked %s), block %d"
-            % (sink.sample_rate, want, blk))
-        synth = Synthesizer(sim, sample_rate=sink.sample_rate)
-        synth.pov = self.pov_sel.value
-        synth.sink = sink
         self._sink = sink
+        self._spk_changed(self.spk.value)
+        log("audio %d Hz (asked %s), block %d" % (sink.sample_rate, want, blk))
+        synth = Synthesizer(sim, sample_rate=sink.sample_rate)
+        synth.pov = self.pov.value
+        synth.sink = sink
         return synth
 
     def _stop(self):
@@ -284,9 +304,8 @@ class PyEngineSim(toga.App):
         if self.mode is not None:
             self.mode.stop()
             self.mode = None
-        sink = getattr(self, "_sink", None)
-        if sink is not None:
-            sink.stop()
+        if self._sink is not None:
+            self._sink.stop()
             self._sink = None
         if self.telemetry is not None:
             self.telemetry.stop()
@@ -299,11 +318,10 @@ class PyEngineSim(toga.App):
         self.detail.text = ""
         self.audio_lbl.text = ""
 
-    # ------------------------------------------------------------ the loop
+    # -------------------------------------------------------------- the loop
     async def _tick_loop(self):
         period = 1.0 / TICK_HZ
-        shown = 0.0
-        logged = 0.0
+        shown = logged = 0.0
         try:
             while self.mode is not None:
                 now = time.monotonic()
@@ -318,13 +336,12 @@ class PyEngineSim(toga.App):
                 if now - logged > 5.0:
                     logged = now
                     st = self.mode.status()
-                    sink = getattr(self, "_sink", None)
-                    log("%s %.0f->%.0f rpm  pedal %.0f%%  g%d  link %.0f Hz"
-                        "  audio blocks=%s under=%s"
+                    synth = getattr(self.mode, "synth", None)
+                    log("%s %.0f->%.0f rpm  load %.0f%%  under %s  %s blk%s"
                         % (st["link"], st["car_rpm"], st["sim_rpm"],
-                           st["pedal"] * 100.0, st["gear"], st["hz"],
-                           getattr(sink, "blocks", "-"),
-                           getattr(sink, "underruns", "-")))
+                           100.0 * getattr(synth, "load", 0.0),
+                           getattr(self._sink, "underruns", "-"),
+                           self.engine_key, self.block.value))
                 await asyncio.sleep(period)
         except asyncio.CancelledError:
             pass
@@ -335,8 +352,8 @@ class PyEngineSim(toga.App):
             st["link"], st["car_rpm"], st["sim_rpm"])
         self.detail.text = "pedal %3.0f%%  g%d  %+.2f bar  link %.0f Hz" % (
             st["pedal"] * 100.0, st["gear"], st["boost_bar"], st["hz"])
-        sink = getattr(self, "_sink", None)
-        synth = getattr(self.mode, "synth", None) if self.mode else None
+        sink = self._sink
+        synth = getattr(self.mode, "synth", None)
         if sink is None:
             self.audio_lbl.text = ""
         else:
