@@ -49,6 +49,13 @@ def voicing_for(key):
         "params": {k: float(syn.params[k])
                    for k in ("pulse_tau", "attack_deg", "cyl_spread",
                              "cyl_voice")},
+        # structure-borne enclosure: the block/head/piston lid the combustion
+        # is sealed behind, and the two casting resonances it rings at
+        "blk_seal": float(getattr(syn, "_blk_seal", 0.0)),
+        "blk_fc": float(getattr(syn, "_blk_fc", 800.0)),
+        "blk_f1": float(getattr(syn, "_blk_f1", 400.0)),
+        "blk_f2": float(getattr(syn, "_blk_f2", 900.0)),
+        "blk_q": float(getattr(syn, "_blk_q", 1.0)),
     }
     if v is not None:
         out["voice_amp"] = [float(x) for x in v.amp]

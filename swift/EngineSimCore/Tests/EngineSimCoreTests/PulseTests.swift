@@ -34,6 +34,7 @@ final class PulseTests: XCTestCase {
         let exhaust_openness: Double
         let fire_chord: Int
         let params: [String: Double]
+        let block: [Double]
     }
 
     func fixture(_ name: String) throws -> Data {
@@ -150,6 +151,58 @@ final class PulseTests: XCTestCase {
             let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
             print("  \(key) voiced: worst \(worst), rel rms \(rel)")
             XCTAssertLessThan(rel, 1e-9, "\(key) voiced firing event diverges")
+        }
+    }
+
+    /// The structure-borne enclosure: combustion sealed behind the block, head
+    /// and piston, and rung at the casting's resonances.
+    func testBlockEnclosureMatchesPython() throws {
+        let voicings = try VoicingSetup.load(jsonData: fixture("engine_voicing"))
+        let cases = try JSONDecoder().decode([String: Case].self,
+                                             from: fixture("pulses"))
+        for (key, c) in cases {
+            guard let setup = voicings[key] else { continue }
+            let cache = FilterCache(sampleRate: c.sample_rate)
+            let train = PulseTrain(setup: setup, sampleRate: c.sample_rate)
+            let bf = BangFizz(nchan: setup.nchan, nCylinders: c.ncyl,
+                              sampleRate: c.sample_rate, cache: cache)
+            let src = SourceStage(sampleRate: c.sample_rate, nchan: setup.nchan,
+                                  cache: cache)
+            src.fireChordIndex = c.fire_chord
+            let blk = BlockStage(setup: setup, sampleRate: c.sample_rate,
+                                 cache: cache)
+            let rng = PortableRNG(seed: c.seed)
+            let chans = train.render(frames: c.frames, rpm: c.rpm,
+                                     degPerSample: c.dps, load: c.load,
+                                     soundSpeed: c.sound_speed, valve: c.valve,
+                                     cylScale: c.cyl_scale, rng: rng)
+            let bfOut = bf.process(chans: chans, strength: c.strength,
+                                   rpm: c.rpm, degPerSample: c.dps, rng: rng)
+            let sOut = src.process(bang: bfOut.bang, fizz: bfOut.fizz,
+                                   rpm: c.rpm, nCylinders: c.ncyl,
+                                   exhaustOpenness: c.exhaust_openness,
+                                   choke: c.choke, d2: c.d2, params: c.params)
+            // combustion = voiced bang + turbulence * mean fizz
+            let inv = 1.0 / Double(setup.nchan)
+            var fizzSum = [Double](repeating: 0, count: c.frames)
+            for ch in bfOut.fizz {
+                for i in 0..<c.frames { fizzSum[i] += ch[i] }
+            }
+            var combustion = [Double](repeating: 0, count: c.frames)
+            let turb = c.params["turbulence"] ?? 0.5
+            for i in 0..<c.frames {
+                combustion[i] = sOut.voiced[i] + turb * (fizzSum[i] * inv)
+            }
+            let out = blk.process(combustion)
+            var worst = 0.0, sumSq = 0.0, refSq = 0.0
+            for i in 0..<min(out.sealed.count, c.block.count) {
+                let d = out.sealed[i] - c.block[i]
+                worst = max(worst, abs(d)); sumSq += d * d
+                refSq += c.block[i] * c.block[i]
+            }
+            let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
+            print("  \(key) block: worst \(worst), rel rms \(rel)")
+            XCTAssertLessThan(rel, 1e-9, "\(key) block enclosure diverges")
         }
     }
 }

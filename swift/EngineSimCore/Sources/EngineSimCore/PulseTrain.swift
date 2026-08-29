@@ -41,6 +41,11 @@ public struct VoicingSetup: Decodable {
     public let voice_edge: [Double]?
     public let damp_b: [[Double]]?
     public let damp_a: [[Double]]?
+    public let blk_seal: Double?
+    public let blk_fc: Double?
+    public let blk_f1: Double?
+    public let blk_f2: Double?
+    public let blk_q: Double?
 
     public static func load(jsonData: Data) throws -> [String: VoicingSetup] {
         try JSONDecoder().decode([String: VoicingSetup].self, from: jsonData)
