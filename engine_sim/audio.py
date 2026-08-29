@@ -3332,10 +3332,16 @@ class Synthesizer:
 
     # ----------------------------------------------------------- lifecycle
     def start(self):
-        if not self.enabled:
-            return False
+        # A sink IS the output, so it must be checked before `enabled` -- that
+        # flag only asks whether one of the BUILT-IN backends could work, and
+        # on iOS neither can: there is no PortAudio and no pygame.  Gating the
+        # sink on it made the synth refuse to start on any machine without
+        # sounddevice installed, which is exactly the platform the sink exists
+        # for.  (Found on the first macOS run of the port.)
         if self.sink is not None:                # caller supplies the output
             return self._start_sink()
+        if not self.enabled:
+            return False
         if ON_ANDROID or not _HAVE_SD:           # no PortAudio -> use pygame's mixer
             return self._start_pygame()
         attempts = []

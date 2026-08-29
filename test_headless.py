@@ -105,6 +105,9 @@ def run_audio_sink():
 
     got = []
     synth = Synthesizer(sim, sample_rate=32000)
+    # A sink must work with NO audio backend available at all -- that is the
+    # iOS case (no PortAudio, no pygame), and it is what this guards.
+    synth.enabled = False
     synth.sink = lambda b: got.append(
         (b.shape, b.dtype.str, float(np.abs(b).max())))
     assert synth.start(), "sink backend refused to start"
