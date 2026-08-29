@@ -15,9 +15,12 @@ project_name = "PyEngineSim"
 bundle = "com.pyenginesim"
 version = "1.0"
 url = "https://github.com/kRaikkonen/PyEngineSim"
-# No LICENSE file exists in this repo and the project has never declared one,
-# so nothing is asserted here.  Add a real license + file before this is ever
-# distributed to anyone else; for a sideloaded personal build it is inert.
+# Briefcase requires a PEP 639 license expression.  This repo has no LICENSE
+# file and has never declared one, and "all rights reserved" is exactly what
+# that means by default -- so this asserts nothing new rather than inventing a
+# licence on the author's behalf.  Replace it (and add a LICENSE file) if this
+# is ever to be distributed to anyone else.
+license = "LicenseRef-Proprietary"
 author = "Leo"
 author_email = "noreply@pyenginesim.dev"
 
