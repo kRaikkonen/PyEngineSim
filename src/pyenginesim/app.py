@@ -107,8 +107,11 @@ class PyEngineSim(toga.App):
         self.block_sel = toga.Selection(items=["block: 256", "block: 512"])
 
         self.button = toga.Button("Start", on_press=self._toggle)
+        # three short lines: one long one runs off the side of a phone and
+        # the numbers that matter (load, underruns) are what gets cut
         self.status = toga.Label("idle")
         self.detail = toga.Label("")
+        self.audio_lbl = toga.Label("")
 
         box = toga.Box(style=Pack(direction="column"))
         for w in (toga.Label("Engine"), self.engine_sel,
@@ -119,7 +122,7 @@ class PyEngineSim(toga.App):
                   self.thr_label, self.thr_slider,
                   toga.Label("WiFi ELM327 address"), self.host_in, self.port_in,
                   self.demo_sw, self.stretch_sw,
-                  self.button, self.status, self.detail):
+                  self.button, self.status, self.detail, self.audio_lbl):
             box.add(w)
         self._sync_slider_range()
 
@@ -294,6 +297,7 @@ class PyEngineSim(toga.App):
         self.button.text = "Start"
         self.status.text = "idle"
         self.detail.text = ""
+        self.audio_lbl.text = ""
 
     # ------------------------------------------------------------ the loop
     async def _tick_loop(self):
@@ -329,14 +333,18 @@ class PyEngineSim(toga.App):
         st = self.mode.status()
         self.status.text = "%s   %.0f -> %.0f rpm" % (
             st["link"], st["car_rpm"], st["sim_rpm"])
+        self.detail.text = "pedal %3.0f%%  g%d  %+.2f bar  link %.0f Hz" % (
+            st["pedal"] * 100.0, st["gear"], st["boost_bar"], st["hz"])
         sink = getattr(self, "_sink", None)
         synth = getattr(self.mode, "synth", None) if self.mode else None
-        audio = "" if sink is None else "  %d Hz  load %.0f%%  under %d  %s%s" % (
-            sink.sample_rate, 100.0 * getattr(synth, "load", 0.0), sink.underruns,
-            str(sink.route).replace("AVAudioSessionPort", ""),
-            " +smallspk" if getattr(sink, "_compensate", False) else "")
-        self.detail.text = "pedal %3.0f%%  g%d  %+.2f bar  %.0f Hz link%s" % (
-            st["pedal"] * 100.0, st["gear"], st["boost_bar"], st["hz"], audio)
+        if sink is None:
+            self.audio_lbl.text = ""
+        else:
+            self.audio_lbl.text = "load %.0f%%  under %d  %d Hz  %s%s" % (
+                100.0 * getattr(synth, "load", 0.0), sink.underruns,
+                sink.sample_rate,
+                str(sink.route).replace("AVAudioSessionPort", ""),
+                " +spk" if getattr(sink, "_compensate", False) else "")
 
 
 def main():
