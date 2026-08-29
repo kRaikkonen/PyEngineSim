@@ -56,10 +56,15 @@ def sample(key):
         for thr in THROTTLES:
             sim.omega = rpm_to_rads(rpm)
             sim.throttle = thr
-            # let the closed-form state (boost, idle trim) settle the same way
-            # the running sim would
+            # Settle the same state a running sim would carry.  The burn
+            # multiplier matters most: blowdown_pressure() reads self._k_burn,
+            # which is only ever solved inside step() -- capture it unsolved
+            # and every car in this reference is frozen at the constructor's
+            # placeholder 3.0, which is not what the sound is made of.
             for _ in range(200):
                 sim._update_boost(1.0 / 200.0)
+            sim._k_burn = sim._burn_k(sim.rpm,
+                                      sim._manifold_pressure() / 101325.0)
             out["points"].append({
                 "rpm": rpm,
                 "throttle": thr,
