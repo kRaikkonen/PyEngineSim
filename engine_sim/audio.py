@@ -2378,6 +2378,8 @@ class Synthesizer:
         op_d = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
         direct = 0.20 + 0.62 * op_d
         sig = direct * combustion + wet
+        # the pipe system in series, plus the openness-scaled direct share
+        self._tap("pipes", sig)
         # (the chamber reverb combs now live INLINE at their own stages —
         # catalyst can after the cat, box chambers after the muffler — so the
         # tails STACK along the physical chain instead of being one shared

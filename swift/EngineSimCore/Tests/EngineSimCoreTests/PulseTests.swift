@@ -35,6 +35,14 @@ final class PulseTests: XCTestCase {
         let fire_chord: Int
         let params: [String: Double]
         let block: [Double]
+        let pipes: [Double]
+        let d1: Int
+        let d3: Int
+        let g1: Double
+        let g2: Double
+        let g3: Double
+        let lp_a: Double
+        let lp_end: Double
     }
 
     func fixture(_ name: String) throws -> Data {
@@ -203,6 +211,67 @@ final class PulseTests: XCTestCase {
             let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
             print("  \(key) block: worst \(worst), rel rms \(rel)")
             XCTAssertLessThan(rel, 1e-9, "\(key) block enclosure diverges")
+        }
+    }
+
+    /// The three waveguides in series plus the openness-scaled direct share.
+    func testPipeSystemMatchesPython() throws {
+        let voicings = try VoicingSetup.load(jsonData: fixture("engine_voicing"))
+        let cases = try JSONDecoder().decode([String: Case].self,
+                                             from: fixture("pulses"))
+        for (key, c) in cases {
+            guard let setup = voicings[key] else { continue }
+            let cache = FilterCache(sampleRate: c.sample_rate)
+            let train = PulseTrain(setup: setup, sampleRate: c.sample_rate)
+            let bf = BangFizz(nchan: setup.nchan, nCylinders: c.ncyl,
+                              sampleRate: c.sample_rate, cache: cache)
+            let src = SourceStage(sampleRate: c.sample_rate, nchan: setup.nchan,
+                                  cache: cache)
+            src.fireChordIndex = c.fire_chord
+            let blk = BlockStage(setup: setup, sampleRate: c.sample_rate,
+                                 cache: cache)
+            let pipes = PipeStage(nchan: setup.nchan)
+            let rng = PortableRNG(seed: c.seed)
+
+            let chans = train.render(frames: c.frames, rpm: c.rpm,
+                                     degPerSample: c.dps, load: c.load,
+                                     soundSpeed: c.sound_speed, valve: c.valve,
+                                     cylScale: c.cyl_scale, rng: rng)
+            let bfOut = bf.process(chans: chans, strength: c.strength,
+                                   rpm: c.rpm, degPerSample: c.dps, rng: rng)
+            let sOut = src.process(bang: bfOut.bang, fizz: bfOut.fizz,
+                                   rpm: c.rpm, nCylinders: c.ncyl,
+                                   exhaustOpenness: c.exhaust_openness,
+                                   choke: c.choke, d2: c.d2, params: c.params)
+            let inv = 1.0 / Double(setup.nchan)
+            var fizzSum = [Double](repeating: 0, count: c.frames)
+            for ch in bfOut.fizz { for i in 0..<c.frames { fizzSum[i] += ch[i] } }
+            var combustion = [Double](repeating: 0, count: c.frames)
+            let turb = c.params["turbulence"] ?? 0.5
+            for i in 0..<c.frames {
+                combustion[i] = sOut.voiced[i] + turb * (fizzSum[i] * inv)
+            }
+            let sealed = blk.process(combustion).sealed
+            var wet = pipes.process(srcs: sOut.srcs, combustion: sealed,
+                                    d1: c.d1, d2: c.d2, d3: c.d3,
+                                    g1: c.g1, g2: c.g2, g3: c.g3, s: -1.0,
+                                    lpA: c.lp_a, lpEnd: c.lp_end,
+                                    res1: c.params["res1"] ?? 0.1,
+                                    res2: c.params["res2"] ?? 0.1)
+            let direct = PipeStage.directShare(exhaustOpenness: c.exhaust_openness)
+            var sig = [Double](repeating: 0, count: c.frames)
+            for i in 0..<c.frames {
+                sig[i] = direct * sealed[i] + wet[i] + sOut.er[i]
+            }
+            wet = []
+            var sumSq = 0.0, refSq = 0.0
+            for i in 0..<min(sig.count, c.pipes.count) {
+                let d = sig[i] - c.pipes[i]
+                sumSq += d * d; refSq += c.pipes[i] * c.pipes[i]
+            }
+            let rel = (sumSq / max(refSq, 1e-30)).squareRoot()
+            print("  \(key) pipes: rel rms \(rel)")
+            XCTAssertLessThan(rel, 1e-9, "\(key) pipe system diverges")
         }
     }
 }
