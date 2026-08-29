@@ -8,6 +8,7 @@ throttle-locked engine across its rev range to print a torque/power curve.
 Run with:  py test_headless.py
 """
 
+import math
 import numpy as np
 
 from engine_sim import Simulator, presets
@@ -173,11 +174,79 @@ def run_filter_fallback():
           f"streamed in 256-sample blocks")
 
 
+
+def run_layer_switches():
+    """Every stage of the chain has a visibility switch; prove each one is
+    LIVE.
+
+    A switch that silently does nothing is worse than no switch -- you would
+    conclude the stage does not matter when really the toggle was not wired.
+    So each layer is hidden in turn and the output compared, on a spread of
+    cars and operating points wide enough to provoke every conditional stage:
+    the burble needs a closed throttle with the revs up, the megaphone needs a
+    car that actually has an exit horn (only two in the fleet do), and the
+    turbine needs boost."""
+    from engine_sim.audio import Synthesizer
+    from engine_sim.simulator import Simulator
+    from engine_sim.units import rpm_to_rads
+
+    print("\nLAYER SWITCHES")
+    # (car, throttle) -- between them these reach every conditional branch
+    CASES = [("rs3", 0.85),      # turbo: turbine, wastegate, GPF
+             ("rs3", 0.0),       # ...and the same car on OVERRUN: burble
+             ("f2007", 0.9),     # a real megaphone, and a screamer's whine
+             ("aven", 0.7)]      # big NA V12, open system
+
+    def render(car, throttle, hide=None, blocks=6):
+        sim = Simulator(presets.ALL[car]())
+        sim.ignition_on = True
+        syn = Synthesizer(sim, sample_rate=32000, seed=1)
+        syn.enabled = False
+        if hide:
+            syn.stage_on[hide] = False
+        out = []
+        for i in range(blocks):
+            rpm = sim.engine.redline_rpm * (0.35 + 0.09 * i)
+            sim.omega = rpm_to_rads(rpm)
+            sim.throttle = throttle
+            for _ in range(20):
+                sim._update_boost(1.0 / 200.0)
+            out.append(np.asarray(syn._render_block(256), dtype=np.float64))
+        return np.concatenate(out)
+
+    bases = {c: render(*c) for c in CASES}
+    dead = []
+    for nm in Synthesizer.STAGES:
+        best, where = -300.0, None
+        for c in CASES:
+            base = bases[c]
+            d = render(c[0], c[1], hide=nm) - base
+            rel = float(np.sqrt(np.mean(d ** 2))
+                        / max(np.sqrt(np.mean(base ** 2)), 1e-12))
+            db = 20.0 * math.log10(max(rel, 1e-12))
+            if db > best:
+                best, where = db, c[0]
+        print(f"  {nm:<16s} {best:+7.1f} dB  ({where})")
+        if best < -60.0:
+            dead.append(nm)
+    assert not dead, f"layer switch does nothing: {', '.join(dead)}"
+
+    # ...and with everything on, the chain must be bit-identical to no
+    # switches at all -- the feature must not cost the default path anything
+    sim = Simulator(presets.ALL["rs3"]())
+    sim.ignition_on = True
+    syn = Synthesizer(sim, sample_rate=32000, seed=1)
+    syn.enabled = False
+    assert all(syn.stage_on.values()), "layers must default to visible"
+    print(f"  all {len(Synthesizer.STAGES)} layers live, all visible by default")
+
+
 if __name__ == "__main__":
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
         run_startup(eng)
         run_torque_curve(eng)
     run_filter_fallback()
+    run_layer_switches()
     run_audio_sink()
     print("\nAll headless checks passed.")

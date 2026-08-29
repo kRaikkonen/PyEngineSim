@@ -712,48 +712,98 @@ class App:
         self._status = msg
         self._status_t = 3.0
 
-    _FLOW_STAGES = ("block", "header", "head/port", "catalytic",
-                    "standing-wave", "resonator", "muffler", "valve bypass",
-                    "induction+gears", "wall de-honk", "metal ring",
-                    "megaphone", "thunder", "reflection", "radiation",
-                    "tailpipe exit", "EQ", "cabin/room", "output")
+    _FLOW_STAGES = ("voiced", "block", "pipes", "header", "head/port",
+                    "catalytic", "standing-wave", "resonator", "muffler",
+                    "valve bypass", "induction+gears", "wall de-honk",
+                    "metal ring", "megaphone", "thunder", "reflection",
+                    "radiation", "tailpipe exit", "EQ", "cabin/room", "output")
 
     def _draw_flow_debug(self):
-        """TEMPORARY (Leo): gas-flow GAIN STAGING — a live RMS meter for every
-        exhaust stage tap, so you can SEE where energy blooms or dies along
-        the pipe.  F12 toggles.  Requires the taps (auto-enabled while open)."""
+        """The LAYERS panel: the whole chain as a stack you can switch off.
+
+        Each row is one stage — its live level, and an eye that hides it.  A
+        hidden stage passes its input straight through, so you hear precisely
+        what it contributes; right-click SOLOs (everything else off), which is
+        how you find out whether a stage is earning its place.
+
+        `output` has no eye: there is nothing after it to fall back to.
+        F12 opens this.  The taps auto-enable while it is open."""
         sy = self.synth
         if sy is None or not getattr(self, "flow_dbg", False):
             return
         taps = getattr(sy, "_stage_taps", {})
+        on = getattr(sy, "stage_on", {})
         rows = [(nm, taps.get(nm)) for nm in self._FLOW_STAGES]
-        w, rh = 250, 15
-        h = rh * len(rows) + 26
+        w, rh = 268, 15
+        h = rh * len(rows) + 38
         x, y = 14, 60
         srf = pygame.Surface((w, h), pygame.SRCALPHA)
         srf.fill((8, 9, 12, 214))
         self.screen.blit(srf, (x, y))
         pygame.draw.rect(self.screen, (74, 82, 96), (x, y, w, h), 1)
+        hidden = sum(1 for k, v in on.items() if not v)
         self.screen.blit(self.font_small.render(
-            "GAS FLOW · stage levels (dB)", True, (152, 160, 174)),
-            (x + 8, y + 4))
-        yy = y + 22
+            "LAYERS · click eye to hide, right-click solo", True,
+            (152, 160, 174)), (x + 8, y + 4))
+        self.screen.blit(self.font_small.render(
+            f"{hidden} hidden" if hidden else "all visible", True,
+            (240, 170, 90) if hidden else (110, 160, 120)), (x + 8, y + 17))
+        yy = y + 34
+        self._layer_rows = []
         for nm, arr in rows:
+            live = on.get(nm, True)
+            switchable = nm in on
+            if switchable:
+                eye = pygame.Rect(x + 6, yy + 2, 11, 11)
+                self._layer_rows.append((eye.inflate(6, 4), nm))
+                pygame.draw.rect(self.screen, (56, 62, 74), eye, 1)
+                if live:
+                    pygame.draw.rect(self.screen, (150, 200, 240),
+                                     eye.inflate(-4, -4))
+            fg = (170, 176, 188) if live else (96, 84, 84)
             if arr is not None and len(arr):
                 rms = float(np.sqrt(np.mean(np.asarray(arr) ** 2)))
                 db = 20.0 * math.log10(max(rms, 1e-5))     # -100..0-ish
                 fr = min(max((db + 60.0) / 60.0, 0.0), 1.0)
                 col = ((110, 220, 130) if fr < 0.75 else
                        (250, 200, 90) if fr < 0.92 else (240, 90, 90))
+                if not live:
+                    col = (74, 66, 66)
                 pygame.draw.rect(self.screen, (30, 34, 42),
-                                 (x + 96, yy + 3, 120, 9))
+                                 (x + 114, yy + 3, 114, 9))
                 pygame.draw.rect(self.screen, col,
-                                 (x + 96, yy + 3, int(120 * fr), 9))
+                                 (x + 114, yy + 3, int(114 * fr), 9))
                 self.screen.blit(self.font_small.render(
-                    f"{db:5.1f}", True, (200, 205, 215)), (x + 219, yy))
-            self.screen.blit(self.font_small.render(
-                nm[:13], True, (170, 176, 188)), (x + 8, yy))
+                    f"{db:5.1f}", True, (200, 205, 215) if live
+                    else (110, 100, 100)), (x + 231, yy))
+            self.screen.blit(self.font_small.render(nm[:14], True, fg),
+                             (x + 23, yy))
             yy += rh
+
+    def _layer_click(self, mpos, solo=False):
+        """A click in the layers panel.  Returns True if it landed on a row."""
+        sy = self.synth
+        if sy is None or not getattr(self, "flow_dbg", False):
+            return False
+        for rect, nm in getattr(self, "_layer_rows", ()):
+            if not rect.collidepoint(mpos):
+                continue
+            if solo:
+                # SOLO, or un-solo if this layer is already the only one on
+                others = [k for k in sy.stage_on if k != nm]
+                if all(not sy.stage_on[k] for k in others) and sy.stage_on[nm]:
+                    for k in sy.stage_on:
+                        sy.stage_on[k] = True
+                    self._flash("all layers shown")
+                else:
+                    for k in sy.stage_on:
+                        sy.stage_on[k] = (k == nm)
+                    self._flash(f"solo: {nm}")
+            else:
+                sy.stage_on[nm] = not sy.stage_on[nm]
+                self._flash(f"{nm} {'shown' if sy.stage_on[nm] else 'HIDDEN'}")
+            return True
+        return False
 
     def _apply_voice(self):
         self.synth.params.update(FIRING_VOICES[self.voice_idx][1])
@@ -992,6 +1042,8 @@ class App:
 
     def _handle_press(self, mpos):
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
+        if self._layer_click(mpos):          # the layers panel sits on top
+            return
         if self.scope_open:                  # modal overlay: any click dismisses it
             self.scope_open = False
             return
@@ -1187,6 +1239,8 @@ class App:
                 mpos = self._map_mouse(e.pos)
                 if not (self.touch_mode and self._pointer_down("mouse", mpos)):
                     self._handle_press(mpos)
+            elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 3:
+                self._layer_click(self._map_mouse(e.pos), solo=True)
             elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
                 if self._drag == "menu":
                     self._handle_menu_release(self._map_mouse(e.pos))
@@ -1262,8 +1316,9 @@ class App:
                     self._flash("deep vacuum "
                                 + ("ON (physical)" if self.synth.vx["vacuum"]
                                    else "OFF (arcade overrun)"))
-                elif e.key == pygame.K_F12:    # TEMP: gas-flow gain staging
+                elif e.key == pygame.K_F12:    # the LAYERS panel
                     self.flow_dbg = not getattr(self, "flow_dbg", False)
+                    self._flash("layers " + ("open" if self.flow_dbg else "closed"))
                 elif pygame.K_1 <= e.key <= pygame.K_6:   # hidden: firing chord 1-6
                     self.synth.fire_chord = e.key - pygame.K_1
                     self._flash(["engine", "major", "root+m2", "m7b5", "dim",
@@ -1468,7 +1523,7 @@ class App:
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
-        self._draw_flow_debug()             # TEMP: gas-flow gain staging (F12)
+        self._draw_flow_debug()             # the LAYERS panel (F12)
         self._present()
 
     def _present(self):
