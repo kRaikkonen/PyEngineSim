@@ -40,7 +40,10 @@ requires = []
 [tool.briefcase.app.pyenginesim.iOS]
 requires = [
     "toga-iOS~=0.5.0",
-    "std-nslog~=2.0.0",
+    # 1.0.x is what exists for iOS (2.x is the macOS line).  Worth having: it
+    # redirects stdout/stderr into the system log, which is the only way to
+    # see a traceback from a phone.
+    "std-nslog~=1.0",
     # numpy is the ONLY heavy dependency.  Briefcase resolves iOS wheels from
     # the BeeWare secondary repo (anaconda.org/beeware), which publishes
     # cp313 builds for both arm64_iphoneos and x86_64_iphonesimulator -- the
