@@ -5,7 +5,7 @@
 //  voice is decided -- delays from its pipe lengths, gains from its radiation
 //  loss, valve opening from how hard it is being driven.  A port that got this
 //  right on an inline-4 and wrong on a rotary would sound plausible and be
-//  wrong about 130 cars.
+//  wrong about 131 cars.
 //
 
 import XCTest
@@ -66,7 +66,7 @@ final class ResonanceTests: XCTestCase {
         }
         print("  resonance: \(cars) cars, \(points) points; worst gain \(worstG), "
               + "worst pole \(worstLP), worst Helmholtz \(worstHelm) Hz")
-        XCTAssertEqual(cars, 130)
+        XCTAssertEqual(cars, 131)
         XCTAssertLessThan(worstG, 1e-12)
         XCTAssertLessThan(worstLP, 1e-12)
         XCTAssertLessThan(worstHelm, 1e-9)

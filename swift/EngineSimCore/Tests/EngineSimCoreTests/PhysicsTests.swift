@@ -2,7 +2,7 @@
 //  PhysicsTests.swift
 //
 //  The nine quantities the renderer reads, held to the Python across the whole
-//  fleet: 130 cars x 12 operating points.  Reference from
+//  fleet: 131 cars x 12 operating points.  Reference from
 //  tools/make_swift_physics_fixture.py.
 //
 //  Tolerances are stated in what they mean for the SOUND, not in abstract
@@ -83,7 +83,7 @@ final class PhysicsTests: XCTestCase {
             checkedCars += 1
         }
 
-        XCTAssertEqual(checkedCars, 130, "every car must be checked")
+        XCTAssertEqual(checkedCars, 131, "every car must be checked")
         XCTAssertGreaterThan(checkedPoints, 1400, "and every operating point")
         print("  MAP  worst relative error   \(worstMapRel)")
         print("  pulse worst level error dB  \(worstPulseDB)")

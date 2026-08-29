@@ -1043,6 +1043,56 @@ def audi_rs3_2024() -> Engine:
     )
 
 
+def audi_a3_35tfsi_ea211evo() -> Engine:
+    """Audi A3 35 TFSI (8Y) — EA211 evo 1.5 L turbo inline-four.
+
+    74.5 x 85.9 mm, 1498 cc, 12.5:1 — a MILLER-cycle engine: the intake valve
+    shuts early, so the effective compression is far below the geometric ratio
+    and the high CR is there to get the expansion work back.  ~150 PS / 250 Nm,
+    ~6500 rpm.  A VTG (variable-geometry) turbine spools it almost like an NA
+    engine off idle, which is why it has so little of the classic turbo lag.
+
+    Everything below follows from that hardware: an integrated exhaust manifold
+    in the head (short, hot, and it darkens the note), 350 bar injectors, a cat
+    AND a particulate filter, a small packed box, and NO balance shaft — a 1.5
+    four without one keeps a little of its second-order roughness at idle, which
+    is most of why this engine sounds slightly thrummy rather than glassy.
+    """
+    offsets = _even_offsets(4, firing_order=[1, 3, 4, 2])
+    cylinders = [
+        Cylinder(bore=mm(74.5), stroke=mm(85.9), rod_length=mm(148),
+                 compression_ratio=12.5, cycle_offset_deg=offsets[i])
+        for i in range(4)
+    ]
+    return Engine(
+        name="Audi A3 35TFSI EA211evo 1.5 I4",
+        cylinders=cylinders,
+        flywheel_inertia=0.14, redline_rpm=6500, idle_rpm=760,
+        # Miller: the charge burns from a much lower effective compression, so
+        # the release is softer and the VE curve is broad and early-peaking
+        heat_release_k=1.5, ve_width_frac=0.80, ve_peak_frac=0.55,
+        ve_floor=0.70, closed_map_fraction=0.20,
+        exhaust_tone=76.0,
+        # short run: the manifold is IN the head, so the primary is tiny
+        exhaust_primary_m=0.34, exhaust_total_m=2.05, exhaust_radius_m=0.0215,
+        exhaust_channels=1, exhaust_openness=0.34, muffler_volume_m3=0.0034,
+        muffler_neck_len_m=0.09, muffler_type="absorptive",
+        intake_runner_m=0.30,
+        # VTG: the turbine vanes close down at low flow, so this turbo is fully
+        # lit by ~1500 rpm (0.23 of redline) instead of the ~0.6 a fixed-geometry
+        # one of the same size would need.  That single fact is what gives the
+        # engine its flat 250 Nm shelf from 1500 rpm.
+        induction="turbo", boost_bar=1.0, turbo_lag=0.22,
+        turbo_spool_frac=0.10, turbo_spool_width=0.13,
+        has_cat=True, has_gpf=True, cat_cells_cpsi=400,
+        variable_valve="VVT",
+        # 7-speed S tronic (DQ200), 225/45 R17
+        gear_ratios=[3.50, 2.09, 1.34, 0.93, 0.76, 0.62, 0.52], final_drive=3.94,
+        vehicle_mass=1320.0, wheel_radius=0.317, clutch_capacity=420.0,
+        gearbox_type="dct",
+    )
+
+
 def audi_rs5_ea839() -> Engine:
     """Audi RS5 — EA839 2.9 L twin-turbo 90-deg V6 (hot-V).
 
@@ -2879,6 +2929,7 @@ PRESETS = [
     ("valk", "Aston Valkyrie 11100rpm V12", aston_valkyrie_v12),
     ("vulcan", "Aston Vulcan 7.0 V12", aston_vulcan_v12),
     ("audiv8", "Audi 4.2 V8", audi_42_v8),
+    ("a3", "A3 35 TFSI EA211evo I4", audi_a3_35tfsi_ea211evo),
     ("rs3", "RS3 2.5 I5", audi_rs3_2024),
     ("rs5", "RS5 EA839 V6", audi_rs5_ea839),
     ("s1", "S1 Quattro I5", audi_sport_quattro_s1),
@@ -3134,14 +3185,17 @@ _DUAL_INJ = frozenset({"3", "rtr", "hura"})
 # V12s (aven/6), the Enzo F140B, the AMG M156 (c63bs) and the Ford 5.2 Voodoo/
 # Predator (gt350r/gt500) are all PORT, not direct -> removed; LaFerrari's F140FE
 # IS direct -> moved in; the LFA (5) is port and the Huracan (hura) is dual.
-_GDI = frozenset({"2", "a45", "b48", "0", "330i", "rs3", "rs5", "d8gto", "fk8",
+_GDI = frozenset({"2", "a3", "a45", "b48", "0", "330i", "rs3", "rs5", "d8gto",
+                  "fk8",
                   "fordgt", "raptor", "focus3", "ct5v", "c7", "lafe",
                   "amggt", "e63", "giulia", "db11",
                   "ftype", "one1", "488", "pista", "fxxk",
                   "valhalla", "p1", "senna", "gt2rs", "918", "hoonitruck"})
-_NO_BALANCE = frozenset({"22b", "gdb", "gv", "vt15r", "evo7", "ae86", "s15",
+_NO_BALANCE = frozenset({"a3", "22b", "gdb", "gv", "vt15r", "evo7", "ae86",
+                         "s15",
                          "escrs", "rs200", "hoonrs", "deltas4", "p205", "focus3"})
-_INTEGRATED_MANIFOLD = frozenset({"2", "a45", "b48", "330i", "0", "fk8", "focus3",
+_INTEGRATED_MANIFOLD = frozenset({"a3", "2", "a45", "b48", "330i", "0", "fk8",
+                                  "focus3",
                                   "giulia", "raptor", "hoonitruck", "fordgt"})
 _RACE_CAM = frozenset({"7", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12",
                        "clkgtr", "zondar", "r390", "cgt", "996gt1"})
@@ -3200,6 +3254,7 @@ _VE_MAX = {
 # realistic value above and the envelope does the capping.  z28 is NA (no ECU) — not
 # here; its "over" was the underrated 1968 GROSS rating, corrected via ve_max to ~360 hp.
 _TORQUE_ENVELOPE = {          # key: (peak_torque_Nm, rated_power_hp)
+    'a3': (250, 148),
     'e63': (800, 577), 'sl65': (1000, 621), 'db11': (700, 600),
     '930': (432, 296), '9': (440, 326),
 }

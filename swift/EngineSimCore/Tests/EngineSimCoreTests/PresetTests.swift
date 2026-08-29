@@ -1,7 +1,7 @@
 //
 //  PresetTests.swift
 //
-//  The whole 130-car fleet, not a sample: a port that works on an inline-4 and
+//  The whole 131-car fleet, not a sample: a port that works on an inline-4 and
 //  quietly breaks on a rotary or a radial is exactly what this is for.
 //  Reference values come from the Python via tools/make_swift_physics_fixture.py.
 //
@@ -37,7 +37,7 @@ final class PresetTests: XCTestCase {
 
     func testLoadsEveryCar() throws {
         let fleet = try PresetLibrary.load(jsonData: fixture("presets"))
-        XCTAssertEqual(fleet.count, 130, "the whole fleet must load")
+        XCTAssertEqual(fleet.count, 131, "the whole fleet must load")
         for (key, e) in fleet {
             XCTAssertFalse(e.name.isEmpty, "\(key) has no name")
             XCTAssertGreaterThan(e.numCylinders, 0, "\(key) has no cylinders")
@@ -71,6 +71,6 @@ final class PresetTests: XCTestCase {
                            ref.cycle_offsets_deg!, "\(key) cycle offsets")
             checked += 1
         }
-        XCTAssertEqual(checked, 130, "every car must be checked")
+        XCTAssertEqual(checked, 131, "every car must be checked")
     }
 }
