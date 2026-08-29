@@ -2102,6 +2102,10 @@ class Synthesizer:
                 d_samp = self._runner_len[j] / c_runner * self.sample_rate
                 pulse = self._runner_dl[j].process(pulse, d_samp)
                 chans[self._channel_of[j]] += pulse
+            # the raw pulse train, before anything shapes it -- the first
+            # thing a reimplementation has to get right, and the tap it is
+            # held to (tools/export_pulses.py)
+            self._tap("pulses", chans[0])
 
             # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
             # noise gated by the pulse), so each gets its OWN mixer slider.
