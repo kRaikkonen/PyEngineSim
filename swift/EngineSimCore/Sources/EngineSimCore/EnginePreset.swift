@@ -97,6 +97,9 @@ public struct EnginePreset: Codable {
     public let hotV: Bool               // turbos in the vee swallow the whine
     public let wastegate: String        // internal | external (screamer pipe)
     public let flexPipe: Bool
+    public let individualThrottle: Bool  // one trumpet per cylinder
+    public let inductionSubtype: String  // twin | twin_scroll | ...
+    public let mguWhine: Double          // F1 PU: prominent MGU whines
 
     enum CodingKeys: String, CodingKey {
         case name, cylinders, induction
@@ -148,6 +151,9 @@ public struct EnginePreset: Codable {
         case hotV = "hot_v"
         case wastegate
         case flexPipe = "flex_pipe"
+        case individualThrottle = "individual_throttle"
+        case inductionSubtype = "induction_subtype"
+        case mguWhine = "mgu_whine"
     }
 
     // --- derived, matching engine.Engine's properties --------------------
