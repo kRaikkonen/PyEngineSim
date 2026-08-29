@@ -2270,6 +2270,8 @@ class Synthesizer:
         if _HAVE_SCIPY and fw > 0.02:                    # low-shelf 'weight'
             b, a = self._pk(110.0, 0.6, 10.0 * fw)
             bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
+        # the voiced firing event -- pulse train turned into combustion
+        self._tap("voiced", bang)
 
         # separated fizz (own slider)
         fizz = np.zeros(frames, dtype=np.float64)
