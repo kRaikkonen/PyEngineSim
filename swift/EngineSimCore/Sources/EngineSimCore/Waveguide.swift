@@ -45,7 +45,7 @@ public final class ExhaustWaveguide {
         if useLP && a != lpA {
             // the loop filter's STATE is carried across designs, as in the
             // Python -- resetting it would click every time D moves
-            lp = OnePole(b: [1.0 - a], a: [1.0, -a])
+            lp.setCoefficients(b: [1.0 - a], a: [1.0, -a])
             lpA = a
         }
 

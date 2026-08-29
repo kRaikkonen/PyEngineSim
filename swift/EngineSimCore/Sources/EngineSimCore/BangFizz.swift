@@ -37,6 +37,11 @@ public final class FilterCache {
         return ba
     }
 
+    /// Seed one entry directly -- see ReferenceSupport.
+    func insert(key: String, b: [Double], a: [Double]) {
+        store[key] = (b, a)
+    }
+
     public func peaking(_ f0: Double, _ q: Double,
                         _ gainDB: Double) -> (b: [Double], a: [Double]) {
         let key = "pk|\(Int(f0 / 8.0))|\(Int(q * 10.0))|\(Int((gainDB * 4.0).rounded()))"
@@ -54,7 +59,7 @@ public final class BangFizz {
     let nCylinders: Int
     let sampleRate: Double
     let cache: FilterCache
-    var bipolar: [Biquad?]          // one-pole high-pass per channel
+    var bipolar: [Biquad]           // one-pole high-pass per channel
     var bipolarKey: [String]
     public var useBipolar = true
     public var useNoise = true
@@ -65,7 +70,7 @@ public final class BangFizz {
         self.nCylinders = nCylinders
         self.sampleRate = sampleRate
         self.cache = cache
-        bipolar = [Biquad?](repeating: nil, count: nchan)
+        bipolar = [Biquad](repeating: .identity, count: nchan)
         bipolarKey = [String](repeating: "", count: nchan)
     }
 
@@ -94,11 +99,11 @@ public final class BangFizz {
                     if bipolarKey[ci] != key {
                         // a new design means a new filter; the Python keeps the
                         // STATE across designs, so carry it rather than reset
-                        bipolar[ci] = Biquad(b: ba.b, a: ba.a)
+                        bipolar[ci].setCoefficients(b: ba.b, a: ba.a)
                         bipolarKey[ci] = key
                     }
                     var acp = bangC
-                    bipolar[ci]!.process(&acp)
+                    bipolar[ci].process(&acp)
                     for i in 0..<frames {
                         bangC[i] = mAC * acp[i] + (1.0 - mAC) * bangC[i]
                     }

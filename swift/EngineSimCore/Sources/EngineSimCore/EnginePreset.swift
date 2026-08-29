@@ -93,6 +93,10 @@ public struct EnginePreset: Codable {
     public let tipScale: Double
     public let balanceShaft: Bool
     public let integratedManifold: Bool
+    public let catCellsCpsi: Double     // honeycomb density -> cat cutoff
+    public let hotV: Bool               // turbos in the vee swallow the whine
+    public let wastegate: String        // internal | external (screamer pipe)
+    public let flexPipe: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, cylinders, induction
@@ -140,6 +144,10 @@ public struct EnginePreset: Codable {
         case tipScale = "tip_scale"
         case balanceShaft = "balance_shaft"
         case integratedManifold = "integrated_manifold"
+        case catCellsCpsi = "cat_cells_cpsi"
+        case hotV = "hot_v"
+        case wastegate
+        case flexPipe = "flex_pipe"
     }
 
     // --- derived, matching engine.Engine's properties --------------------

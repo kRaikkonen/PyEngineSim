@@ -78,7 +78,7 @@ public final class SourceStage {
     var crackHP: Biquad
     var chord: [Biquad]
     var chordKey: String = ""
-    var fireLow: Biquad?
+    var fireLow = Biquad.identity
     var fireLowKey: String = ""
 
     public var useAsym = true
@@ -202,10 +202,10 @@ public final class SourceStage {
             let ba = cache.peaking(110.0, 0.6, 10.0 * fw)
             let key = "\(ba.b)\(ba.a)"
             if fireLowKey != key {
-                fireLow = Biquad(b: ba.b, a: ba.a)
+                fireLow.setCoefficients(b: ba.b, a: ba.a)
                 fireLowKey = key
             }
-            fireLow!.process(&voiced)
+            fireLow.process(&voiced)
         }
         return (dry, voiced, er, srcs)
     }

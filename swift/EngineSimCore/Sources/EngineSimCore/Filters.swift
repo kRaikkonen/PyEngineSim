@@ -31,7 +31,24 @@ public struct Biquad {
         a2 = (a.count > 2 ? a[2] : 0) / a0
     }
 
+    /// A pass-through, for a filter that will be retuned before first use.
+    public static var identity: Biquad { Biquad(b: [1.0], a: [1.0]) }
+
     public mutating func reset() { s1 = 0; s2 = 0 }
+
+    /// Retune WITHOUT clearing the state.  scipy's `lfilter(b, a, x, zi=zi)`
+    /// carries zi across a coefficient change, and every sliding filter in the
+    /// chain relies on that: rebuilding instead would zero the history and
+    /// click on every redesign -- which happens continuously while the revs
+    /// move the centre frequencies.
+    public mutating func setCoefficients(b: [Double], a: [Double]) {
+        let a0 = a.count > 0 ? a[0] : 1.0
+        b0 = (b.count > 0 ? b[0] : 0) / a0
+        b1 = (b.count > 1 ? b[1] : 0) / a0
+        b2 = (b.count > 2 ? b[2] : 0) / a0
+        a1 = (a.count > 1 ? a[1] : 0) / a0
+        a2 = (a.count > 2 ? a[2] : 0) / a0
+    }
 
     @inline(__always)
     public mutating func process(_ x: Double) -> Double {
@@ -61,7 +78,18 @@ public struct OnePole {
         a1 = (a.count > 1 ? a[1] : 0) / a0
     }
 
+    /// A pass-through, for a filter that will be retuned before first use.
+    public static var identity: OnePole { OnePole(b: [1.0], a: [1.0]) }
+
     public mutating func reset() { s1 = 0 }
+
+    /// Retune, keeping the state -- see `Biquad.setCoefficients`.
+    public mutating func setCoefficients(b: [Double], a: [Double]) {
+        let a0 = a.count > 0 ? a[0] : 1.0
+        b0 = (b.count > 0 ? b[0] : 0) / a0
+        b1 = (b.count > 1 ? b[1] : 0) / a0
+        a1 = (a.count > 1 ? a[1] : 0) / a0
+    }
 
     @inline(__always)
     public mutating func process(_ x: Double) -> Double {

@@ -77,7 +77,8 @@ public final class HeaderStage {
         let ba = cache.butter(2, fc, "low")
         let key = "\(ba.b)\(ba.a)"
         if key != headKey {
-            headLP = Biquad(b: ba.b, a: ba.a)
+            // retuned, not rebuilt: the Python's zi survives the redesign
+            headLP.setCoefficients(b: ba.b, a: ba.a)
             headKey = key
         }
         headLP.process(&out)

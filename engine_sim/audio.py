@@ -1952,6 +1952,9 @@ class Synthesizer:
             self._cold = min(1.0, self._cold + dt_blk / 40.0)
 
         D1, D2, D3, g1, g2, g3, lp_a, f_helm = self._resonance_params()
+        # audit stash: the Swift port reproduces one block in isolation, and
+        # these are the only values it cannot recompute from the sim state
+        self._dbg_res = (D1, D2, D3, g1, g2, g3, lp_a, f_helm)
         s = -1.0    # inverting open-end reflection -> odd-harmonic quarter wave
         # live hot-gas sound speed (~470-670 m/s, climbs with rpm/load) -> the
         # runner-delay interference pattern shifts slightly as the engine heats.
@@ -1992,6 +1995,7 @@ class Synthesizer:
             p_cyl = p_open + 1.05 * P_ATM                  # absolute blowdown pressure
             pr = (1.05 * P_ATM) / max(p_cyl, 1.05 * P_ATM)   # back/cylinder ratio (0,1]
             choke = min(max((0.54 - pr) / 0.54, 0.0), 1.0)   # 0 subsonic .. 1 choked
+            self._dbg_choke = choke                          # audit stash
             # CYCLE-TO-CYCLE combustion variability — the physical line
             # broadener.  Scatter grows with rpm ceiling (burn time shrinks,
             # turbulence scatter rises): a screamer's harmonics smear into the

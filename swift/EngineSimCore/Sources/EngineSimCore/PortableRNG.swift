@@ -32,6 +32,12 @@ public final class PortableRNG {
         spare = nil
     }
 
+    /// Force the generator's state -- see ReferenceSupport.
+    func setState(_ s: [UInt64], spare sp: Double?) {
+        s0 = s[0]; s1 = s[1]; s2 = s[2]; s3 = s[3]
+        spare = sp
+    }
+
     @inline(__always)
     private func next() -> UInt64 {
         var r = s1 &* 5
