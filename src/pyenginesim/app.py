@@ -91,6 +91,11 @@ class PyEngineSim(toga.App):
         # "chase".  Switchable, live.
         self.pov_sel = toga.Selection(items=list(POVS), on_change=self._pov_changed)
         self.pov_sel.value = "chase"
+        # auto = decide from the audio route (phone speaker vs headphones vs
+        # CarPlay).  The overrides are there for judging it by ear.
+        self.spk_sel = toga.Selection(items=["speaker: auto", "speaker: small",
+                                             "speaker: full-range"],
+                                      on_change=self._spk_changed)
 
         self.button = toga.Button("Start", on_press=self._toggle)
         self.status = toga.Label("idle")
@@ -98,7 +103,7 @@ class PyEngineSim(toga.App):
 
         box = toga.Box(style=Pack(direction="column"))
         for w in (toga.Label("Engine"), self.engine_sel,
-                  toga.Label("Listener"), self.pov_sel,
+                  toga.Label("Listener"), self.pov_sel, self.spk_sel,
                   self.manual_sw,
                   self.rpm_label, self.rpm_slider,
                   self.thr_label, self.thr_slider,
@@ -163,6 +168,16 @@ class PyEngineSim(toga.App):
     def _manual_changed(self, widget):
         if self.mode is not None:      # takes effect on the next Start
             self.status.text = "press Stop then Start to switch mode"
+
+    def _spk_changed(self, widget):
+        sink = getattr(self, "_sink", None)
+        if sink is None:
+            return
+        v = self.spk_sel.value or ""
+        sink.small_speaker = (None if "auto" in v else ("small" in v))
+        sink._refresh_route()
+        log("speaker mode -> %s (route %s, compensating=%s)"
+            % (v, sink.route, sink._compensate))
 
     def _pov_changed(self, widget):
         synth = getattr(self.mode, "synth", None) if self.mode else None
@@ -297,8 +312,10 @@ class PyEngineSim(toga.App):
         self.status.text = "%s   %.0f -> %.0f rpm" % (
             st["link"], st["car_rpm"], st["sim_rpm"])
         sink = getattr(self, "_sink", None)
-        audio = "" if sink is None else "  %d Hz  blocks %d  under %d" % (
-            sink.sample_rate, sink.blocks, sink.underruns)
+        audio = "" if sink is None else "  %d Hz  under %d  %s%s" % (
+            sink.sample_rate, sink.underruns,
+            str(sink.route).replace("AVAudioSessionPort", ""),
+            " +smallspk" if getattr(sink, "_compensate", False) else "")
         self.detail.text = "pedal %3.0f%%  g%d  %+.2f bar  %.0f Hz link%s" % (
             st["pedal"] * 100.0, st["gear"], st["boost_bar"], st["hz"], audio)
 

@@ -31,6 +31,18 @@ import numpy as np
 QUEUE_DEPTH = 3          # buffers in flight; more = safer, later
 DEFAULT_RATE = 32000     # what we ask the session for (the Android rate too)
 
+# An iPhone's own speaker is a few millimetres across.  A quarter to a half of
+# this engine's energy sits below 300 Hz -- an RS3 at 3500 rpm puts 28 % of it
+# below 150 Hz -- and the driver cannot move that much air, so it hits its
+# excursion limit and distorts.  Headphones and a car stereo can; the phone
+# speaker cannot.  So when (and only when) we are playing out of the built-in
+# speaker, high-pass away what it can only turn into distortion.
+#
+# This is loudspeaker correction, not voicing: it happens after the render, and
+# the ear-approved sound is untouched on every output that can carry it.
+SMALL_SPEAKER_HP_HZ = 320.0
+SMALL_SPEAKER_GAIN = 0.85       # a little headroom back for the excursion
+
 
 def _val(attr):
     """Read an Objective-C property whether rubicon exposes it as a value or
@@ -71,6 +83,13 @@ class IOSAudioSink:
 
         # what we actually got -- ask, never assume
         self.sample_rate = int(round(float(_val(self._session.sampleRate))))
+        # route-driven small-speaker correction; None = decide from the route
+        self.small_speaker = None
+        self.route = "?"
+        self._hp_ba = None
+        self._hp_zi = None
+        self._route_countdown = 0
+        self._refresh_route()
         self.queue_depth = queue_depth
         self._slots = threading.Semaphore(queue_depth)
         self._started = False
@@ -78,6 +97,34 @@ class IOSAudioSink:
         self._next = 0
         self.blocks = 0
         self.underruns = 0
+
+    # ------------------------------------------------------------- the route
+    def _refresh_route(self):
+        """Ask the session what we are actually playing out of."""
+        try:
+            outs = _val(_val(self._session.currentRoute).outputs)
+            port = str(_val(outs.objectAtIndex(0).portType)) if len(outs) else ""
+        except Exception:
+            port = ""
+        self.route = port or "?"
+        # AVAudioSessionPortBuiltInSpeaker is the only output that needs this;
+        # headphones, CarPlay, USB and Bluetooth all reproduce the bottom end.
+        if self.small_speaker is None:
+            self._compensate = "BuiltInSpeaker" in port
+        else:
+            self._compensate = bool(self.small_speaker)
+
+    def _apply_small_speaker(self, mono):
+        if self._hp_ba is None:
+            from engine_sim.audio import _np_butter
+            self._hp_ba = _np_butter(
+                2, min(SMALL_SPEAKER_HP_HZ / (self.sample_rate * 0.5), 0.95),
+                "high")
+            self._hp_zi = np.zeros(2)
+        from engine_sim.audio import _np_lfilter
+        y, self._hp_zi = _np_lfilter(self._hp_ba[0], self._hp_ba[1], mono,
+                                     zi=self._hp_zi)
+        return y * SMALL_SPEAKER_GAIN
 
     # ------------------------------------------------------------------ start
     def start(self, frames_per_block=256):
@@ -126,6 +173,13 @@ class IOSAudioSink:
             self.underruns += 1
             return
 
+        # the route can change under us (headphones in, CarPlay plugged) --
+        # re-ask about once a second rather than assuming it is what it was
+        self._route_countdown -= 1
+        if self._route_countdown <= 0:
+            self._route_countdown = 100
+            self._refresh_route()
+
         buf = self._buffers[self._next % len(self._buffers)]
         self._next += 1
         n = min(block.shape[0], self._frames)
@@ -134,10 +188,16 @@ class IOSAudioSink:
         except Exception:            # older rubicon: plain setter selector
             buf.setFrameLength(n)
 
+        left = block[:n, 0]
+        right = block[:n, 1]
+        if self._compensate:
+            left = self._apply_small_speaker(left)
+            right = left           # a phone speaker is mono anyway
+
         # deinterleave straight into CoreAudio's own memory
         chans = _val(buf.floatChannelData)
-        np.ctypeslib.as_array(chans[0], shape=(n,))[:] = block[:n, 0]
-        np.ctypeslib.as_array(chans[1], shape=(n,))[:] = block[:n, 1]
+        np.ctypeslib.as_array(chans[0], shape=(n,))[:] = left
+        np.ctypeslib.as_array(chans[1], shape=(n,))[:] = right
 
         from rubicon.objc import Block
         done = Block(lambda: self._slots.release(), None)
