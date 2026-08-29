@@ -47,6 +47,7 @@ TICK_HZ = 50.0                 # control loop; the synth runs at audio rate
 DEFAULT_ENGINE = "rs3"         # the 8Y RS3 five-cylinder
 DEFAULT_HOST = "192.168.0.10"  # what almost every WiFi ELM327 answers on
 DEFAULT_PORT = 35000
+DEFAULT_RATE = 32000
 POVS = ("chase", "cockpit", "trackside")
 
 
@@ -96,6 +97,14 @@ class PyEngineSim(toga.App):
         self.spk_sel = toga.Selection(items=["speaker: auto", "speaker: small",
                                              "speaker: full-range"],
                                       on_change=self._spk_changed)
+        # CPU knobs, both applied on the next Start.  A bigger block cuts the
+        # per-call numpy overhead (which is what the filter cost actually is)
+        # but slows the per-block jitter refresh; a lower rate is a straight
+        # trade of bandwidth for CPU.  Neither is free -- they are here so the
+        # ear decides, not a guess.
+        self.rate_sel = toga.Selection(items=["rate: device", "rate: 32000",
+                                              "rate: 24000"])
+        self.block_sel = toga.Selection(items=["block: 256", "block: 512"])
 
         self.button = toga.Button("Start", on_press=self._toggle)
         self.status = toga.Label("idle")
@@ -104,6 +113,7 @@ class PyEngineSim(toga.App):
         box = toga.Box(style=Pack(direction="column"))
         for w in (toga.Label("Engine"), self.engine_sel,
                   toga.Label("Listener"), self.pov_sel, self.spk_sel,
+                  self.rate_sel, self.block_sel,
                   self.manual_sw,
                   self.rpm_label, self.rpm_slider,
                   self.thr_label, self.thr_slider,
@@ -248,8 +258,16 @@ class PyEngineSim(toga.App):
     def _make_synth(self, sim):
         """Build the synth at the rate the DEVICE negotiated, not a guess."""
         from .ios_audio import IOSAudioSink
-        sink = IOSAudioSink()
-        log("audio session negotiated %d Hz" % sink.sample_rate)
+        import engine_sim.audio as _audio
+        blk = int((self.block_sel.value or "block: 256").split(": ")[1])
+        if blk != _audio.BLOCK:
+            _audio.BLOCK = blk          # read when the Synthesizer is built
+            log("render block -> %d" % blk)
+        want = (self.rate_sel.value or "rate: device").split(": ")[1]
+        sink = IOSAudioSink(preferred_rate=(DEFAULT_RATE if want == "device"
+                                            else int(want)))
+        log("audio session negotiated %d Hz (asked %s), block %d"
+            % (sink.sample_rate, want, blk))
         synth = Synthesizer(sim, sample_rate=sink.sample_rate)
         synth.pov = self.pov_sel.value
         synth.sink = sink
