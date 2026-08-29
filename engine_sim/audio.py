@@ -760,10 +760,18 @@ class Synthesizer:
         self._bov_prev = 0.0      # stock-recirc dark-noise low-pass state
         self._lock = threading.Lock()
         self._stream = None
+        self._sink_run = False        # generic sink feeder thread (see _start_sink)
+        self._sink_thread = None
+        self._sink_blocks = 0
         self._pg_run = False          # pygame.mixer feeder thread (Android backend)
         self._pg_thread = None
         self.latency_ms = 0.0
         self.mode = "off"
+        # Optional output SINK: any callable taking one (frames, 2) float32
+        # array.  Set it before start() and the synth renders into it instead
+        # of opening a sound device -- that is the seam an iOS AVAudioEngine
+        # backend, a bare-ALSA Pi or a recorder plugs into (see _start_sink).
+        self.sink = None
         self.prefer_exclusive = os.environ.get("ENGINE_SIM_EXCLUSIVE") == "1"
         # Host output buffer (seconds).  Generous by default because a
         # heavy pure-Python frame must never underrun the audio; car mode
@@ -3326,6 +3334,8 @@ class Synthesizer:
     def start(self):
         if not self.enabled:
             return False
+        if self.sink is not None:                # caller supplies the output
+            return self._start_sink()
         if ON_ANDROID or not _HAVE_SD:           # no PortAudio -> use pygame's mixer
             return self._start_pygame()
         attempts = []
@@ -3374,6 +3384,59 @@ class Synthesizer:
         print("[audio] disabled: no usable output device")
         self.enabled = False
         return False
+
+    # --- Generic sink backend: hand blocks to whatever the platform provides ---
+    def _start_sink(self):
+        """Render into ``self.sink`` instead of opening a sound device.
+
+        ``sink(block)`` is called with a C-contiguous ``(frames, 2) float32``
+        array, already panned for the current POV, and may keep no reference to
+        it after returning (the buffer is reused).  Return value is ignored.
+
+        This is the platform seam.  An iOS build drives AVAudioEngine through
+        rubicon-objc from here; a Pi can write straight to ALSA; a test can
+        count blocks on a machine with no audio hardware at all.  Nothing about
+        the voicing changes -- the sink sits strictly after the render.
+
+        A sink that BLOCKS until it has consumed the block sets the pace by
+        itself.  One that returns immediately is paced here off the sample
+        rate, so a non-blocking sink cannot spin the CPU or race ahead.
+        """
+        sr = int(self.sample_rate or SAMPLE_RATE)
+        self._rebuild_for_rate(sr)
+        self.sample_rate = sr
+        self._sink_run = True
+        self._sink_blocks = 0
+        self._sink_thread = threading.Thread(target=self._sink_feed, daemon=True)
+        self._sink_thread.start()
+        self.mode = "sink"
+        self.latency_ms = round(BLOCK / sr * 1000.0, 1)
+        return True
+
+    def _sink_feed(self):
+        import time
+        CH = BLOCK
+        period = CH / float(self.sample_rate)
+        buf = np.empty((CH, 2), dtype=np.float32)
+        deadline = time.monotonic()
+        while self._sink_run:
+            try:
+                mono = self._render_block(CH)
+                ang = self.params["spatial_x"] * (math.pi * 0.5)
+                buf[:, 0] = mono * math.cos(ang)
+                buf[:, 1] = mono * math.sin(ang)
+                np.clip(buf, -1.0, 1.0, out=buf)
+                self.sink(buf)
+                self._sink_blocks += 1
+            except Exception:
+                time.sleep(0.01)
+                continue
+            deadline += period
+            slack = deadline - time.monotonic()
+            if slack > 0:
+                time.sleep(slack)
+            elif slack < -0.5:                   # a slow sink: stop accumulating
+                deadline = time.monotonic()
 
     # --- Android / no-PortAudio backend: stream blocks through pygame.mixer -----
     def _start_pygame(self):
@@ -3442,6 +3505,13 @@ class Synthesizer:
             pass
 
     def stop(self):
+        self._sink_run = False
+        if getattr(self, "_sink_thread", None) is not None:
+            try:
+                self._sink_thread.join(timeout=0.3)
+            except Exception:
+                pass
+            self._sink_thread = None
         self._pg_run = False
         if self._pg_thread is not None:
             try:

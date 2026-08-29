@@ -87,9 +87,48 @@ def run_torque_curve(eng):
           f"  peak power ~{best_hp[1]:.0f} hp @ {best_hp[0]} rpm")
 
 
+def run_audio_sink():
+    """Render real audio with NO sound device, through the output sink.
+
+    This is the seam a platform backend plugs into (iOS/AVAudioEngine, bare
+    ALSA, a recorder), so it is worth holding still: shape, dtype, range and
+    the real-time pace are all part of the contract.
+    """
+    import time
+    from engine_sim.audio import Synthesizer
+    from engine_sim.units import rpm_to_rads
+
+    sim = Simulator(presets.audi_rs3_2024())
+    sim.ignition_on = True
+    sim.throttle = 0.8
+    sim.omega = rpm_to_rads(5000.0)
+
+    got = []
+    synth = Synthesizer(sim, sample_rate=32000)
+    synth.sink = lambda b: got.append(
+        (b.shape, b.dtype.str, float(np.abs(b).max())))
+    assert synth.start(), "sink backend refused to start"
+    assert synth.mode == "sink", "sink backend not selected"
+    t0 = time.monotonic()
+    time.sleep(1.5)
+    elapsed = time.monotonic() - t0
+    synth.stop()
+
+    assert got, "sink received no audio"
+    assert {g[0] for g in got} == {(256, 2)}, "sink block shape changed"
+    assert {g[1] for g in got} == {"<f4"}, "sink block dtype changed"
+    peak = max(g[2] for g in got)
+    assert np.isfinite(peak) and 0.01 < peak <= 1.0, "sink audio silent or clipped"
+    rate = len(got) * 256 / elapsed
+    assert 0.9 < rate / 32000.0 < 1.1, "sink ran at %.0f frames/s, not real time" % rate
+    print(f"  audio sink: {len(got)} blocks, {rate:,.0f} frames/s, peak {peak:.2f}"
+          f"  (no sound device involved)")
+
+
 if __name__ == "__main__":
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
         run_startup(eng)
         run_torque_curve(eng)
+    run_audio_sink()
     print("\nAll headless checks passed.")
