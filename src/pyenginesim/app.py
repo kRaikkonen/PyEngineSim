@@ -50,8 +50,13 @@ DEFAULT_RATE = 32000
 
 POVS = ("chase", "cockpit", "trackside")
 SPEAKERS = ("auto", "small", "full-range")
-RATES = ("device", "32000", "24000")
-BLOCKS = ("256", "512")
+# First entry is the default.  24 kHz / block 512 is what actually holds on
+# an iPhone XS (A12) -- measured, including a V12, which will not fit at
+# 32 kHz / 256.  The heavier settings are still one tap away for a phone with
+# room to spare; they cost bandwidth above 12 kHz and halve the per-block
+# jitter refresh, so this is a real trade, not a free default.
+RATES = ("24000", "32000", "device")
+BLOCKS = ("512", "256")
 # a thumbful worth cycling with prev/next stepping the full 130
 QUICK = ("rs3", "s1", "aven", "8", "9", "conti", "787b")
 # The three addresses WiFi ELM327 clones actually ship with.  A button, not a

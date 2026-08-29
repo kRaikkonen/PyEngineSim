@@ -186,6 +186,28 @@ refused to start even with a sink supplied. Fixed in 51742a3; the test now
 sets `enabled = False` before starting the sink, so the guarantee is "works
 with no audio backend at all".
 
+## Where v1 landed (2026-08-29)
+
+**The Python build works on the phone at 24 kHz / block 512**, V12 included --
+that is now the default in the app.  It does not work at 32 kHz / block 256:
+a V12 there sits at 150 % of one A12 core.  The knobs are one tap away for a
+phone with more room.
+
+What that setting costs, measured (RS3, 3500 rpm, 80 % throttle):
+
+    band share      30-300  0.3-1.2k  1.2-2.4k   2.4-5k    5-9k   9-12k
+    32 kHz / 256     53.9%    17.9%     11.1%     8.1%     4.9%    2.1%
+    24 kHz / 512     46.3%    20.9%     14.9%    10.1%     5.1%    1.1%
+
+and above 12 kHz there is simply nothing left -- at 32 kHz that band carried
+2-7 % of the energy, the top of the whine and the injector fizz.  The bigger
+block also halves the per-block jitter refresh (125 -> 62.5 Hz).
+
+So v1 is usable, and **v2 in Swift is what buys back the headroom to run
+32 kHz / 256 on the heavy engines** rather than what rescues a broken build.
+Both are kept: `swift/EngineSimCore` is the second implementation and the
+Python is its specification (tools/golden.py).
+
 ## Remaining steps
 
 1. **Briefcase iOS project.** Add a `[tool.briefcase]` config; app requires
