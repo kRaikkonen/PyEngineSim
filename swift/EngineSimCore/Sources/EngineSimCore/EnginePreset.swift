@@ -83,6 +83,16 @@ public struct EnginePreset: Codable {
     public let gearGrain: Double
     public let gearboxType: String
     public let cabinNrDb: Double
+    public let hasCat: Bool
+    public let hasGpf: Bool
+    public let mufflerType: String
+    public let injection: String
+    public let camProfile: String
+    public let valveLift: String
+    public let vtecRpm: Double
+    public let tipScale: Double
+    public let balanceShaft: Bool
+    public let integratedManifold: Bool
 
     enum CodingKeys: String, CodingKey {
         case name, cylinders, induction
@@ -120,6 +130,16 @@ public struct EnginePreset: Codable {
         case gearGrain = "gear_grain"
         case gearboxType = "gearbox_type"
         case cabinNrDb = "cabin_nr_db"
+        case hasCat = "has_cat"
+        case hasGpf = "has_gpf"
+        case mufflerType = "muffler_type"
+        case injection
+        case camProfile = "cam_profile"
+        case valveLift = "valve_lift"
+        case vtecRpm = "vtec_rpm"
+        case tipScale = "tip_scale"
+        case balanceShaft = "balance_shaft"
+        case integratedManifold = "integrated_manifold"
     }
 
     // --- derived, matching engine.Engine's properties --------------------
