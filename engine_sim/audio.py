@@ -2159,6 +2159,10 @@ class Synthesizer:
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
                 nfl = 0.006 if self.vx.get("noise", True) else 0.005
                 fizz_chans[ci] = e * noise + nfl * noise
+            # bang and fizz, before any cavity sees them -- the second
+            # tap a reimplementation is held to
+            self._tap("bang", chans[0])
+            self._tap("fizz", fizz_chans[0])
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
