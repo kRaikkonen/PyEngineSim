@@ -348,6 +348,78 @@ except Exception:                       # pragma: no cover -- the phone
 
 _HAVE_SCIPY = True
 
+class PortableRNG:
+    """xoshiro256** + Box-Muller: identical in Python and in Swift.
+
+    numpy's Generator is faster and better, and it is what ships.  This exists
+    so a reimplementation can be compared SAMPLE FOR SAMPLE rather than "the
+    spectra look close", which is the standard that lets a port drift.
+
+    Values are produced in strict sequence order, so a vectorised call here and
+    a scalar loop there yield the same numbers.
+    """
+
+    __slots__ = ("s0", "s1", "s2", "s3", "_spare")
+
+    def __init__(self, seed):
+        # splitmix64 to spread a single seed over the four words
+        x = int(seed) & 0xFFFFFFFFFFFFFFFF
+        st = []
+        for _ in range(4):
+            x = (x + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
+            z = x
+            z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
+            z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
+            st.append(z ^ (z >> 31))
+        self.s0, self.s1, self.s2, self.s3 = st
+        self._spare = None
+
+    def _next(self):
+        s0, s1, s2, s3 = self.s0, self.s1, self.s2, self.s3
+        M = 0xFFFFFFFFFFFFFFFF
+        r = (s1 * 5) & M
+        r = (((r << 7) | (r >> 57)) & M) * 9 & M
+        t = (s1 << 17) & M
+        s2 ^= s0
+        s3 ^= s1
+        s1 ^= s2
+        s0 ^= s3
+        s2 ^= t
+        s3 = ((s3 << 45) | (s3 >> 19)) & M
+        self.s0, self.s1, self.s2, self.s3 = s0, s1, s2, s3
+        return r
+
+    def _uniform(self):
+        """[0, 1) from the top 53 bits, the standard construction."""
+        return (self._next() >> 11) * (1.0 / 9007199254740992.0)
+
+    def random(self, n=None):
+        if n is None:
+            return self._uniform()
+        return np.fromiter((self._uniform() for _ in range(int(n))),
+                           dtype=np.float64, count=int(n))
+
+    def _normal(self):
+        if self._spare is not None:
+            v, self._spare = self._spare, None
+            return v
+        # Box-Muller, rejecting u1 == 0 so the log is finite
+        while True:
+            u1 = self._uniform()
+            if u1 > 0.0:
+                break
+        u2 = self._uniform()
+        r = math.sqrt(-2.0 * math.log(u1))
+        self._spare = r * math.sin(2.0 * math.pi * u2)
+        return r * math.cos(2.0 * math.pi * u2)
+
+    def standard_normal(self, n=None):
+        if n is None:
+            return self._normal()
+        return np.fromiter((self._normal() for _ in range(int(n))),
+                           dtype=np.float64, count=int(n))
+
+
 from .engine import P_ATM
 
 SAMPLE_RATE = 44100
@@ -817,7 +889,11 @@ class Synthesizer:
         self._cyl_tau = rngf.uniform(-1.0, 1.0, ncyl)   # decay -> pop pitch/brightness
         self._cyl_amp = rngf.uniform(-1.0, 1.0, ncyl)   # loudness
 
-        self._rng = np.random.default_rng(seed)
+        # A seed means someone is comparing this render against another
+        # implementation, so use the portable generator; unseeded, ship
+        # numpy's.
+        self._rng = (PortableRNG(seed) if seed is not None
+                     else np.random.default_rng())
         # full-resolution stage capture for the golden reference; the UI's
         # scopes use the decimated path below
         self.capture_stages = False
