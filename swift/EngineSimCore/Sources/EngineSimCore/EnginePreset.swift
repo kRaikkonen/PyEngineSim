@@ -100,6 +100,8 @@ public struct EnginePreset: Codable {
     public let individualThrottle: Bool  // one trumpet per cylinder
     public let inductionSubtype: String  // twin | twin_scroll | ...
     public let mguWhine: Double          // F1 PU: prominent MGU whines
+    public let wallMaterial: String      // the pipe formants ARE this
+    public let megaphone: Double         // diverging exit cone, 0..1
 
     enum CodingKeys: String, CodingKey {
         case name, cylinders, induction
@@ -154,6 +156,8 @@ public struct EnginePreset: Codable {
         case individualThrottle = "individual_throttle"
         case inductionSubtype = "induction_subtype"
         case mguWhine = "mgu_whine"
+        case wallMaterial = "wall_material"
+        case megaphone
     }
 
     // --- derived, matching engine.Engine's properties --------------------

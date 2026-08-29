@@ -2844,6 +2844,14 @@ class Synthesizer:
             bayi = np.zeros(frames, dtype=np.float64)   # layer hidden
         self._tap("induction+gears", bay)     # bay bus: intake, turbo, gearbox
 
+        # audit stash: the exit run is reproduced in isolation by the Swift
+        # port, and the induction section above has just drawn from the shared
+        # generator -- so its state HERE is the only one that reproduces it
+        if self.capture_stages:
+            _r = self._rng
+            self._dbg_exit = (np.asarray(sig, dtype=np.float64).copy(),
+                              (int(_r.s0), int(_r.s1), int(_r.s2), int(_r.s3)),
+                              _r._spare)
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
         # scoop THAT band and add a touch of low-shelf body (thicker, not thinner).

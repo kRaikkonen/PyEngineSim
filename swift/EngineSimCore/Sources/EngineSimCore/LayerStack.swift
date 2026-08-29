@@ -39,6 +39,7 @@ public enum Stage: String, CaseIterable {
 public final class LayerStack {
     private var visible: Set<Stage> = Set(Stage.allCases)
     private var busPrev = [String: [Double]]()
+    private var last = [Stage: [Double]]()
 
     public init() {}
 
@@ -70,8 +71,13 @@ public final class LayerStack {
             out = prev
         }
         busPrev[bus] = out
+        last[s] = out
         return out
     }
+
+    /// What left a given stage on the last block -- the per-stage tap, used to
+    /// compare one stage at a time against the Python.
+    public func lastValue(_ s: Stage) -> [Double]? { last[s] }
 
     /// For an ADDITIVE layer (the bay bus), where hiding means contributing
     /// nothing rather than passing something through.
