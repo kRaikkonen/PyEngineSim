@@ -45,11 +45,177 @@ ON_ANDROID = bool(os.environ.get("ANDROID_ARGUMENT")
                   or os.environ.get("ANDROID_APP_PATH")
                   or os.environ.get("ANDROID_PRIVATE"))
 
+# --------------------------------------------------------------------------
+# Filters.
+#
+# scipy does not exist on iOS or Android, and every `if _HAVE_SCIPY:` in this
+# file used to be a branch with NO else -- so on a phone the filters were not
+# replaced, they were SKIPPED.  A combustion snap with nothing low-passing it
+# keeps its full-band content, and the chain screamed at Nyquist loudly enough
+# to bury the engine (found on an iPhone, 2026-08-29).
+#
+# So these are real implementations, always defined so they can be checked
+# against scipy wherever scipy exists (test_headless.run_filter_fallback).
+# `_HAVE_SCIPY` therefore no longer asks "is scipy installed" but "do we have
+# working filters" -- which is now everywhere, so every branch below is live
+# on every platform.
+# --------------------------------------------------------------------------
+def _bilinear_biquad(wn, btype):
+    """One Butterworth biquad by bilinear transform, matching scipy.butter."""
+    k = math.tan(math.pi * min(max(wn, 1e-6), 0.999999) / 2.0)
+    k2 = k * k
+    r2 = math.sqrt(2.0)
+    d = 1.0 + r2 * k + k2
+    a = np.array([1.0, 2.0 * (k2 - 1.0) / d, (1.0 - r2 * k + k2) / d])
+    if btype == "high":
+        b = np.array([1.0, -2.0, 1.0]) / d
+    else:
+        b = np.array([k2, 2.0 * k2, k2]) / d
+    return b, a
+
+
+def _bilinear_onepole(wn, btype):
+    k = math.tan(math.pi * min(max(wn, 1e-6), 0.999999) / 2.0)
+    a = np.array([1.0, (k - 1.0) / (k + 1.0)])
+    if btype == "high":
+        b = np.array([1.0, -1.0]) / (k + 1.0)
+    else:
+        b = np.array([k, k]) / (k + 1.0)
+    return b, a
+
+
+def _np_butter(order, wn, btype="low"):
+    """Butterworth design.
+
+    Bandpass is a high-pass * low-pass cascade: not literally a Butterworth
+    bandpass, but the same order and, over the one wide band this file asks
+    for (the 5-9 kHz injector clatter), the same job.
+    """
+    if isinstance(wn, (list, tuple, np.ndarray)):
+        bl, al = _np_butter(order, float(wn[1]), "low")
+        bh, ah = _np_butter(order, float(wn[0]), "high")
+        return np.convolve(bl, bh), np.convolve(al, ah)
+    wn = float(wn)
+    if order <= 1:
+        return _bilinear_onepole(wn, btype)
+    b, a = _bilinear_biquad(wn, btype)
+    for _ in range(order - 2):
+        bb, aa = _bilinear_biquad(wn, btype)
+        b, a = np.convolve(b, bb), np.convolve(a, aa)
+    return b, a
+
+
+_IR_CACHE = {}
+
+
+def _impulse_response(b, a, n):
+    """Truncated impulse response, for filters whose poles decay fast."""
+    h = np.zeros(n)
+    xs = np.zeros(len(b))
+    ys = np.zeros(max(len(a), 2))
+    for i in range(n):
+        xs[1:] = xs[:-1]
+        xs[0] = 1.0 if i == 0 else 0.0
+        acc = float(np.dot(b, xs[:len(b)]))
+        for j in range(1, len(a)):
+            acc -= a[j] * ys[j - 1]
+        ys[1:] = ys[:-1]
+        ys[0] = acc
+        h[i] = acc
+    return h
+
+
+def _one_pole(v, pole, y_prev):
+    """y[n] = pole*y[n-1] + v[n]: exact, vectorised, overflow-safe.
+
+    y[m] = pole^m * (pole*y_prev + sum_(j<=m) v[j] * pole^-j).  That pole^-j
+    term grows, so the block is cut into chunks short enough that it never
+    exceeds ~1e12 -- far beyond audio precision, and no Python loop per sample.
+    """
+    n = len(v)
+    if n == 0:
+        return v, y_prev
+    ap = abs(pole)
+    if ap < 1e-9:                       # degenerate: pure feed-through
+        out = v.astype(np.complex128, copy=True)
+        out[0] += pole * y_prev
+        return out, out[-1]
+    if ap >= 0.999999:
+        step = n
+    else:
+        step = max(1, min(n, int(27.6 / -math.log(ap)) + 1))
+    out = np.empty(n, dtype=np.complex128)
+    i = 0
+    while i < n:
+        j = min(i + step, n)
+        pw = pole ** np.arange(j - i)
+        seg = pw * (pole * y_prev + np.cumsum(v[i:j] / pw))
+        out[i:j] = seg
+        y_prev = seg[-1]
+        i = j
+    return out, y_prev
+
+
+def _np_lfilter(b, a, x, zi=None):
+    """scipy-compatible enough for this file: returns (y, zf).
+
+    `zi` is opaque -- we hand back our own state and only require the caller
+    pass it straight back.  Zeros of any length mean "at rest", which is
+    exactly how every call site initialises it.
+    """
+    b = np.asarray(b, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    x = np.asarray(x, dtype=np.float64)
+    if a[0] != 1.0:
+        b, a = b / a[0], a / a[0]
+    n_in = len(b) - 1
+    key = (b.tobytes(), a.tobytes())
+    cached = _IR_CACHE.get(key)
+    if cached is None:
+        poles = np.roots(a) if len(a) > 1 else np.array([])
+        radius = float(np.max(np.abs(poles))) if len(poles) else 0.0
+        # fast-decaying poles: a short FIR IS the filter, to ~1e-10, and one
+        # convolve is much cheaper than a pole cascade
+        ir = _impulse_response(b, a, 48) if (len(poles) and radius < 0.62) else None
+        if len(_IR_CACHE) > 400:
+            _IR_CACHE.clear()
+        cached = _IR_CACHE[key] = (poles, ir)
+    poles, ir = cached
+
+    if ir is not None:
+        keep = len(ir) - 1
+        hist = np.zeros(keep)
+        if zi is not None and len(zi) >= keep:
+            hist = np.real(np.asarray(zi)[:keep])
+        buf = np.concatenate([hist[::-1], x])
+        y = np.convolve(buf, ir)[keep:keep + len(x)]
+        return y, buf[-keep:][::-1].astype(np.complex128)
+
+    n_state = n_in + len(poles)
+    st = np.zeros(n_state, dtype=np.complex128)
+    if zi is not None and len(zi) == n_state:
+        st = np.asarray(zi, dtype=np.complex128).copy()
+    past = np.real(st[:n_in])
+    pole_state = st[n_in:].copy()
+
+    buf = np.concatenate([past[::-1], x]) if n_in else x
+    v = np.convolve(buf, b)[n_in:n_in + len(x)].astype(np.complex128)
+    for idx, pole in enumerate(poles):
+        v, pole_state[idx] = _one_pole(v, pole, pole_state[idx])
+    y = np.real(v)
+
+    newpast = (buf[-n_in:][::-1] if n_in else np.zeros(0))
+    return y, np.concatenate([newpast.astype(np.complex128), pole_state])
+
+
 try:
     from scipy.signal import lfilter, butter
-    _HAVE_SCIPY = True
-except Exception:                       # pragma: no cover
-    _HAVE_SCIPY = False
+    _NATIVE_SCIPY = True
+except Exception:                       # pragma: no cover -- the phone
+    lfilter, butter = _np_lfilter, _np_butter
+    _NATIVE_SCIPY = False
+
+_HAVE_SCIPY = True
 
 from .engine import P_ATM
 

@@ -33,6 +33,45 @@ _RPM_TRACK = 22.0
 _IDLE_TRACK = 3.0
 
 
+class ManualSource:
+    """A telemetry-shaped object you drive by hand.
+
+    Same duck type as :class:`~engine_sim.obd.OBDTelemetry`, so
+    :class:`CarMode` needs no special case: set :attr:`rpm` and
+    :attr:`throttle` from a slider and it plays that.
+
+    This is the instrument for judging the SOUND rather than the link -- hold a
+    steady rpm, sweep it, compare against the desktop build.  Use it with an
+    ``RpmMap("direct")``: a manual rpm is already the rpm you want to hear, and
+    stretching it would be measuring the map instead of the engine.
+    """
+
+    def __init__(self, rpm=800.0, throttle=0.0):
+        self.rpm = self.raw_rpm = float(rpm)
+        self.throttle = float(throttle)
+        self.speed = 0.0
+        self.speed_valid = False
+        self.gear = 0
+        self.map_kpa = 0.0
+        self.baro_kpa = 101.3
+        self.boost_psi = 0.0
+        self.status = "manual"
+        self.hz = 0.0
+        self.rtt = 0.0
+        self.max_rpm = 8000.0
+        self.idle_rpm = 800.0
+
+    def set(self, rpm, throttle):
+        self.rpm = self.raw_rpm = float(rpm)
+        self.throttle = float(throttle)
+
+    def is_live(self, timeout=1.5):
+        return True
+
+    def stop(self):
+        pass
+
+
 class CarMode:
     """Plays a chosen engine at a real car's rpm.  No UI, no I/O, no printing.
 

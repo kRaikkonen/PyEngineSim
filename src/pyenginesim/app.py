@@ -20,7 +20,7 @@ from toga.style import Pack
 
 from engine_sim import presets
 from engine_sim.audio import Synthesizer
-from engine_sim.carmode import CarMode
+from engine_sim.carmode import CarMode, ManualSource
 from engine_sim.obd import CAR_PROFILES, OBDTelemetry, RpmMap
 
 LOG_PATH = os.path.join(os.path.expanduser("~"), "Documents",
@@ -47,6 +47,7 @@ TICK_HZ = 50.0                 # control loop; the synth runs at audio rate
 DEFAULT_ENGINE = "rs3"         # the 8Y RS3 five-cylinder
 DEFAULT_HOST = "192.168.0.10"  # what almost every WiFi ELM327 answers on
 DEFAULT_PORT = 35000
+POVS = ("chase", "cockpit", "trackside")
 
 
 class PyEngineSim(toga.App):
@@ -75,6 +76,21 @@ class PyEngineSim(toga.App):
         self.port_in = toga.TextInput(value=str(DEFAULT_PORT))
         self.demo_sw = toga.Switch("Demo (no dongle)", value=False)
         self.stretch_sw = toga.Switch("Stretch rpm to its redline", value=True)
+        # Hand throttle: judge the SOUND without a car, a dongle, or a drive
+        # cycle to chase.  Hold an rpm, sweep it, compare with the desktop.
+        self.manual_sw = toga.Switch("Manual (hand throttle)", value=True,
+                                     on_change=self._manual_changed)
+        self.rpm_slider = toga.Slider(min=500, max=9000, value=1200,
+                                      on_change=self._slider_changed)
+        self.thr_slider = toga.Slider(min=0.0, max=1.0, value=0.3,
+                                      on_change=self._slider_changed)
+        self.rpm_label = toga.Label("rpm 1200")
+        self.thr_label = toga.Label("throttle 30%")
+        # POV is the prime suspect for a wrong-sounding phone build: "cockpit"
+        # is the muffled through-the-firewall voice, and the desktop default is
+        # "chase".  Switchable, live.
+        self.pov_sel = toga.Selection(items=list(POVS), on_change=self._pov_changed)
+        self.pov_sel.value = "chase"
 
         self.button = toga.Button("Start", on_press=self._toggle)
         self.status = toga.Label("idle")
@@ -82,10 +98,15 @@ class PyEngineSim(toga.App):
 
         box = toga.Box(style=Pack(direction="column"))
         for w in (toga.Label("Engine"), self.engine_sel,
+                  toga.Label("Listener"), self.pov_sel,
+                  self.manual_sw,
+                  self.rpm_label, self.rpm_slider,
+                  self.thr_label, self.thr_slider,
                   toga.Label("WiFi ELM327 address"), self.host_in, self.port_in,
                   self.demo_sw, self.stretch_sw,
                   self.button, self.status, self.detail):
             box.add(w)
+        self._sync_slider_range()
 
         self.main_window = toga.MainWindow(title=self.formal_name)
         self.main_window.content = box
@@ -121,6 +142,33 @@ class PyEngineSim(toga.App):
     def _engine_changed(self, widget):
         if self.mode is not None:
             self.mode.set_engine(self._selected_key())
+        self._sync_slider_range()
+
+    def _sync_slider_range(self):
+        """Slider spans THIS engine's rev range, so the ends mean something."""
+        try:
+            eng = presets.ALL[self._selected_key()]()
+        except Exception:
+            return
+        lo, hi = float(eng.idle_rpm), float(eng.redline_rpm)
+        self.rpm_slider.min = lo
+        self.rpm_slider.max = hi
+        if not (lo <= self.rpm_slider.value <= hi):
+            self.rpm_slider.value = lo + (hi - lo) * 0.25
+
+    def _slider_changed(self, widget):
+        self.rpm_label.text = "rpm %.0f" % self.rpm_slider.value
+        self.thr_label.text = "throttle %.0f%%" % (self.thr_slider.value * 100.0)
+
+    def _manual_changed(self, widget):
+        if self.mode is not None:      # takes effect on the next Start
+            self.status.text = "press Stop then Start to switch mode"
+
+    def _pov_changed(self, widget):
+        synth = getattr(self.mode, "synth", None) if self.mode else None
+        if synth is not None:
+            synth.pov = self.pov_sel.value
+        log("pov -> %s" % self.pov_sel.value)
 
     # -------------------------------------------------------- start / stop
     def _toggle(self, widget):
@@ -130,6 +178,8 @@ class PyEngineSim(toga.App):
             self._stop()
 
     def _start(self):
+        if self.manual_sw.value:
+            return self._start_manual()
         host, port = self.host_in.value.strip(), int(self.port_in.value or 0)
         if self.demo_sw.value:
             # The fake adapter runs in-process, so the whole chain can be heard
@@ -162,13 +212,31 @@ class PyEngineSim(toga.App):
         log("started: %s, link %s:%s, demo=%s"
             % (self.mode.label, host, port, self.demo_sw.value))
 
+    def _start_manual(self):
+        """No link at all: the sliders ARE the telemetry."""
+        self.telemetry = ManualSource(rpm=self.rpm_slider.value,
+                                      throttle=self.thr_slider.value)
+        # direct, never stretched: a hand-set rpm is already the rpm to hear
+        self.mode = CarMode(engine_key=self._selected_key(),
+                            telemetry=self.telemetry, rpm_map=RpmMap("direct"),
+                            synth_factory=self._make_synth, shift_pop=False)
+        self.mode.start()
+        self.button.text = "Stop"
+        self._last = time.monotonic()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self.loop
+        self._task = loop.create_task(self._tick_loop())
+        log("started MANUAL: %s, pov=%s" % (self.mode.label, self.pov_sel.value))
+
     def _make_synth(self, sim):
         """Build the synth at the rate the DEVICE negotiated, not a guess."""
         from .ios_audio import IOSAudioSink
         sink = IOSAudioSink()
         log("audio session negotiated %d Hz" % sink.sample_rate)
         synth = Synthesizer(sim, sample_rate=sink.sample_rate)
-        synth.pov = "cockpit"
+        synth.pov = self.pov_sel.value
         synth.sink = sink
         self._sink = sink
         return synth
@@ -202,6 +270,9 @@ class PyEngineSim(toga.App):
         try:
             while self.mode is not None:
                 now = time.monotonic()
+                if isinstance(self.telemetry, ManualSource):
+                    self.telemetry.set(self.rpm_slider.value,
+                                       self.thr_slider.value)
                 self.mode.update(now - self._last)
                 self._last = now
                 if now - shown > 0.25:

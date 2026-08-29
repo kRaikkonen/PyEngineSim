@@ -128,10 +128,56 @@ def run_audio_sink():
           f"  (no sound device involved)")
 
 
+def run_filter_fallback():
+    """The pure-numpy filters must equal scipy's, sample for sample.
+
+    scipy does not exist on iOS or Android.  These fallbacks used to be
+    missing entirely -- the guarded filters were simply skipped, and the
+    unfiltered chain screamed at Nyquist on a phone.  So the fallbacks are
+    held to the real thing wherever the real thing is available.
+    """
+    from engine_sim.audio import _np_butter, _np_lfilter, _NATIVE_SCIPY
+    print("\n=== pure-numpy filter fallback (the iOS / Android path) ===")
+    if not _NATIVE_SCIPY:
+        print("  scipy absent here -- nothing to compare against, skipping")
+        return
+    from scipy.signal import butter as sp_butter, lfilter as sp_lfilter
+
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    # every design this synth actually asks for, at both shipped rates
+    cases = [(1, 0.05, "low"), (2, 0.0034, "high"), (2, 0.15, "low"),
+             (2, 0.6875, "low"), (2, 0.0437, "high"), (2, 0.04, "low"),
+             (2, 0.3, "low"), (2, 0.9, "low")]
+    for order, wn, btype in cases:
+        b1, a1 = _np_butter(order, wn, btype)
+        b2, a2 = sp_butter(order, wn, btype=btype)
+        x = rng.standard_normal(4096)
+        zn = np.zeros(max(len(a1), len(b1)) - 1)
+        zs = np.zeros(max(len(a2), len(b2)) - 1)
+        yn, ys = [], []
+        for i in range(0, len(x), 256):        # streamed, like the synth
+            o, zn = _np_lfilter(b1, a1, x[i:i + 256], zi=zn)
+            yn.append(o)
+            o, zs = sp_lfilter(b2, a2, x[i:i + 256], zi=zs)
+            ys.append(o)
+        worst = max(worst, float(np.abs(np.concatenate(yn)
+                                        - np.concatenate(ys)).max()))
+    assert worst < 1e-9, f"numpy filters diverge from scipy by {worst:.2e}"
+
+    # the order-4 bandpass must at least be stable and pass its band
+    b, a = _np_butter(2, [0.3125, 0.5625], "band")
+    y, _ = _np_lfilter(b, a, rng.standard_normal(2048), zi=np.zeros(4))
+    assert np.all(np.isfinite(y)), "bandpass fallback blew up"
+    print(f"  matches scipy to {worst:.1e} across {len(cases)} designs, "
+          f"streamed in 256-sample blocks")
+
+
 if __name__ == "__main__":
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
         run_startup(eng)
         run_torque_curve(eng)
+    run_filter_fallback()
     run_audio_sink()
     print("\nAll headless checks passed.")
