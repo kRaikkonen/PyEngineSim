@@ -1,7 +1,7 @@
-# PyEngineSim, second implementation (Swift)
+# swiftEngineSim
 
-The same engine, written twice.  The Python is the reference; this is the one
-that runs on the phone.
+PyEngineSim's engine, written a second time in Swift.  The Python is the
+reference; this is the one that runs on the phone.
 
 Not a rewrite for its own sake — the Python v1 shipped and worked at 24 kHz /
 block 512, but it was at the edge of what a general-purpose runtime can do on
@@ -12,10 +12,10 @@ a phone, and the headroom was gone.  This has the headroom.
 ```
 EngineSimCore/          a SwiftPM package: the DSP, the physics, the car link
   Sources/EngineSimCore     24 chain stages + OBD + CarMode
-  Sources/PyEngineSimUI     the app's own sources, as a library so
+  Sources/SwiftEngineSimUI  the app's own sources, as a library so
                             `swift build` type-checks them
   Tests/                    44 tests, all against the Python
-PyEngineSimApp/         the @main, which cannot live in a library
+swiftEngineSimApp/      the @main, which cannot live in a library
 ```
 
 ## Proving it
@@ -42,6 +42,27 @@ Current: three of four cases reproduce at float32 precision (-153 to -156 dB).
 The fourth, f2007 on the trackside ear, does not — traced to the gearbox whine
 on the bay bus, and deliberately out of scope, because trackside is not a mode
 this ships in.  The test asserts the measured bound so it cannot regress.
+
+## Does it have the headroom
+
+The whole reason this exists.  Measured on the Mac, 32 kHz, near the limiter
+with the throttle buried -- the most expensive place the chain ever runs:
+
+| | swift | python (no scipy, the phone's path) |
+|---|---|---|
+| A3 1.5 TFSI | 0.096 | 1.646 |
+| Aventador V12 | 0.117 | 2.329 |
+| Veyron W16 | 0.125 | 2.264 |
+| F1 V8 | 0.107 | 2.078 |
+
+Seconds of CPU per second of audio, so 1.0 is the edge.  **The Python cannot
+keep up on a Mac** -- 1.6 to 2.3 times real time -- which is exactly why the
+phone broke up.  Swift is 17-20x faster and sits at a tenth of one core.
+
+Across all 131 cars at block 512: worst 0.102, median 0.073.  A phone core is
+roughly a third of this Mac's, so the worst car should land near 30 % of one
+core.  `swift test -c release --filter PerformanceTests` re-measures it, and
+the Python side is `py tools/bench_python.py`.
 
 ## Regenerating the fixtures
 
@@ -71,15 +92,15 @@ not, because it needs a signing identity, and signing needs the GUI —
 
 In Xcode:
 
-1. **File > New > Project > iOS > App.**  Product name `PyEngineSim`,
-   interface SwiftUI, language Swift.  Save it over `swift/PyEngineSimApp/`.
-2. **Delete** the `ContentView.swift` and `PyEngineSimApp.swift` Xcode
+1. **File > New > Project > iOS > App.**  Product name `swiftEngineSim`,
+   interface SwiftUI, language Swift.  Save it over `swift/swiftEngineSimApp/`.
+2. **Delete** the `ContentView.swift` and `swiftEngineSimApp.swift` Xcode
    generates (Move to Trash).
 3. **Add** the one source file the target needs:
-   `swift/PyEngineSimApp/PyEngineSim/App.swift`.
+   `swift/swiftEngineSimApp/swiftEngineSim/App.swift`.
 4. **File > Add Package Dependencies > Add Local**, pick
    `swift/EngineSimCore`, and add BOTH library products (`EngineSimCore` and
-   `PyEngineSimUI`) to the target.  The whole UI lives in the package, which
+   `SwiftEngineSimUI`) to the target.  The whole UI lives in the package, which
    is why the app is one file.
 5. **Add the three JSON files** to the target's *Copy Bundle Resources*:
    `docs/presets.json`, `docs/engine_voicing.json`, `docs/engine_tables.json`.

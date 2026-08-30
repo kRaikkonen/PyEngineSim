@@ -14,7 +14,7 @@ let package = Package(
     platforms: [.iOS(.v13), .macOS(.v11)],
     products: [
         .library(name: "EngineSimCore", targets: ["EngineSimCore"]),
-        .library(name: "PyEngineSimUI", targets: ["PyEngineSimUI"]),
+        .library(name: "SwiftEngineSimUI", targets: ["SwiftEngineSimUI"]),
     ],
     targets: [
         .target(name: "EngineSimCore"),
@@ -24,9 +24,9 @@ let package = Package(
         // when a window is opened.  App.swift carries the @main and is
         // excluded, because an entry point cannot live in a library.
         .target(
-            name: "PyEngineSimUI",
+            name: "SwiftEngineSimUI",
             dependencies: ["EngineSimCore"],
-            path: "Sources/PyEngineSimUI"
+            path: "Sources/SwiftEngineSimUI"
         ),
         .testTarget(
             name: "EngineSimCoreTests",

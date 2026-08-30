@@ -13,10 +13,10 @@
 //
 
 import SwiftUI
-import PyEngineSimUI
+import SwiftEngineSimUI
 
 @main
-struct PyEngineSimApp: App {
+struct SwiftEngineSimApp: App {
     var body: some Scene {
         WindowGroup { ContentView() }
     }
