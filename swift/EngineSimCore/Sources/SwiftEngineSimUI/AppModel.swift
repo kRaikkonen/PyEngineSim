@@ -50,6 +50,13 @@ public final class AppModel: ObservableObject {
     @Published public var host = "192.168.0.10"
     @Published public var port = 35000
     @Published public var errorText: String?
+    /// wifi | ble.  A BLE dongle and a WiFi one are different radios, not two
+    /// settings of the same thing.
+    @Published public var linkKind = "ble"
+    @Published public var bleFound: [BLEDevice] = []
+    @Published public var scanning = false
+    public var bleDeviceName = ""
+    var bleDeviceID = ""
     /// What the audio session actually handed over, which is not always what
     /// was asked for -- worth showing rather than assuming.
     @Published public var audioInfo = ""
@@ -77,6 +84,9 @@ public final class AppModel: ObservableObject {
     var car: CarMode?
     var audio: AudioOutput?
     var obd: OBDTelemetry?
+    #if canImport(CoreBluetooth)
+    var ble: BLELink?
+    #endif
     let manualSource = ManualSource()
     public private(set) var pedalSource: PedalSource?
     var timer: Timer?
@@ -114,6 +124,9 @@ public final class AppModel: ObservableObject {
             sustainOnLift = saved.sustainOnLift
             host = saved.host
             port = saved.port
+            linkKind = saved.linkKind
+            bleDeviceID = saved.bleDeviceID
+            bleDeviceName = saved.bleDeviceName
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
@@ -310,6 +323,9 @@ public final class AppModel: ObservableObject {
         s.sustainOnLift = sustainOnLift
         s.host = host
         s.port = port
+        s.linkKind = linkKind
+        s.bleDeviceID = bleDeviceID
+        s.bleDeviceName = bleDeviceName
         s.carIdle = carIdle
         s.carRedline = carRedline
         s.learnRange = learnRange
@@ -328,6 +344,9 @@ public final class AppModel: ObservableObject {
         applyLayers()
         host = s.host
         port = s.port
+        linkKind = s.linkKind
+        bleDeviceID = s.bleDeviceID
+        bleDeviceName = s.bleDeviceName
         carIdle = s.carIdle
         carRedline = s.carRedline
         learnRange = s.learnRange
@@ -430,7 +449,60 @@ public final class AppModel: ObservableObject {
     public var pedalGear: Int { pedalSource?.gear ?? 0 }
     public var pedalGearCount: Int { pedalSource?.gearCount ?? 0 }
 
+    /// A device the scan found, without the UI needing CoreBluetooth types.
+    public struct BLEDevice: Identifiable, Equatable {
+        public let id: UUID
+        public let name: String
+        public let rssi: Int
+    }
+
+    public func setLinkKind(_ k: String) {
+        linkKind = k
+        persist()
+    }
+
+    /// Look for BLE dongles.  Deliberately unfiltered -- these things are
+    /// inconsistent about what they advertise, and a filtered scan that finds
+    /// nothing looks exactly like no dongle being present.
+    public func scanForDongles() {
+        #if canImport(CoreBluetooth)
+        errorText = nil
+        bleFound = []
+        scanning = true
+        let l = ble ?? BLELink()
+        ble = l
+        l.scan(seconds: 6.0) { [weak self] found in
+            self?.bleFound = found.map {
+                BLEDevice(id: $0.id, name: $0.name, rssi: $0.rssi)
+            }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 6_200_000_000)
+            self?.scanning = false
+            if self?.bleFound.isEmpty == true {
+                self?.errorText = "No BLE dongle found.  If yours shows up in "
+                    + "Settings > Bluetooth it is a CLASSIC (SPP) adapter, and "
+                    + "iOS cannot talk to those from any app -- it has to be a "
+                    + "BLE one."
+            }
+        }
+        #else
+        errorText = "no Bluetooth on this platform"
+        #endif
+    }
+
+    public func connectBLE(_ device: BLEDevice) {
+        #if canImport(CoreBluetooth)
+        bleDeviceID = device.id.uuidString
+        bleDeviceName = device.name
+        linkKind = "ble"
+        persist()
+        connect()
+        #endif
+    }
+
     public func connect() {
+        if linkKind == "ble" { connectOverBLE(); return }
         #if canImport(Network)
         errorText = nil
         linkState = "connecting"
@@ -469,6 +541,43 @@ public final class AppModel: ObservableObject {
         }
         #else
         errorText = "no network transport on this platform"
+        #endif
+    }
+
+    func connectOverBLE() {
+        #if canImport(CoreBluetooth)
+        errorText = nil
+        linkState = "connecting"
+        guard let id = UUID(uuidString: bleDeviceID) else {
+            linkState = "offline"
+            errorText = "pick a dongle first"
+            scanForDongles()
+            return
+        }
+        let l = ble ?? BLELink()
+        ble = l
+        Task.detached {
+            do {
+                try l.connect(to: id)
+                let t = OBDTelemetry(link: l)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    t.outLatency = Double(self.audio?.blockFrames ?? 512)
+                        / (self.audio?.renderRate ?? 32000) * 3.0
+                    self.obd = t
+                    self.car?.telemetry = t
+                    self.source = .live
+                }
+                t.start()
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.errorText = error.localizedDescription
+                    self.linkState = "offline"
+                    self.setSource(.demo)
+                }
+            }
+        }
         #endif
     }
 

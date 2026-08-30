@@ -452,6 +452,67 @@ public struct ContentView: View {
         }
     }
 
+    // -------------------------------------------------------------- dongle
+    // Two different radios, not two settings of one.  A Bluetooth CLASSIC
+    // (SPP) adapter cannot be reached from ANY iOS app -- if it turns up in
+    // Settings > Bluetooth, that is the one that will never work, and saying
+    // so here is cheaper than letting someone conclude the app is broken.
+    private var dongle: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(["ble", "wifi"], id: \.self) { k in
+                    Button(k == "ble" ? "Bluetooth LE" : "WiFi") {
+                        model.setLinkKind(k)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(model.linkKind == k
+                                ? Color.accentColor.opacity(0.25)
+                                : Color.secondary.opacity(0.12))
+                    .cornerRadius(7)
+                }
+                Spacer()
+            }
+            if model.linkKind == "ble" {
+                HStack {
+                    Text(model.bleDeviceName.isEmpty ? "no dongle picked"
+                                                     : model.bleDeviceName)
+                        .font(.caption2).foregroundColor(.secondary)
+                    Spacer()
+                    Button(model.scanning ? "scanning…" : "scan") {
+                        model.scanForDongles()
+                    }
+                    .font(.caption2)
+                    .disabled(model.scanning)
+                }
+                ForEach(model.bleFound) { d in
+                    Button {
+                        model.connectBLE(d)
+                    } label: {
+                        HStack {
+                            Text(d.name).font(.caption)
+                            Spacer()
+                            Text("\(d.rssi) dBm")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.secondary.opacity(0.12))
+                        .cornerRadius(7)
+                    }.buttonStyle(.plain)
+                }
+                Text("a CLASSIC adapter — one that appears in Settings > "
+                     + "Bluetooth — cannot be used by any iOS app.  It has to "
+                     + "be a BLE one.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("dongle at \(model.host):\(String(model.port))")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
+        }
+    }
+
     // ------------------------------------------------------- the real car
     // What the mapping stretches FROM.  Steppers, not a text field: a
     // keyboard is not a control you can use while driving, and 100 rpm is
@@ -537,10 +598,7 @@ public struct ContentView: View {
                 Text("pops").font(.caption2).foregroundColor(.secondary)
             }
             .font(.caption)
-            if model.source == .live {
-                Text("dongle at \(model.host):\(String(model.port))")
-                    .font(.caption2).foregroundColor(.secondary)
-            }
+            if model.source == .live { dongle }
             Text(model.audioInfo)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(.secondary)

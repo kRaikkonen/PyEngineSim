@@ -121,9 +121,20 @@ thing to report, not the sound.
 
 ## The car
 
-`car mode` needs a **WiFi** ELM327, not Bluetooth: iOS will not talk Bluetooth
-SPP to a non-MFi accessory, so a £10 Bluetooth dongle cannot work no matter
-what the app does.  Join the dongle's WiFi, then press **the car** in the app.
+There are **three** kinds of ELM327 and only two of them can ever work here:
+
+| | works on iOS | why |
+|---|---|---|
+| **WiFi** | yes | a plain TCP socket |
+| **Bluetooth LE** | yes | CoreBluetooth, GATT |
+| **Bluetooth classic (SPP)** | **never** | iOS will not open a serial port to a non-MFi accessory, and no app or entitlement changes that |
+
+The giveaway: a **classic** adapter appears in Settings > Bluetooth and can be
+paired.  A **BLE** one usually does not appear there at all, because there is
+nothing to pair — the app finds it by scanning.
+
+In the app: **the car** > **Bluetooth LE** > **scan**, then tap the dongle.
+It is remembered, so afterwards it reconnects on its own.
 
 One thing is still unverified and the whole in-car plan rests on it: whether a
 non-CarPlay app's audio routes to the car speakers over **wired** CarPlay.  It

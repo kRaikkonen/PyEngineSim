@@ -140,6 +140,10 @@ def main():
         # the one Info.plist key that matters: without it the audio stops the
         # moment the screen locks, and in a car the screen is locked
         'INFOPLIST_KEY_UIBackgroundModes = audio',
+        # touching CoreBluetooth without this string does not warn,
+        # it TERMINATES the app -- and the crash says nothing useful
+        'INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = '
+        '"Reads engine rpm from your car\'s OBD-II dongle."',
         'INFOPLIST_KEY_UILaunchScreen_Generation = YES',
         'INFOPLIST_KEY_UISupportedInterfaceOrientations = '
         '"UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft '

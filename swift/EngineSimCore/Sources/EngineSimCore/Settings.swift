@@ -39,6 +39,11 @@ public struct Settings: Codable, Equatable {
     public var sustainOnLift = 0.85
     public var host = "192.168.0.10"
     public var port = 35000
+    /// The BLE dongle last connected to, so it reconnects without a scan.
+    public var bleDeviceID = ""
+    public var bleDeviceName = ""
+    /// wifi | ble.  Two completely different radios; only one is plugged in.
+    public var linkKind = "ble"
     public var carIdle = 760.0
     public var carRedline = 6500.0
     /// Whether the rev range keeps learning from the car.  Set by hand once
