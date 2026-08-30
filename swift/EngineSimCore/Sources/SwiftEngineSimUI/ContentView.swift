@@ -16,6 +16,7 @@ public struct ContentView: View {
     @StateObject private var model = AppModel()
     @State private var pickingEngine = false
     @State private var pendingEngine = ""
+    @State private var pedalDown = false
 
     public init() {}
 
@@ -24,7 +25,8 @@ public struct ContentView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 readouts
-                if model.manual { manualControls }
+                if model.source == .sliders { manualControls }
+                if model.source == .pedal { pedalControls }
                 engineChooser
                 slots
                 layers
@@ -87,8 +89,7 @@ public struct ContentView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.engineName).font(.title2).bold()
             HStack(spacing: 10) {
-                Label(model.linkState, systemImage: model.manual
-                      ? "slider.horizontal.3" : "antenna.radiowaves.left.and.right")
+                Label(model.linkState, systemImage: model.sourceIcon)
                     .font(.caption)
                     .foregroundColor(model.linkState == "LIVE" ? .green : .secondary)
                 if model.pollHz > 0 {
@@ -97,6 +98,9 @@ public struct ContentView: View {
                 }
                 if model.shifting {
                     Text("SHIFT").font(.caption).bold().foregroundColor(.orange)
+                }
+                if model.limiting {
+                    Text("LIMITER").font(.caption).bold().foregroundColor(.red)
                 }
             }
         }
@@ -145,6 +149,66 @@ public struct ContentView: View {
             Slider(value: Binding(get: { model.pedal },
                                   set: { model.setManualPedal($0) }),
                    in: 0...1)
+        }
+    }
+
+    // ------------------------------------------------------ pedal controls
+    // The desktop app's way of driving, on a phone.  A pedal does not tell the
+    // engine what revs to be at -- it tells it how much torque to make, and
+    // the revs are the CONSEQUENCE.  So it climbs fast in first and slowly in
+    // sixth, and it falls on a lift because a shut throttle makes negative
+    // torque.  That is the whole difference from the slider above.
+    private var pedalControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    model.downshift()
+                } label: {
+                    Text("DOWN").font(.caption).bold()
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(Color.secondary.opacity(0.14))
+                        .cornerRadius(9)
+                }.buttonStyle(.plain)
+
+                VStack(spacing: 1) {
+                    Text(model.pedalGear == 0 ? "N" : "\(model.pedalGear)")
+                        .font(.system(.title, design: .monospaced)).bold()
+                    Text("gear").font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 62)
+
+                Button {
+                    model.upshift()
+                } label: {
+                    Text("UP").font(.caption).bold()
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(Color.accentColor.opacity(0.22))
+                        .cornerRadius(9)
+                }.buttonStyle(.plain)
+            }
+
+            // press and HOLD: the gesture is the pedal, so there is no state
+            // to get stuck in and nothing to remember to turn off
+            Text(pedalDown ? "THROTTLE" : "PRESS AND HOLD")
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 92)
+                .background(pedalDown ? Color.accentColor.opacity(0.35)
+                                      : Color.secondary.opacity(0.14))
+                .cornerRadius(12)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            if !pedalDown { pedalDown = true; model.setPedal(1.0) }
+                        }
+                        .onEnded { _ in
+                            pedalDown = false
+                            model.setPedal(0.0)      // and THIS is what pops
+                        }
+                )
+            Text("neutral revs free · in gear it has to drag the car along")
+                .font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 
@@ -349,16 +413,21 @@ public struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("SOURCE").font(.caption2).foregroundColor(.secondary)
             HStack(spacing: 8) {
-                Button("sliders") { model.useManual(true) }
+                ForEach([AppModel.Source.sliders, .pedal, .live], id: \.self) { s in
+                    Button(s == .live ? "the car" : s.rawValue) {
+                        model.setSource(s)
+                    }
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(model.manual ? Color.accentColor.opacity(0.25)
-                                             : Color.secondary.opacity(0.12))
+                    .background(model.source == s
+                                ? Color.accentColor.opacity(0.25)
+                                : Color.secondary.opacity(0.12))
                     .cornerRadius(7)
-                Button("the car") { model.useManual(false) }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(!model.manual ? Color.accentColor.opacity(0.25)
-                                              : Color.secondary.opacity(0.12))
-                    .cornerRadius(7)
+                }
+                Spacer()
+                Toggle("pops", isOn: Binding(get: { model.popsOn },
+                                             set: { model.setPops($0) }))
+                    .labelsHidden()
+                Text("pops").font(.caption2).foregroundColor(.secondary)
             }
             .font(.caption)
             Text("dongle at \(model.host):\(String(model.port))")

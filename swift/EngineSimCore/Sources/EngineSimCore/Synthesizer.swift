@@ -43,6 +43,9 @@ public final class Synthesizer {
     public let listener: ListenerStage
     let master: MasterStage
     let setup: VoicingSetup
+    /// Armed by the app.  Disarmed it draws nothing from the shared generator,
+    /// so turning it on cannot shift anything downstream.
+    public let pops: OverrunPops
 
     /// Live controls.
     public var params: [String: Double]
@@ -131,6 +134,8 @@ public final class Synthesizer {
                                  block: block)
         master = MasterStage(engine: engine, sampleRate: sampleRate,
                              cache: cache, rng: rng, layers: layers)
+        pops = OverrunPops(sampleRate: sampleRate, cache: cache, rng: rng,
+                           block: block)
         cylScale = [Double](repeating: 1.0, count: engine.numCylinders)
         params = voicing.params
         for (k, v) in Synthesizer.defaultParams where params[k] == nil {
@@ -141,6 +146,7 @@ public final class Synthesizer {
     /// Everything the mixer exposes, with the values the Python ships.
     public static let defaultParams: [String: Double] = [
         "res1": 0.42, "res2": 0.75,      // per-car, overridden from geometry
+        "pops": 0.6, "pop_muff": 0.4, "pops_reverb": 0.22,
         "master": 0.8, "intake": 0.5, "turbulence": 0.5, "src_reverb": 0.4,
         "dry": 1.0, "crack": 0.5, "body": 0.0, "drive": 0.0,
         "fire_weight": 0.5, "fire_grit": 0.5, "firing_pitch": 90.0,
@@ -279,6 +285,20 @@ public final class Synthesizer {
                                 choke: choke, cold: cold, degPerSample: dps,
                                 rng: rng)
         sig = hd.head          // the header layer is tapped inside the stage
+
+        // The bangs enter HERE, at the header, so they travel the whole pipe:
+        // a stock car's get muffled by the cat and the box, an open race
+        // system keeps them sharp.  Bolted on at the tailpipe every car would
+        // pop identically, which is the giveaway.
+        let bang = pops.render(frames: frames, rpm: rpm,
+                               throttle: physics.throttle,
+                               idleRpm: engine.idleRpm,
+                               redlineRpm: engine.redlineRpm,
+                               antiLag: engine.antiLag,
+                               ignitionOn: physics.ignitionOn, params: params)
+        if !bang.isEmpty {
+            for i in 0..<frames { sig[i] += bang[i] }
+        }
 
         // --- port to tailpipe -----------------------------------------------
         var ps = PipeState()

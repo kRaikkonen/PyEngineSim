@@ -35,7 +35,8 @@ APP = "swiftEngineSim"
 BUNDLE_ID = "com.ziyuliu.swiftenginesim"
 TEAM = "GHASXB9LZ2"          # from the Apple Development certificate on the Mac
 DEPLOYMENT = "16.0"
-RESOURCES = ["presets.json", "engine_voicing.json", "engine_tables.json"]
+RESOURCES = ["presets.json", "engine_voicing.json", "engine_tables.json",
+             "engine_torque.json"]
 
 
 def uid(name: str) -> str:

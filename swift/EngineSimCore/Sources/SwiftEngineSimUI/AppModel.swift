@@ -28,7 +28,15 @@ public final class AppModel: ObservableObject {
     @Published public var renderLoad = 0.0
     @Published public var underruns = 0
     @Published public var shifting = false
-    @Published public var manual = true          // sliders, or the real car
+    /// Where the revs come from.  The pedal INVENTS the car, so it is an
+    /// offline mode by definition -- it cannot be the source while a real one
+    /// is talking, and picking the car drops it.
+    public enum Source: String { case sliders, pedal, live }
+    @Published public var source = Source.sliders
+    @Published public var popsOn = true
+    /// Set while the rev limiter is cutting, so the screen can show it.
+    @Published public var limiting = false
+    public var manual: Bool { source != .live }
     @Published public var mapMode = RpmMap.Mode.stretch
     @Published public var host = "192.168.0.10"
     @Published public var port = 35000
@@ -54,10 +62,18 @@ public final class AppModel: ObservableObject {
     var audio: AudioOutput?
     var obd: OBDTelemetry?
     let manualSource = ManualSource()
+    public private(set) var pedalSource: PedalSource?
     var timer: Timer?
     var lastTick = CFAbsoluteTimeGetCurrent()
 
     public var engineKeys: [String] { library?.keys ?? [] }
+    public var sourceIcon: String {
+        switch source {
+        case .sliders: return "slider.horizontal.3"
+        case .pedal: return "pedal.accelerator"
+        case .live: return "antenna.radiowaves.left.and.right"
+        }
+    }
     /// The full name for a key, for the wheel -- 'Audi RS3 EA855 2.5 I5'
     /// tells you what you are choosing; 'rs3' does not.
     public func engineName(_ key: String) -> String {
@@ -76,7 +92,8 @@ public final class AppModel: ObservableObject {
             engineKey = saved.engineKey
             mapMode = saved.mapMode
             hidden = Set(saved.hidden)
-            manual = saved.manual
+            source = Source(rawValue: saved.source) ?? .sliders
+            popsOn = saved.pops
             host = saved.host
             port = saved.port
             carIdle = saved.carIdle
@@ -113,7 +130,7 @@ public final class AppModel: ObservableObject {
                                out.ioBufferSeconds * 1000)
             if let n = out.sessionNote { audioInfo += " (" + n + ")" }
             applyLayers()                    // restore the hidden stages
-            if !manual { connect() }         // ...and the link, if it was live
+            setSource(source)                // rebuild the pedal, or reconnect
             startTicking()
         } catch {
             errorText = error.localizedDescription
@@ -132,7 +149,8 @@ public final class AppModel: ObservableObject {
         }
         return try EngineLibrary(presets: data("presets"),
                                  tables: data("engine_tables"),
-                                 voicing: data("engine_voicing"))
+                                 voicing: data("engine_voicing"),
+                                 torque: try? data("engine_torque"))
     }
 
     func startTicking() {
@@ -151,6 +169,10 @@ public final class AppModel: ObservableObject {
         let dt = min(now - lastTick, 0.1)
         lastTick = now
         guard let car else { return }
+        // the pedal car is stepped BEFORE the chain reads it, so a press and
+        // the note that answers it belong to the same frame
+        pedalSource?.update(dt: dt)
+        limiting = pedalSource?.limiting ?? false
         car.update(dt: dt)
         let s = car.status()
         carRPM = s.carRPM; simRPM = s.simRPM; pedal = s.pedal
@@ -167,6 +189,11 @@ public final class AppModel: ObservableObject {
         try? car?.setEngine(key)
         engineName = car?.engine.name ?? key
         applyLayers()          // the new synth starts with every layer visible
+        if source == .pedal {
+            makePedal()                       // new car, new ratios and torque
+            car?.telemetry = pedalSource
+        }
+        applyPops()                           // and a new synth needs re-arming
         persist()
     }
 
@@ -258,7 +285,8 @@ public final class AppModel: ObservableObject {
         s.engineKey = engineKey
         s.mapMode = mapMode
         s.hidden = hidden.sorted { $0.rawValue < $1.rawValue }
-        s.manual = manual
+        s.source = source.rawValue
+        s.pops = popsOn
         s.host = host
         s.port = port
         s.carIdle = carIdle
@@ -283,7 +311,8 @@ public final class AppModel: ObservableObject {
         carRedline = s.carRedline
         learnRange = s.learnRange
         pushRange()
-        useManual(s.manual)
+        popsOn = s.pops
+        setSource(Source(rawValue: s.source) ?? .sliders)
         persist()
     }
 
@@ -316,18 +345,48 @@ public final class AppModel: ObservableObject {
     public func setManualRPM(_ rpm: Double) { manualSource.rpm = rpm }
     public func setManualPedal(_ p: Double) { manualSource.throttle = p }
 
-    /// Switch between the sliders and the real car.
-    public func useManual(_ on: Bool) {
-        manual = on
-        persist()
-        if on {
-            obd?.stop(); obd = nil
+    public func setSource(_ s: Source) {
+        source = s
+        if s != .live { obd?.stop(); obd = nil }
+        switch s {
+        case .sliders:
+            pedalSource = nil
             car?.telemetry = manualSource
-            linkState = "manual"
-        } else {
+            linkState = "sliders"
+        case .pedal:
+            makePedal()
+            car?.telemetry = pedalSource
+            linkState = "pedal"
+        case .live:
+            pedalSource = nil
             connect()
         }
+        applyPops()
+        persist()
     }
+
+    /// Rebuilt per engine: the torque surface, the ratios, the mass and the
+    /// flywheel all belong to the car you are driving, not to the app.
+    func makePedal() {
+        guard let t = library?.torque(engineKey) else { pedalSource = nil; return }
+        let p = PedalSource(table: t)
+        pedalSource = p
+    }
+
+    public func setPops(_ on: Bool) {
+        popsOn = on
+        applyPops()
+        persist()
+    }
+
+    func applyPops() { car?.synth?.pops.enabled = popsOn }
+
+    // ------------------------------------------------------------- driving
+    public func setPedal(_ v: Double) { pedalSource?.throttle = v }
+    public func upshift() { pedalSource?.upshift() }
+    public func downshift() { pedalSource?.downshift() }
+    public var pedalGear: Int { pedalSource?.gear ?? 0 }
+    public var pedalGearCount: Int { pedalSource?.gearCount ?? 0 }
 
     public func connect() {
         #if canImport(Network)
@@ -350,7 +409,7 @@ public final class AppModel: ObservableObject {
                         / (self.audio?.renderRate ?? 32000) * 3.0
                     self.obd = t
                     self.car?.telemetry = t
-                    self.manual = false
+                    self.source = .live
                 }
                 t.start()
             } catch {
@@ -358,7 +417,9 @@ public final class AppModel: ObservableObject {
                     guard let self else { return }
                     self.errorText = error.localizedDescription
                     self.linkState = "offline"
-                    self.manual = true
+                    // a link that will not open falls back to the sliders
+                    // rather than leaving the app with no source at all
+                    self.source = .sliders
                     self.car?.telemetry = self.manualSource
                 }
             }

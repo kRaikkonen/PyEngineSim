@@ -204,12 +204,17 @@ public final class EngineLibrary {
     let engines: [String: EnginePreset]
     let tablesByKey: [String: EngineTables]
     let voicings: [String: VoicingSetup]
+    let torques: [String: TorqueTable]
 
-    public init(presets: Data, tables: Data, voicing: Data) throws {
+    public init(presets: Data, tables: Data, voicing: Data,
+                torque: Data? = nil) throws {
         engines = try PresetLibrary.load(jsonData: presets)
         tablesByKey = try EngineTables.load(jsonData: tables)
         voicings = try VoicingSetup.load(jsonData: voicing)
+        torques = try torque.map { try TorqueTable.load(jsonData: $0) } ?? [:]
     }
+
+    public func torque(_ k: String) -> TorqueTable? { torques[k] }
 
     public var keys: [String] { engines.keys.sorted() }
     public func engine(_ k: String) -> EnginePreset? { engines[k] }

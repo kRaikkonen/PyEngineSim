@@ -269,11 +269,18 @@ class Simulator:
         self.cylinder_pressure[:] = P_ATM
         self.last_blowdown[:] = P_ATM
 
-    def dyno_curve(self, rpms, include_electric=False):
+    def dyno_curve(self, rpms, include_electric=False, throttle=1.0,
+                   raw_gas=False):
         """WHITE-BOX WOT torque (N*m) and power (hp) vs rpm — computed from the SAME
         physics the engine runs (VE table x BMEP x knock x charge-air temp x boost),
         minus the friction model.  So the displayed dyno IS what the engine makes;
         no pre-made Gaussian / ve_peak_frac curve.
+
+        ``throttle`` < 1 gives the PART-THROTTLE curve, through the same orifice
+        and boost models -- which is what a driving model needs, and why this
+        takes an argument rather than a second copy of the loop existing
+        somewhere else.  ``raw_gas`` returns the gas torque before friction and
+        before the ECU caps, for the same reason.
 
         ``include_electric`` adds the hybrid/ERS MGU-K deploy on top (matching the
         live _electric_motor_torque model — constant torque below hybrid_base_rpm,
@@ -286,16 +293,26 @@ class Simulator:
         base = max(getattr(eng, "hybrid_base_rpm", 2000.0), 1.0) * TWO_PI / 60.0
         for i in range(len(rpms)):
             r = float(rpms[i])
+            thr = min(max(float(throttle), 0.0), 1.0)
             boost = 0.0
             if eng.induction != "na":
-                boost = (float(self._boost_lut.eval2(r, 1.0))
-                         if self._boost_lut is not None else eng.boost_bar)
+                boost = (float(self._boost_lut.eval2(r, thr))
+                         if self._boost_lut is not None else eng.boost_bar * thr)
             if _HAVE_MAP_MODEL:
                 fw = map_model.solve_map_fraction(
-                    1.0, r, eng.redline_rpm, 0.85, self._map_idle_area)
+                    thr, r, eng.redline_rpm, 0.85, self._map_idle_area)
             else:
                 fw = 0.92
-            mapf = fw if boost <= 0.0 else (1.0 + boost)   # NA pumping loss / boosted
+            if boost <= 0.0:
+                mapf = fw                                 # NA: the throttle IS the restriction
+            elif thr >= 1.0:
+                mapf = 1.0 + boost                        # WOT: unchanged, the fleet is calibrated on it
+            else:
+                # A compressor feeds the THROTTLE, it does not bypass it: the
+                # plenum sees the restricted fraction OF the boosted supply.
+                # Without this a turbo at 15 % pedal reads as full load, which
+                # is fine for a WOT dyno and useless for driving.
+                mapf = fw * (1.0 + boost)
             ve = (float(self._ve_lut.eval2(r, mapf)) if self._ve_lut is not None
                   else 0.85)
             if _HAVE_SURROGATE:
@@ -306,6 +323,13 @@ class Simulator:
             w = r * TWO_PI / 60.0
             fric = (eng.friction_static + eng.friction_linear * w
                     + eng.friction_quad * w * w)           # warm WOT friction
+            if raw_gas:
+                # BEFORE friction and before the caps.  A dyno chart clamps at
+                # zero because a dyno cannot show negative; a DRIVING model
+                # needs the negative -- that is engine braking, and it is what
+                # makes a lift feel like a lift.
+                tq[i] = t_gas
+                continue
             t = max(t_gas - fric, 0.0)
             if eng.torque_limit_nm > 0.0:                  # physical ECU torque cap
                 t = min(t, eng.torque_limit_nm)

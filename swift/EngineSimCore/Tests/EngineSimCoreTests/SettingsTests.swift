@@ -41,7 +41,8 @@ final class SettingsTests: XCTestCase {
         s.engineKey = "aven"
         s.mapMode = .ratio
         s.hidden = [.muffler, .thunder, .cabinRoom]
-        s.manual = false
+        s.source = "pedal"
+        s.pops = false
         s.host = "10.0.0.7"
         s.port = 35001
         s.carIdle = 812

@@ -24,7 +24,11 @@ public struct Settings: Codable, Equatable {
     public var engineKey = "a3"
     public var mapModeRaw = RpmMap.Mode.stretch.rawValue
     public var hidden: [Stage] = []
-    public var manual = true
+    /// sliders | pedal | live.  The pedal is an OFFLINE mode by definition:
+    /// it invents the car, so it cannot be the source while a real one is
+    /// talking.
+    public var source = "sliders"
+    public var pops = true
     public var host = "192.168.0.10"
     public var port = 35000
     public var carIdle = 760.0
