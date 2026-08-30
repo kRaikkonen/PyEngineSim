@@ -14,7 +14,9 @@ let package = Package(
     // iOS 16 because the UI target uses @StateObject and structured
     // concurrency; the DSP itself would run on far less, but one platform
     // line covers the whole package and there is nothing on iOS 13 to serve.
-    platforms: [.iOS(.v16), .macOS(.v12)],
+    // macOS 13 only so the UI module keeps type-checking from the command
+    // line; nothing ships there.  iOS 16 is the real target.
+    platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         .library(name: "EngineSimCore", targets: ["EngineSimCore"]),
         .library(name: "SwiftEngineSimUI", targets: ["SwiftEngineSimUI"]),

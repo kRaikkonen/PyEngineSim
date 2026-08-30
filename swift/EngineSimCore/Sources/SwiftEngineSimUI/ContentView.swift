@@ -14,6 +14,8 @@ import EngineSimCore
 
 public struct ContentView: View {
     @StateObject private var model = AppModel()
+    @State private var pickingEngine = false
+    @State private var pendingEngine = ""
 
     public init() {}
 
@@ -24,6 +26,7 @@ public struct ContentView: View {
                 readouts
                 if model.manual { manualControls }
                 engineChooser
+                slots
                 layers
                 mapping
                 link
@@ -34,6 +37,48 @@ public struct ContentView: View {
             .padding(20)
         }
         .onAppear { model.boot() }
+        // A SHEET, not a bare wheel.  The v1 app put a picker inline and it
+        // could not be dismissed -- a control you cannot get out of is worse
+        // than no control.  A sheet closes three ways: Done, Cancel, or a
+        // swipe down, and it cannot cover anything you still need.
+        .sheet(isPresented: $pickingEngine) { enginePicker }
+    }
+
+    private var enginePicker: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { pickingEngine = false }
+                Spacer()
+                Text("Engine").font(.headline)
+                Spacer()
+                Button("Done") {
+                    model.selectEngine(pendingEngine)
+                    pickingEngine = false
+                }.fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            Divider()
+            picker
+            Spacer(minLength: 0)
+        }
+    }
+
+    // The wheel itself is iOS-only; the macOS build of this module exists to
+    // type-check the app, not to run it, so it gets a plain list instead.
+    @ViewBuilder private var picker: some View {
+        #if os(iOS)
+        Picker("engine", selection: $pendingEngine) {
+            ForEach(model.engineKeys, id: \.self) { k in
+                Text(model.engineName(k)).tag(k)
+            }
+        }
+        .pickerStyle(.wheel)
+        .labelsHidden()
+        #else
+        List(model.engineKeys, id: \.self) { k in
+            Button(model.engineName(k)) { pendingEngine = k }
+        }
+        #endif
     }
 
     // ------------------------------------------------------------- header
@@ -106,21 +151,54 @@ public struct ContentView: View {
     private var engineChooser: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ENGINE").font(.caption2).foregroundColor(.secondary)
-            // a horizontal strip of BUTTONS, not a picker: a wheel cannot be
-            // dismissed one-handed and is unusable while driving
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(model.engineKeys, id: \.self) { key in
-                        Button(key) { model.selectEngine(key) }
-                            .font(.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(key == model.engineKey
-                                        ? Color.accentColor.opacity(0.25)
-                                        : Color.secondary.opacity(0.12))
-                            .cornerRadius(7)
-                    }
+            Button {
+                pendingEngine = model.engineKey
+                pickingEngine = true
+            } label: {
+                HStack {
+                    Text(model.engineName).lineLimit(1)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(Color.secondary.opacity(0.12))
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // --------------------------------------------------------------- slots
+    // Numbered, not named: naming needs a keyboard and a keyboard in a car is
+    // not a control.  The gesture carries the meaning instead -- tap to load,
+    // hold to save over -- so there is nothing to type and nothing to dismiss.
+    private var slots: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("SETUPS").font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                Button("reset") { model.resetToDefaults() }
+                    .font(.caption2).foregroundColor(.orange)
+            }
+            HStack(spacing: 8) {
+                ForEach(0..<model.slotCount, id: \.self) { i in
+                    let filled = model.slotFilled(i)
+                    Text("\(i + 1)")
+                        .font(.system(.body, design: .monospaced)).bold()
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                        .background(filled ? Color.accentColor.opacity(0.22)
+                                           : Color.secondary.opacity(0.10))
+                        .foregroundColor(filled ? .primary : .secondary)
+                        .cornerRadius(8)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if filled { model.loadSlot(i) } }
+                        .onLongPressGesture { model.saveSlot(i) }
                 }
             }
+            Text("tap to load · hold to save here · reset does not clear them")
+                .font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 

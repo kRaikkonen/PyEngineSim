@@ -18,7 +18,7 @@ import Foundation
 /// Every switchable stage, in chain order.  The source taps and the final
 /// output are absent: the first are the excitation itself and the last has
 /// nothing after it, so neither has an input to fall back to.
-public enum Stage: String, CaseIterable {
+public enum Stage: String, CaseIterable, Codable {
     case voiced, block, pipes, header
     case headPort = "head/port"
     case catalytic

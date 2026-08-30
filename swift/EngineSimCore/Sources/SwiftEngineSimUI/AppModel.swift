@@ -51,19 +51,36 @@ public final class AppModel: ObservableObject {
     var lastTick = CFAbsoluteTimeGetCurrent()
 
     public var engineKeys: [String] { library?.keys ?? [] }
+    /// The full name for a key, for the wheel -- 'Audi RS3 EA855 2.5 I5'
+    /// tells you what you are choosing; 'rs3' does not.
+    public func engineName(_ key: String) -> String {
+        library?.name(key) ?? key
+    }
 
     public init() {}
 
     // ------------------------------------------------------------- start-up
     public func boot() {
         do {
+            // restore BEFORE anything is built: the engine choice decides
+            // which synth gets constructed, so applying it afterwards would
+            // mean building the wrong one first and throwing it away
+            let saved = SettingsStore.load()
+            engineKey = saved.engineKey
+            mapMode = saved.mapMode
+            hidden = Set(saved.hidden)
+            manual = saved.manual
+            host = saved.host
+            port = saved.port
             let lib = try AppModel.loadLibrary()
             library = lib
+            if lib.engine(engineKey) == nil { engineKey = "a3" }
             let out = try AudioOutput(renderRate: 32000, blockFrames: 512)
             audio = out
             let mode = try CarMode(
                 engineKey: engineKey, library: lib, telemetry: manualSource,
-                rpmMap: RpmMap(mode: mapMode, carIdle: 760, carRedline: 6500)
+                rpmMap: RpmMap(mode: mapMode, carIdle: saved.carIdle,
+                               carRedline: saved.carRedline)
             ) { engine, tables, voicing in
                 Synthesizer(engine: engine, tables: tables, voicing: voicing,
                             sampleRate: out.renderRate, block: out.blockFrames)
@@ -84,6 +101,8 @@ public final class AppModel: ObservableObject {
                                out.blockFrames, out.hardwareRate,
                                out.ioBufferSeconds * 1000)
             if let n = out.sessionNote { audioInfo += " (" + n + ")" }
+            applyLayers()                    // restore the hidden stages
+            if !manual { connect() }         // ...and the link, if it was live
             startTicking()
         } catch {
             errorText = error.localizedDescription
@@ -136,6 +155,7 @@ public final class AppModel: ObservableObject {
         try? car?.setEngine(key)
         engineName = car?.engine.name ?? key
         applyLayers()          // the new synth starts with every layer visible
+        persist()
     }
 
     // ------------------------------------------------------------- layers
@@ -148,6 +168,7 @@ public final class AppModel: ObservableObject {
     public func toggle(_ s: Stage) {
         if hidden.contains(s) { hidden.remove(s) } else { hidden.insert(s) }
         applyLayers()
+        persist()
     }
 
     /// Hear one stage on its own -- or bring everything back if it already is
@@ -156,11 +177,61 @@ public final class AppModel: ObservableObject {
         let others = Set(Stage.allCases).subtracting([s])
         hidden = hidden == others ? [] : others
         applyLayers()
+        persist()
     }
 
     public func showAllLayers() {
         hidden = []
         applyLayers()
+        persist()
+    }
+
+    // -------------------------------------------------------- persistence
+    /// Everything the listener chose, as one value.
+    public var settings: Settings {
+        var s = Settings()
+        s.engineKey = engineKey
+        s.mapMode = mapMode
+        s.hidden = hidden.sorted { $0.rawValue < $1.rawValue }
+        s.manual = manual
+        s.host = host
+        s.port = port
+        s.carIdle = car?.rpmMap.carIdle ?? 760
+        s.carRedline = car?.rpmMap.carRedline ?? 6500
+        return s
+    }
+
+    /// Written on every change, not on quit: an app the system kills -- which
+    /// is what happens when the phone is unplugged and put down -- never gets
+    /// to run a quit handler.
+    func persist() { SettingsStore.save(settings) }
+
+    public func apply(_ s: Settings) {
+        if s.engineKey != engineKey { selectEngine(s.engineKey) }
+        setMapMode(s.mapMode)
+        hidden = Set(s.hidden)
+        applyLayers()
+        host = s.host
+        port = s.port
+        car?.rpmMap.carIdle = s.carIdle
+        car?.rpmMap.carRedline = s.carRedline
+        useManual(s.manual)
+        persist()
+    }
+
+    /// Back to how it ships.  Deliberately does NOT clear the saved slots --
+    /// reset is for undoing the last ten minutes of poking, not for losing
+    /// the setup you built last week.
+    public func resetToDefaults() { apply(.default) }
+
+    public var slotCount: Int { SettingsStore.slotCount }
+    public func slotFilled(_ i: Int) -> Bool { SettingsStore.slotFilled(i) }
+    public func saveSlot(_ i: Int) {
+        SettingsStore.saveSlot(i, settings)
+        objectWillChange.send()
+    }
+    public func loadSlot(_ i: Int) {
+        if let s = SettingsStore.loadSlot(i) { apply(s) }
     }
 
     func applyLayers() {
@@ -171,6 +242,7 @@ public final class AppModel: ObservableObject {
     public func setMapMode(_ m: RpmMap.Mode) {
         mapMode = m
         car?.rpmMap.mode = m
+        persist()
     }
 
     public func setManualRPM(_ rpm: Double) { manualSource.rpm = rpm }
@@ -179,6 +251,7 @@ public final class AppModel: ObservableObject {
     /// Switch between the sliders and the real car.
     public func useManual(_ on: Bool) {
         manual = on
+        persist()
         if on {
             obd?.stop(); obd = nil
             car?.telemetry = manualSource
