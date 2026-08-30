@@ -78,8 +78,17 @@ def test_rpm_map():
     check(abs(d(4000.0, idle, red) - 4000.0) < 1.0, "direct is 1:1")
     check(d(99000.0, idle, red) <= red * 1.02, "direct still clamps at redline")
 
-    r = RpmMap("ratio", ratio=1.5, learn=False)
-    check(abs(r(3000.0, idle, red) - 4500.0) < 1.0, "ratio multiplies")
+    # `ratio` is the RATIO OF THE REDLINES, not a hand-set multiplier: a
+    # 6500 car onto an 8500 engine puts 6500 exactly on 8500, and half the
+    # revs on half the note -- it goes through zero, which is what separates
+    # it from `stretch`.
+    r = RpmMap("ratio", car_redline=6500.0, learn=False)
+    check(abs(r(6500.0, idle, red) - red) < 1.0, "ratio lines up the redlines")
+    check(abs(r(3250.0, idle, red) - red / 2.0) < 1.0,
+          "ratio is proportional: half the revs, half the note")
+    r15 = RpmMap("ratio", car_redline=6500.0, ratio=1.05, learn=False)
+    check(r15(3250.0, idle, red) > r(3250.0, idle, red),
+          "the ratio field still trims on top")
 
     # learning: a car that revs past the seed widens the map instead of clipping
     L = RpmMap("stretch", car_idle=800.0, car_redline=6000.0, learn=True)
