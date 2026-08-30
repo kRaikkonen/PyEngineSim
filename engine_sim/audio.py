@@ -2054,6 +2054,12 @@ class Synthesizer:
             pr = (1.05 * P_ATM) / max(p_cyl, 1.05 * P_ATM)   # back/cylinder ratio (0,1]
             choke = min(max((0.54 - pr) / 0.54, 0.0), 1.0)   # 0 subsonic .. 1 choked
             self._dbg_choke = choke                          # audit stash
+            # audit stash: the excitation inputs, so a Swift mismatch says
+            # WHICH input is wrong rather than just that the pulses differ
+            if self.capture_stages:
+                self._dbg_exc = (float(strength), float(load), float(choke),
+                                 float(dps), float(c_runner),
+                                 float(self._valve))
             # CYCLE-TO-CYCLE combustion variability — the physical line
             # broadener.  Scatter grows with rpm ceiling (burn time shrinks,
             # turbulence scatter rises): a screamer's harmonics smear into the
@@ -2437,6 +2443,11 @@ class Synthesizer:
         # torn direct sound IS its voice; a chambered system blocks it and the
         # reverberant field carries the note instead.  A fixed 0.14 leak had
         # starved every open car of its rasp while over-ringing it.
+        if self.capture_stages:
+            self._dbg_pipe = (np.asarray(wet, dtype=np.float64).copy(),
+                              [np.asarray(v, dtype=np.float64).copy()
+                               for v in srcs],
+                              np.asarray(er_add, dtype=np.float64).copy())
         op_d = min(max(sim.engine.exhaust_openness, 0.2), 1.0)
         direct = 0.20 + 0.62 * op_d
         sig = direct * combustion + wet
@@ -2848,6 +2859,8 @@ class Synthesizer:
                                    phase_attr="_itb_phase")
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
 
+        if self.capture_stages:
+            self._dbg_bayi1 = np.asarray(bayi, dtype=np.float64).copy()
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
         if dps > 1e-12:
             ind, gw = self._induction_audio(frames)
@@ -2868,6 +2881,9 @@ class Synthesizer:
             # "flutter 搞坏了").  The engine now dips, the valve rides on top.
             duck = min(0.40 * getattr(self, "_bov_env", 0.0), 0.40)
             sig = (1.0 - duck) * sig          # exhaust collapses on the lift...
+            if self.capture_stages:
+                self._dbg_gw = (np.asarray(ind, dtype=np.float64).copy(),
+                                np.asarray(gw, dtype=np.float64).copy())
             bayi = bayi + ind + gw            # whine/BOV: intake tract + dump
                                               # vent to open air, not the pipe
         if not self.stage_on.get("induction+gears", True):
@@ -2882,6 +2898,8 @@ class Synthesizer:
             self._dbg_exit = (np.asarray(sig, dtype=np.float64).copy(),
                               (int(_r.s0), int(_r.s1), int(_r.s2), int(_r.s3)),
                               _r._spare)
+        if self.capture_stages:
+            self._dbg_bayi2 = np.asarray(bayi, dtype=np.float64).copy()
         # --- (7) tail-pipe wall thickness: kill the 'small-trumpet' shriek
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
         # scoop THAT band and add a touch of low-shelf body (thicker, not thinner).
@@ -3217,6 +3235,9 @@ class Synthesizer:
         # path-difference delay, composite panel transmission (openings leak +
         # mass-law LP), the cabin's c/2L standing wave, and the chase cam's
         # tarmac-bounce comb — all from geometry, no listen fudges.
+        if self.capture_stages:
+            self._dbg_bay = (np.asarray(bay, dtype=np.float64).copy(),
+                             np.asarray(bayi, dtype=np.float64).copy())
         geo = self._pov_geo()
         tail = sig
         if geo["d_tail"]:
@@ -3274,6 +3295,9 @@ class Synthesizer:
             chas = self._pov_lp(tail_pre, "chassis",
                                 geo.get("chassis_fc", 100.0))
             sig = sig + geo["chassis"] * chas
+        if self.capture_stages:
+            self._dbg_pov = (np.asarray(sig, dtype=np.float64).copy(),
+                             float(getattr(self, "_tk_x", -60.0)))
         if geo.get("flyby"):
             # TRACKSIDE FLY-BY: the car drives past a fixed mic (posts every
             # 200 m, 12 m off the line).  The propagation delay follows the live

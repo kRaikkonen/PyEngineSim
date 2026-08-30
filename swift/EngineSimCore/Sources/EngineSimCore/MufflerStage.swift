@@ -50,6 +50,7 @@ public final class MufflerStage {
     let sampleRate: Double
     let cache: FilterCache
     let rng: PortableRNG
+    let layers: LayerStack
 
     // fixed designs, built once
     var roadLP = Biquad.identity
@@ -102,11 +103,12 @@ public final class MufflerStage {
     let muffLen = (0.17, 0.31)
 
     public init(engine: EnginePreset, sampleRate sr: Double, cache: FilterCache,
-                rng: PortableRNG, block: Int = 256) {
+                rng: PortableRNG, layers: LayerStack, block: Int = 256) {
         self.eng = engine
         self.sampleRate = sr
         self.cache = cache
         self.rng = rng
+        self.layers = layers
         roadPipe = engine.hasCat
         gpf = engine.hasGpf
 
@@ -150,15 +152,14 @@ public final class MufflerStage {
         xc = (0..<3).map { _ in ExhaustWaveguide(maxDelay: 2600) }
     }
 
-    /// The whole run, port to tailpipe.  Returns the signal and the named taps.
+    /// The whole run, port to tailpipe.  Taps through the layer stack as it
+    /// goes, so each stage can be hidden where it actually ends.
     public func process(_ input: [Double], r: Resonance, state s: PipeState,
                         params P: [String: Double],
-                        vx: [String: Bool] = [:]) -> (out: [Double],
-                                                      taps: [String: [Double]]) {
+                        vx: [String: Bool] = [:]) -> [Double] {
         var sig = input
         let n = sig.count, sr = sampleRate
         let c = s.soundSpeed
-        var taps = [String: [Double]]()
         let p = { (k: String, d: Double) -> Double in P[k] ?? d }
         let on = { (k: String) -> Bool in vx[k] ?? true }
 
@@ -207,7 +208,7 @@ public final class MufflerStage {
                 for i in 0..<n { sig[i] += (0.16 * wg) * tanh(wn[i] * 3.0) }
             }
         }
-        taps["head/port"] = sig
+        sig = layers.tap(.headPort, sig)
 
         // --- catalyst: the ceramic soaks the raw top end FIRST --------------
         // a stock car with a cat cannot sound like an open header, whatever the
@@ -223,7 +224,7 @@ public final class MufflerStage {
         // the brick sits in its own expansion casing, so it RINGS as well
         let cat = xc[0].process(sig, D: r.rvD[0], g: r.rvG[0], s: 1.0, lpA: r.rvLP)
         for i in 0..<n { sig[i] += 0.30 * (cat[i] - sig[i]) }
-        taps["catalytic"] = sig
+        sig = layers.tap(.catalytic, sig)
 
         // --- high-order standing-wave whine ---------------------------------
         // the pipe's odd quarter-wave harmonics in 3-7 kHz, sharp on a long thin
@@ -251,7 +252,7 @@ public final class MufflerStage {
                 }
             }
         }
-        taps["standing-wave"] = sig
+        sig = layers.tap(.standingWave, sig)
 
         // --- resonator: DC block, then the Helmholtz de-drone NOTCH ---------
         dcBlock.process(&sig)
@@ -265,7 +266,7 @@ public final class MufflerStage {
         let hkey = "\(bh.b)\(bh.a)"
         if helmKey != hkey { helm.setCoefficients(b: bh.b, a: bh.a); helmKey = hkey }
         helm.process(&sig)
-        taps["resonator"] = sig
+        sig = layers.tap(.resonator, sig)
 
         // --- muffler --------------------------------------------------------
         // variable-valve expansion low-pass: muffled at idle, open at redline
@@ -363,7 +364,7 @@ public final class MufflerStage {
             }
             flex.process(&sig)          // corrugated section: the 'braaa' rasp
         }
-        taps["muffler"] = sig
+        sig = layers.tap(.muffler, sig)
 
         // --- active exhaust valve -------------------------------------------
         // above ~40% redline the flap cracks and the bright bypass crossfades in
@@ -385,7 +386,7 @@ public final class MufflerStage {
         for i in 0..<n {
             sig[i] += 0.24 * (c1[i] - sig[i]) + 0.18 * (c2[i] - sig[i])
         }
-        taps["valve bypass"] = sig
-        return (sig, taps)
+        sig = layers.tap(.valveBypass, sig)
+        return sig
     }
 }

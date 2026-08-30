@@ -46,10 +46,13 @@ struct FlybyDelay {
         for i in 0..<n { buf[(wp + i) % N] = x[i] }
         let d1 = min(max(dNew, 1.0), Double(N - 3))
         var out = [Double](repeating: 0, count: n)
+        // numpy's linspace is start + step*i with step = (stop-start)/(n-1),
+        // and the LAST element forced to stop exactly.  Computing it as
+        // start + (stop-start)*i/(n-1) instead is the same value and a
+        // different rounding, which showed up as 3e-12 of drift.
+        let step = n > 1 ? (d1 - prev) / Double(n - 1) : 0.0
         for i in 0..<n {
-            // numpy linspace(prev, d1, n): the last sample lands exactly on d1
-            let t = n > 1 ? Double(i) / Double(n - 1) : 0.0
-            let d = prev + (d1 - prev) * t
+            let d = (i == n - 1) ? d1 : prev + step * Double(i)
             let idx = Double(wp + i) - d
             let i0 = Int(idx.rounded(.down))
             let fr = idx - Double(i0)
@@ -110,6 +113,10 @@ public final class ListenerStage {
     var flybyDL = FlybyDelay(maxDelay: 12000)
     var flybyLP = OnePole.identity, flybyLPKey = ""
     var trackX = -60.0
+    /// The mix just before the fly-by, and the car's position -- the two
+    /// things that decide when a trackside mic hears anything at all.
+    public private(set) var dbgPovSignal = [Double]()
+    public private(set) var dbgTrackX = 0.0
     var cabVerb: Reverb
     var roomVerb: Reverb
     var geoCache: (key: String, geo: POVGeometry)?
@@ -338,6 +345,8 @@ public final class ListenerStage {
             let chas = povLowPass(tailPre, "chassis", geo.chassisFc)
             for i in 0..<n { sig[i] += geo.chassis * chas[i] }
         }
+        dbgPovSignal = sig
+        dbgTrackX = trackX
         if geo.flyby {
             // the car drives past a fixed mic: posts every 200 m, 12 m off the
             // line.  Level, air absorption and Doppler all ride one geometry.

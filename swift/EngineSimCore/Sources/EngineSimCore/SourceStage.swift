@@ -169,20 +169,26 @@ public final class SourceStage {
                                28.0), 600.0)
             let nyq = sampleRate * 0.45
             let voices = fireChords[fireChordIndex % fireChords.count]
-            let key = "\(root)|\(fireChordIndex)"
-            if chordKey != key || chord.count != voices.count {
-                chord = voices.map {
-                    let ba = rbjBandpass(f0: min(root * $0.ratio, nyq), q: 11.0,
-                                         rate: sampleRate)
-                    return Biquad(b: ba.b, a: ba.a)
-                }
-                chordKey = key
+            // RETUNED, never rebuilt: the root tracks the firing frequency, so
+            // it moves EVERY block, and rebuilding would zero each resonator's
+            // history 125 times a second.  The Python redesigns every block too
+            // but carries zi, and these are high-Q -- their whole job is to
+            // keep ringing.
+            if chord.count != voices.count {
+                chord = voices.map { _ in Biquad.identity }
             }
+            for (k, v) in voices.enumerated() {
+                let ba = rbjBandpass(f0: min(root * v.ratio, nyq), q: 11.0,
+                                     rate: sampleRate)
+                chord[k].setCoefficients(b: ba.b, a: ba.a)
+            }
+            chordKey = "\(root)|\(fireChordIndex)"
             for (k, v) in voices.enumerated() {
                 var tone = snap
                 chord[k].process(&tone)
                 for i in 0..<frames { body[i] += v.level * tone[i] }
             }
+
             for i in 0..<frames { body[i] *= 1.7 }
         }
 

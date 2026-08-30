@@ -111,10 +111,16 @@ public final class EnginePhysics {
     public var blip: Double = 0
     public var fuelCut: Bool = false
     public var coolantC: Double = 88.0
+    /// The blowdown pressure captured as each cylinder's exhaust valve
+    /// actually opened.  Starts at ambient; the simulator updates it as
+    /// cylinders fire, which is how a cut cylinder goes quiet on its own.
+    public var lastBlowdown: [Double]
 
     public var omega: Double { rpm * 2.0 * Double.pi / 60.0 }
 
     public init(engine: EnginePreset, tables: EngineTables) {
+        lastBlowdown = [Double](repeating: 101325.0,
+                                count: max(engine.numCylinders, 1))
         self.engine = engine
         self.tables = tables
         self.veTable = tables.veTable

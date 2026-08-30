@@ -70,8 +70,9 @@ final class MufflerTests: XCTestCase {
             let rate = 32000.0
             let cache = FilterCache(sampleRate: rate)
             let rng = PortableRNG(seed: 1)
+            let layers = LayerStack()
             let stage = MufflerStage(engine: eng, sampleRate: rate, cache: cache,
-                                     rng: rng)
+                                     rng: rng, layers: layers)
 
             for b in car.blocks {
                 guard let input = b.taps["head/port-in"] else { continue }
@@ -96,10 +97,16 @@ final class MufflerTests: XCTestCase {
                 st.soundSpeed = b.c_runner       // the LIVE speed, not the smoothed
                 st.lastLevel = b.last_level
 
-                let got = stage.process(input, r: r, state: st, params: car.params)
+            let stageOf: [String: Stage] = [
+                    "head/port": .headPort, "catalytic": .catalytic,
+                    "standing-wave": .standingWave, "resonator": .resonator,
+                    "muffler": .muffler, "valve bypass": .valveBypass,
+                ]
+                _ = stage.process(input, r: r, state: st, params: car.params)
                 for name in checked {
                     let refName = name == "head/port" ? "head/port-out" : name
-                    guard let want = b.taps[refName], let mine = got.taps[name]
+                    guard let want = b.taps[refName],
+                          let mine = layers.lastValue(stageOf[name]!)
                     else { continue }
                     let db = residualDB(mine, want)
                     if db > (worst[name] ?? -.infinity) {
@@ -113,8 +120,8 @@ final class MufflerTests: XCTestCase {
         print("  muffler run: \(refs.count) cars, \(blocksChecked) blocks")
         for name in checked {
             let db = worst[name] ?? .infinity
-            print(String(format: "    %-14s worst residual %7.1f dB  (%@)",
-                         (name as NSString).utf8String!, db,
+            print(String(format: "    %-14@ worst residual %7.1f dB  (%@)",
+                         name, db,
                          worstCar[name] ?? "-"))
         }
         XCTAssertGreaterThan(blocksChecked, 50)

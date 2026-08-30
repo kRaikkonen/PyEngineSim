@@ -39,7 +39,9 @@ public final class MasterStage {
     public var volume = 1.0
 
     var agcHP = OnePole.identity, agcHPKey = ""
-    var level = 0.0, gain = 1.0
+    // seeded, not zero: at zero the very first block would ask for a gain of
+    // 0.22/1e-6 and slam straight into the ceiling
+    var level = 0.05, gain = 1.0
     var spatial = Biquad.identity, spatialKey = ""
     var roadBP: Biquad
     var roadLP: Biquad

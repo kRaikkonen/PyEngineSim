@@ -81,6 +81,13 @@ public final class InductionStage {
 
     /// The blow-off envelope, read by the caller to duck the exhaust note.
     public var bovEnvelope: Double { bovEnv }
+    /// The bay bus after the intake roar and the trumpets, before the spool --
+    /// the split the Python taps, used to localise a mismatch.
+    public private(set) var dbgIntakeOnly = [Double]()
+    public private(set) var dbgInd = [Double]()
+    public private(set) var dbgGw = [Double]()
+    public private(set) var dbgGwPreVerb = [Double]()
+    public private(set) var dbgWall = (0.0, 0.0, [Double](), [Double]())
 
     public init(engine: EnginePreset, sampleRate sr: Double, cache: FilterCache,
                 rng: PortableRNG, block: Int = 256) {
@@ -167,10 +174,12 @@ public final class InductionStage {
             }
         }
 
+        dbgIntakeOnly = bay
         // --- forced induction and the gearbox -------------------------------
         var gw = gearboxAudio(frames: frames, state: s, params: P)
         var ind = inductionAudio(frames: frames, state: s, params: P)
         wallFilter(&ind, &gw, params: P)
+        dbgGwPreVerb = gw
         if p("spool_reverb", 0.0) > 1e-3 {
             indReverb.mix = p("spool_reverb", 0.0)
             ind = indReverb.process(ind)
@@ -179,6 +188,7 @@ public final class InductionStage {
             gearReverb.mix = p("gearbox_reverb", 0.0)
             gw = gearReverb.process(gw)
         }
+        dbgInd = ind; dbgGw = gw
         for i in 0..<frames { bay[i] += ind[i] + gw[i] }
 
         // the driver has just LIFTED, so the note collapses and the valve event
@@ -326,6 +336,7 @@ public final class InductionStage {
         guard wt > 1e-3 else { return }
         let cut = min(max(7000.0 - 5600.0 * wt, 900.0), sampleRate * 0.45)
         let ba = cache.butter(2, cut)
+        dbgWall = (wt, cut, ba.b, ba.a)
         let key = "\(ba.b)\(ba.a)"
         if wallKey != key {
             wallOut.setCoefficients(b: ba.b, a: ba.a)

@@ -46,9 +46,13 @@ def voicing_for(key):
         "nchan": int(syn._nchan),
         "bd_sharp": float(syn._bd_sharp),
         "stroke_ref": float(syn._stroke_ref),
+        # res1/res2/wall_thickness/muffler are NOT mixer taste -- they are
+        # solved per car from the real pipe/collector/muffler dimensions
+        # (exhaust_tmm), so they belong with the voicing, not with defaults.
         "params": {k: float(syn.params[k])
                    for k in ("pulse_tau", "attack_deg", "cyl_spread",
-                             "cyl_voice")},
+                             "cyl_voice", "res1", "res2", "wall_thickness",
+                             "muffler")},
         # structure-borne enclosure: the block/head/piston lid the combustion
         # is sealed behind, and the two casting resonances it rings at
         "blk_seal": float(getattr(syn, "_blk_seal", 0.0)),

@@ -124,8 +124,8 @@ final class ExitTests: XCTestCase {
 
         print("  exit run: \(refs.count) cases, \(blocks) blocks")
         for nm in checked {
-            print(String(format: "    %-14s worst %7.1f dB  (%@)",
-                         (nm as NSString).utf8String!, worst[nm] ?? .infinity,
+            print(String(format: "    %-14@ worst %7.1f dB  (%@)",
+                         nm, worst[nm] ?? .infinity,
                          worstCase[nm] ?? "-"))
         }
         XCTAssertGreaterThan(blocks, 40)

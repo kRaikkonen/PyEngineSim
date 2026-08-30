@@ -45,12 +45,17 @@ public final class ResonanceModel {
     let sampleRate: Double
     let block: Int
     var cSmooth: Double?
-    public var wallQ: Double = 1.0
+    public var wallQ: Double
 
     public init(engine: EnginePreset, sampleRate: Double, block: Int = 256) {
         self.engine = engine
         self.sampleRate = sampleRate
         self.block = block
+        // The wall's Q comes from the MATERIAL, not from a default: a low-loss
+        // pipe (titanium) rings longer and holds more feedback, cast iron less.
+        // Leaving it at 1.0 quietly detunes every car whose exhaust is not
+        // plain steel -- the gains sit ~1 % off and nothing looks wrong.
+        wallQ = WallMaterial.acoustics(engine.wallMaterial).q
     }
 
     public func update(rpm: Double, throttle: Double,
