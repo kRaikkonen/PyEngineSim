@@ -84,32 +84,35 @@ cp docs/{presets,engine_voicing,engine_tables}.json \
    swift/EngineSimCore/Tests/EngineSimCoreTests/Fixtures/
 ```
 
-## What still needs Xcode (and therefore Leo)
+## Putting it on the phone
 
-Everything above builds and tests from the command line.  The app target does
-not, because it needs a signing identity, and signing needs the GUI —
-`codesign` over SSH fails with `errSecInternalComponent`.
+The project is generated, not hand-built — `py tools/make_xcodeproj.py` writes
+`swift/swiftEngineSimApp/swiftEngineSim.xcodeproj`, so it can be deleted and
+rebuilt rather than being a file nobody dares touch.  It already holds the
+local package reference, the three JSON fixtures (referenced IN PLACE under
+`docs/`, so regenerating them updates the app), the signing team, and
+`UIBackgroundModes = audio` — without which the sound stops at screen lock,
+which in a car is most of the time.
 
-In Xcode:
+So:
 
-1. **File > New > Project > iOS > App.**  Product name `swiftEngineSim`,
-   interface SwiftUI, language Swift.  Save it over `swift/swiftEngineSimApp/`.
-2. **Delete** the `ContentView.swift` and `swiftEngineSimApp.swift` Xcode
-   generates (Move to Trash).
-3. **Add** the one source file the target needs:
-   `swift/swiftEngineSimApp/swiftEngineSim/App.swift`.
-4. **File > Add Package Dependencies > Add Local**, pick
-   `swift/EngineSimCore`, and add BOTH library products (`EngineSimCore` and
-   `SwiftEngineSimUI`) to the target.  The whole UI lives in the package, which
-   is why the app is one file.
-5. **Add the three JSON files** to the target's *Copy Bundle Resources*:
-   `docs/presets.json`, `docs/engine_voicing.json`, `docs/engine_tables.json`.
-   The app looks for them by name at the bundle root.
-6. **Signing & Capabilities:** pick your personal team, and add the
-   **Background Modes** capability with *Audio, AirPlay, and Picture in
-   Picture* ticked — without it the sound stops when the screen locks, which
-   is most of the time in a car.
-7. Build to the phone.
+1. Open `swift/swiftEngineSimApp/swiftEngineSim.xcodeproj`.
+2. Pick your iPhone at the top.
+3. Run.
+
+Verified from the command line: the simulator build **succeeds**, and the
+device build gets all the way through compiling, linking and creating the
+provisioning profile before failing at `CodeSign` with
+`errSecInternalComponent`.  That is not a project problem — a non-GUI session
+cannot get the signing key out of the keychain.  Pressing Run in Xcode is the
+only step that has to happen there.
+
+First install: the phone will say "Untrusted Developer" — Settings > General >
+VPN & Device Management > your Apple ID > Trust.
+
+Then, before anything else, watch the two numbers on screen: **cpu** should sit
+near 30 % and **late** should stay at 0.  If either misbehaves, that is the
+thing to report, not the sound.
 
 ## The car
 
