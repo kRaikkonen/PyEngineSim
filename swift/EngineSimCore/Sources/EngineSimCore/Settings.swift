@@ -29,6 +29,10 @@ public struct Settings: Codable, Equatable {
     public var port = 35000
     public var carIdle = 760.0
     public var carRedline = 6500.0
+    /// Whether the rev range keeps learning from the car.  Set by hand once
+    /// and it stops: an automatic value that overwrites what you just typed
+    /// is worse than no automatic value.
+    public var learnRange = true
 
     /// A public struct's memberwise init is INTERNAL by default, so from
     /// another module the only visible initialiser was the one Decodable

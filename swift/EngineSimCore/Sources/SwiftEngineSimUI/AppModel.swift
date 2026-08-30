@@ -40,6 +40,13 @@ public final class AppModel: ObservableObject {
     /// because the synth is rebuilt on every engine change -- the switches
     /// belong to the listener, not to the car.
     @Published public var hidden = Set<Stage>()
+    /// The REAL car's rev range that the mapping stretches from.  Published so
+    /// the readout moves as the map learns, not only when it is set by hand.
+    @Published public var carIdle = 760.0
+    @Published public var carRedline = 6500.0
+    @Published public var learnRange = true
+    /// The highest the car has actually been seen to rev this session.
+    public var seenMax: Double { car?.rpmMap.seenMax ?? 0 }
 
     // --- the parts --------------------------------------------------------
     public private(set) var library: EngineLibrary?
@@ -72,6 +79,9 @@ public final class AppModel: ObservableObject {
             manual = saved.manual
             host = saved.host
             port = saved.port
+            carIdle = saved.carIdle
+            carRedline = saved.carRedline
+            learnRange = saved.learnRange
             let lib = try AppModel.loadLibrary()
             library = lib
             if lib.engine(engineKey) == nil { engineKey = "a3" }
@@ -80,7 +90,8 @@ public final class AppModel: ObservableObject {
             let mode = try CarMode(
                 engineKey: engineKey, library: lib, telemetry: manualSource,
                 rpmMap: RpmMap(mode: mapMode, carIdle: saved.carIdle,
-                               carRedline: saved.carRedline)
+                               carRedline: saved.carRedline,
+                               learn: saved.learnRange)
             ) { engine, tables, voicing in
                 Synthesizer(engine: engine, tables: tables, voicing: voicing,
                             sampleRate: out.renderRate, block: out.blockFrames)
@@ -147,6 +158,7 @@ public final class AppModel: ObservableObject {
         linkState = s.link; pollHz = s.hz; shifting = s.shifting
         engineName = s.engine
         if let a = audio { renderLoad = a.renderLoad; underruns = a.underruns }
+        syncRangeFromMap()
     }
 
     // ---------------------------------------------------------------- edits
@@ -186,6 +198,59 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    // ------------------------------------------------------ the real car
+    // No text field: a keyboard is not a control you can use while driving.
+    // Steps of 100 rpm, which is finer than anyone knows their own redline.
+    public func nudgeIdle(_ delta: Double) {
+        carIdle = min(max(carIdle + delta, 400), 2000)
+        stopLearningBecauseItWasSetByHand()
+    }
+
+    public func nudgeRedline(_ delta: Double) {
+        carRedline = min(max(carRedline + delta, carIdle + 800), 12000)
+        stopLearningBecauseItWasSetByHand()
+    }
+
+    /// Take the highest the car has actually revved as the redline.  Better
+    /// than a number off a spec sheet: the fuel cut is what matters, and it
+    /// is what you just hit.
+    public func useSeenRedline() {
+        guard seenMax > carIdle + 800 else { return }
+        carRedline = seenMax
+        stopLearningBecauseItWasSetByHand()
+    }
+
+    /// Hand back to the car.  Clears nothing -- it just starts letting the
+    /// highest rpm seen win again.
+    public func relearnRange() {
+        learnRange = true
+        pushRange()
+        persist()
+    }
+
+    /// A value you set by hand and an automatic value that overwrites it are
+    /// a fight the automatic one always wins, and it looks like a bug.  So
+    /// touching either number turns the learning off.
+    private func stopLearningBecauseItWasSetByHand() {
+        learnRange = false
+        pushRange()
+        persist()
+    }
+
+    func pushRange() {
+        guard let m = car?.rpmMap else { return }
+        m.carIdle = carIdle
+        m.carRedline = carRedline
+        m.learn = learnRange
+    }
+
+    /// Pull the learned values back out, so the readout tracks the car.
+    func syncRangeFromMap() {
+        guard learnRange, let m = car?.rpmMap else { return }
+        if m.carIdle != carIdle { carIdle = m.carIdle }
+        if m.carRedline != carRedline { carRedline = m.carRedline }
+    }
+
     // -------------------------------------------------------- persistence
     /// Everything the listener chose, as one value.
     public var settings: Settings {
@@ -196,8 +261,9 @@ public final class AppModel: ObservableObject {
         s.manual = manual
         s.host = host
         s.port = port
-        s.carIdle = car?.rpmMap.carIdle ?? 760
-        s.carRedline = car?.rpmMap.carRedline ?? 6500
+        s.carIdle = carIdle
+        s.carRedline = carRedline
+        s.learnRange = learnRange
         return s
     }
 
@@ -213,8 +279,10 @@ public final class AppModel: ObservableObject {
         applyLayers()
         host = s.host
         port = s.port
-        car?.rpmMap.carIdle = s.carIdle
-        car?.rpmMap.carRedline = s.carRedline
+        carIdle = s.carIdle
+        carRedline = s.carRedline
+        learnRange = s.learnRange
+        pushRange()
         useManual(s.manual)
         persist()
     }

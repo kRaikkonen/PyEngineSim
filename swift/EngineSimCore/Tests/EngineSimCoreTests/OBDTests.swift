@@ -97,6 +97,49 @@ final class OBDTests: XCTestCase {
         XCTAssertGreaterThan(m.carRedline, 6000.0, "the seed must be beaten")
     }
 
+    /// A value set by hand and an automatic value that overwrites it are a
+    /// fight the automatic one always wins -- and it reads as a bug, not as a
+    /// feature.  So a hand-set range must SURVIVE the car revving past it.
+    func testAHandSetRangeIsNotOverwrittenByLearning() {
+        let learning = RpmMap(mode: .stretch, carIdle: 800, carRedline: 6000,
+                              learn: true)
+        learning.observe(rpm: 7200, pedal: 1.0)
+        XCTAssertEqual(learning.carRedline, 7200, accuracy: 1e-9,
+                       "learning on: the car beats the seed")
+
+        let byHand = RpmMap(mode: .stretch, carIdle: 800, carRedline: 6000,
+                            learn: false)
+        byHand.observe(rpm: 7200, pedal: 1.0)
+        XCTAssertEqual(byHand.carRedline, 6000, accuracy: 1e-9,
+                       "learning off: the number you set STAYS set")
+        byHand.observe(rpm: 700, pedal: 0.0)
+        XCTAssertEqual(byHand.carIdle, 800, accuracy: 1e-9,
+                       "...and that goes for the idle end too")
+
+        // and it can be handed back
+        byHand.learn = true
+        byHand.observe(rpm: 7200, pedal: 1.0)
+        XCTAssertEqual(byHand.carRedline, 7200, accuracy: 1e-9)
+    }
+
+    /// The redline is what the mapping stretches TO, so changing it must
+    /// actually move the note.
+    func testTheRedlineChangesWhatIsPlayed() {
+        let low = RpmMap(mode: .stretch, carIdle: 760, carRedline: 6500)
+        let high = RpmMap(mode: .stretch, carIdle: 760, carRedline: 8000)
+        // same real 5000 rpm, two different beliefs about where the car's
+        // redline is: the one that thinks the car revs further plays LOWER,
+        // because 5000 is a smaller fraction of its range
+        let a = low(5000, engIdle: 900, engRedline: 8500)
+        let b = high(5000, engIdle: 900, engRedline: 8500)
+        XCTAssertGreaterThan(a, b + 500)
+        // and both still land on the sim's own redline when the car is at its
+        XCTAssertEqual(low(6500, engIdle: 900, engRedline: 8500), 8500,
+                       accuracy: 1.0)
+        XCTAssertEqual(high(8000, engIdle: 900, engRedline: 8500), 8500,
+                       accuracy: 1.0)
+    }
+
     func testGearLearner() throws {
         let ref = try load()
         let gl = GearLearner()

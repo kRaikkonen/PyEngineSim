@@ -29,6 +29,7 @@ public struct ContentView: View {
                 slots
                 layers
                 mapping
+                realCar
                 link
                 if let e = model.errorText {
                     Text(e).font(.footnote).foregroundColor(.red)
@@ -278,6 +279,68 @@ public struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------- the real car
+    // What the mapping stretches FROM.  Steppers, not a text field: a
+    // keyboard is not a control you can use while driving, and 100 rpm is
+    // finer than anyone knows their own redline anyway.
+    private var realCar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("YOUR CAR").font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                if model.learnRange {
+                    Text("learning").font(.caption2).foregroundColor(.green)
+                } else {
+                    Button("relearn") { model.relearnRange() }
+                        .font(.caption2)
+                }
+            }
+            revRow("idle", model.carIdle,
+                   minus: { model.nudgeIdle(-50) },
+                   plus: { model.nudgeIdle(50) })
+            revRow("redline", model.carRedline,
+                   minus: { model.nudgeRedline(-100) },
+                   plus: { model.nudgeRedline(100) })
+            HStack(spacing: 8) {
+                if model.seenMax > 0 {
+                    Text(String(format: "seen %.0f", model.seenMax))
+                        .font(.caption2).foregroundColor(.secondary)
+                    Button("use it") { model.useSeenRedline() }
+                        .font(.caption2)
+                }
+                Spacer()
+            }
+            Text("what the mapping stretches from · setting it by hand stops "
+                 + "the learning, so your number sticks")
+                .font(.system(size: 10)).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func revRow(_ label: String, _ value: Double,
+                        minus: @escaping () -> Void,
+                        plus: @escaping () -> Void) -> some View {
+        HStack(spacing: 10) {
+            Text(label).font(.caption)
+                .frame(width: 58, alignment: .leading)
+            Button(action: minus) {
+                Image(systemName: "minus")
+                    .frame(width: 44, height: 34)
+                    .background(Color.secondary.opacity(0.14))
+                    .cornerRadius(7)
+            }.buttonStyle(.plain)
+            Text(String(format: "%.0f", value))
+                .font(.system(.title3, design: .monospaced))
+                .frame(maxWidth: .infinity)
+            Button(action: plus) {
+                Image(systemName: "plus")
+                    .frame(width: 44, height: 34)
+                    .background(Color.secondary.opacity(0.14))
+                    .cornerRadius(7)
+            }.buttonStyle(.plain)
         }
     }
 
