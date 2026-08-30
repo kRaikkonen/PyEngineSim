@@ -259,7 +259,13 @@ class RpmMap:
                  for an engine that revs somewhere else entirely: flooring a
                  6500 rpm road car then makes the V12 sing at its own 8500
                  instead of stopping two thirds of the way up.
-    ``ratio``    fixed multiplier, for when you just want it higher or lower.
+    ``ratio``    REDLINE-PROPORTIONAL: sim = car * (sim_redline / car_redline),
+                 so your 6500 redline lands exactly on the target's 9500 and
+                 everything below scales with it.  Unlike ``stretch`` it goes
+                 through zero rather than pinning the idle ends together, so
+                 doubling your revs doubles the note -- the proportion is kept
+                 and only the SCALE changes.  ``ratio`` is a trim on top, for
+                 when you want it a little higher or lower than exact.
 
     The car end of ``stretch`` is SEEDED from a profile and then LEARNED: the
     highest rpm ever seen (and the resting rpm) beat the seed, so a wrong guess
@@ -298,7 +304,10 @@ class RpmMap:
         if self.mode == "direct":
             out = rpm
         elif self.mode == "ratio":
-            out = rpm * self.ratio
+            # scale by the RATIO OF THE REDLINES, so the two rev ceilings line
+            # up and everything below keeps its proportion
+            out = rpm * (max(eng_redline, 1.0)
+                         / max(self.car_redline, 1.0)) * self.ratio
         else:
             span = max(self.car_redline - self.car_idle, 500.0)
             frac = (rpm - self.car_idle) / span

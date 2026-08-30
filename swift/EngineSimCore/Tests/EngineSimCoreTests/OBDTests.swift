@@ -97,6 +97,33 @@ final class OBDTests: XCTestCase {
         XCTAssertGreaterThan(m.carRedline, 6000.0, "the seed must be beaten")
     }
 
+    /// The property that gives the mode its name, stated as Leo did: my car
+    /// redlines at 6500 and the target at 9500, so at 6500 the note must be at
+    /// 9500.  Both stretch and ratio do that; what separates them is the
+    /// MIDDLE -- ratio goes through zero and keeps the proportion, stretch
+    /// pins the idle ends together too.
+    func testBothRedlineModesLineUpTheCeilings() {
+        let carRedline = 6500.0, simIdle = 900.0, simRedline = 9500.0
+        for mode in [RpmMap.Mode.ratio, .stretch] {
+            let m = RpmMap(mode: mode, carIdle: 760, carRedline: carRedline)
+            XCTAssertEqual(m(carRedline, engIdle: simIdle,
+                             engRedline: simRedline), simRedline,
+                           accuracy: 1.0, "\(mode) must reach the ceiling")
+        }
+        // ratio is proportional, so half the revs is half the note
+        let r = RpmMap(mode: .ratio, carIdle: 760, carRedline: carRedline)
+        let full = r(carRedline, engIdle: simIdle, engRedline: simRedline)
+        let half = r(carRedline / 2, engIdle: simIdle, engRedline: simRedline)
+        XCTAssertEqual(half, full / 2, accuracy: 1.0,
+                       "ratio must go THROUGH ZERO, or it is just stretch")
+        // stretch is not, because it pins the idle end
+        let st = RpmMap(mode: .stretch, carIdle: 760, carRedline: carRedline)
+        XCTAssertEqual(st(760, engIdle: simIdle, engRedline: simRedline),
+                       simIdle, accuracy: 1.0, "stretch pins idle to idle")
+        XCTAssertGreaterThan(r(760, engIdle: simIdle, engRedline: simRedline),
+                             simIdle + 100, "...and ratio does not")
+    }
+
     /// A value set by hand and an automatic value that overwrites it are a
     /// fight the automatic one always wins -- and it reads as a bug, not as a
     /// feature.  So a hand-set range must SURVIVE the car revving past it.

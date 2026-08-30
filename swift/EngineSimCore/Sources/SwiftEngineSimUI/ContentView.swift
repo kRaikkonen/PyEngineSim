@@ -420,6 +420,9 @@ public struct ContentView: View {
                         .cornerRadius(7)
                 }
             }
+            Text(mappingBlurb)
+                .font(.system(size: 10)).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             // what the mapping WILL do, before driving off with it
             HStack(spacing: 12) {
                 ForEach(Array(model.mapPreview().enumerated()), id: \.offset) { _, p in
@@ -432,6 +435,20 @@ public struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var mappingBlurb: String {
+        switch model.mapMode {
+        case .direct:
+            return "1:1 — your revs are the engine's revs. Right when the two "
+                + "rev alike; a higher-revving engine never reaches its top."
+        case .ratio:
+            return "your redline lands on the engine's, and everything below "
+                + "scales with it — double your revs, double the note."
+        case .stretch:
+            return "idle to idle AND redline to redline. Uses the whole range "
+                + "at both ends; the middle is not proportional."
         }
     }
 

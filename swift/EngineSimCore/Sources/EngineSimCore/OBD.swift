@@ -117,13 +117,19 @@ public final class RpmMap {
         /// car then makes a V12 sing at ITS own 8500 instead of stopping two
         /// thirds of the way up.
         case stretch
-        /// A fixed multiplier, for when you just want it higher or lower.
+        /// REDLINE-PROPORTIONAL: sim = car * (sim redline / car redline), so
+        /// your 6500 lands exactly on the target's 9500 and everything below
+        /// scales with it.  Unlike `stretch` it goes through zero rather than
+        /// pinning the idle ends together, so doubling your revs doubles the
+        /// note -- the proportion is kept and only the SCALE changes.
         case ratio
     }
 
     public var mode: Mode
     public var carIdle: Double
     public var carRedline: Double
+    /// A trim on top of the redline ratio, for when you want it a little
+    /// higher or lower than exact.  1.0 is exact.
     public var ratio: Double
     public var learn: Bool
     public private(set) var seenIdle: Double?
@@ -162,7 +168,9 @@ public final class RpmMap {
         var out: Double
         switch mode {
         case .direct: out = rpm
-        case .ratio: out = rpm * ratio
+        case .ratio:
+            // the ratio of the REDLINES, so the two ceilings line up
+            out = rpm * (max(engRedline, 1.0) / max(carRedline, 1.0)) * ratio
         case .stretch:
             let span = max(carRedline - carIdle, 500.0)
             let frac = (rpm - carIdle) / span
