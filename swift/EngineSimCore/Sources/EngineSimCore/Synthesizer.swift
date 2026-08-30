@@ -116,7 +116,8 @@ public final class Synthesizer {
         blockStage = BlockStage(setup: voicing, sampleRate: sampleRate,
                                 cache: cache)
         pipes = PipeStage(nchan: voicing.nchan)
-        header = HeaderStage(sampleRate: sampleRate, cache: cache)
+        header = HeaderStage(sampleRate: sampleRate, cache: cache,
+                             layers: layers)
         muffler = MufflerStage(engine: engine, sampleRate: sampleRate,
                                cache: cache, rng: rng, layers: layers,
                                block: block)
@@ -277,8 +278,7 @@ public final class Synthesizer {
                                 idleRpm: engine.idleRpm, flow: r.flow,
                                 choke: choke, cold: cold, degPerSample: dps,
                                 rng: rng)
-        _ = layers.tap(.header, hd.header)
-        sig = hd.head
+        sig = hd.head          // the header layer is tapped inside the stage
 
         // --- port to tailpipe -----------------------------------------------
         var ps = PipeState()

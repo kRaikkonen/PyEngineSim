@@ -20,13 +20,20 @@ import Foundation
 public final class HeaderStage {
     let sampleRate: Double
     let cache: FilterCache
+    /// Tapped INSIDE the stage, not by the caller.  The header boundary sits
+    /// between the burble and the shear, so a caller that tapped the returned
+    /// value could only ever discard it -- which is exactly what it did, and
+    /// the switch quietly did nothing.
+    let layers: LayerStack?
     var headLP: Biquad
     var headKey: String = ""
     var burblePrev: Double = 0
 
-    public init(sampleRate: Double, cache: FilterCache) {
+    public init(sampleRate: Double, cache: FilterCache,
+                layers: LayerStack? = nil) {
         self.sampleRate = sampleRate
         self.cache = cache
+        self.layers = layers
         let ba = cache.butter(2, min(11000.0, sampleRate * 0.45), "low")
         headLP = Biquad(b: ba.b, a: ba.a)
         headKey = "\(ba.b)\(ba.a)"
@@ -62,7 +69,10 @@ public final class HeaderStage {
             for i in 0..<n { out[i] += (0.30 * ov) * abs(out[i]) * nz[i] }
         }
 
-        let header = out
+        // the header boundary: hiding this layer drops the burble and lets
+        // what the pipes produced go straight on to the shear
+        let header = layers?.tap(.header, out) ?? out
+        out = header
 
         // --- shear: fast gas is nonlinear ----------------------------------
         let kst = 0.26 * flow + 0.34 * choke

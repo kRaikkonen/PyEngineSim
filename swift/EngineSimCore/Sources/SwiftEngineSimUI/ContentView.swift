@@ -24,6 +24,7 @@ public struct ContentView: View {
                 readouts
                 if model.manual { manualControls }
                 engineChooser
+                layers
                 mapping
                 link
                 if let e = model.errorText {
@@ -120,6 +121,55 @@ public struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    // -------------------------------------------------------------- layers
+    // The chain as a stack you can switch off, one stage at a time -- the
+    // same idea as the eye column in an image editor.  Hiding a stage passes
+    // its input straight through, so what you hear is exactly what that stage
+    // contributes; it is the only honest way to answer "is this earning its
+    // place?".
+    //
+    // Tap to hide, LONG PRESS to solo.  Both are one-handed and neither needs
+    // a second screen, which is the only kind of control worth having here.
+    private var layers: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("CHAIN").font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                if !model.hidden.isEmpty {
+                    Text("\(model.hidden.count) hidden")
+                        .font(.caption2).foregroundColor(.orange)
+                    Button("show all") { model.showAllLayers() }
+                        .font(.caption2)
+                }
+            }
+            // fixed columns so a stage never moves: you learn where `muffler`
+            // is and it stays there
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(),
+                                                         spacing: 6),
+                                     count: 3), spacing: 6) {
+                ForEach(model.stages, id: \.self) { s in
+                    let on = model.isVisible(s)
+                    Text(s.rawValue)
+                        .font(.system(size: 11))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                        .background(on ? Color.accentColor.opacity(0.22)
+                                       : Color.secondary.opacity(0.10))
+                        .foregroundColor(on ? .primary : .secondary)
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(on ? Color.accentColor.opacity(0.5)
+                                       : Color.clear, lineWidth: 1))
+                        .cornerRadius(6)
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.toggle(s) }
+                        .onLongPressGesture { model.solo(s) }
+                }
+            }
+            Text("tap to mute a stage · hold to hear it alone")
+                .font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 

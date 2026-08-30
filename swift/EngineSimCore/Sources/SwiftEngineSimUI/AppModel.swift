@@ -36,6 +36,10 @@ public final class AppModel: ObservableObject {
     /// What the audio session actually handed over, which is not always what
     /// was asked for -- worth showing rather than assuming.
     @Published public var audioInfo = ""
+    /// Which chain stages are HIDDEN.  Kept here rather than in the synth
+    /// because the synth is rebuilt on every engine change -- the switches
+    /// belong to the listener, not to the car.
+    @Published public var hidden = Set<Stage>()
 
     // --- the parts --------------------------------------------------------
     public private(set) var library: EngineLibrary?
@@ -131,6 +135,37 @@ public final class AppModel: ObservableObject {
         engineKey = key
         try? car?.setEngine(key)
         engineName = car?.engine.name ?? key
+        applyLayers()          // the new synth starts with every layer visible
+    }
+
+    // ------------------------------------------------------------- layers
+    public var stages: [Stage] { Stage.allCases }
+
+    public func isVisible(_ s: Stage) -> Bool { !hidden.contains(s) }
+
+    /// Hide or show one stage.  A hidden stage passes its input straight
+    /// through, so what you hear is exactly what that stage contributes.
+    public func toggle(_ s: Stage) {
+        if hidden.contains(s) { hidden.remove(s) } else { hidden.insert(s) }
+        applyLayers()
+    }
+
+    /// Hear one stage on its own -- or bring everything back if it already is
+    /// the only one.
+    public func solo(_ s: Stage) {
+        let others = Set(Stage.allCases).subtracting([s])
+        hidden = hidden == others ? [] : others
+        applyLayers()
+    }
+
+    public func showAllLayers() {
+        hidden = []
+        applyLayers()
+    }
+
+    func applyLayers() {
+        guard let l = car?.synth?.layers else { return }
+        for s in Stage.allCases { l.set(s, !hidden.contains(s)) }
     }
 
     public func setMapMode(_ m: RpmMap.Mode) {
