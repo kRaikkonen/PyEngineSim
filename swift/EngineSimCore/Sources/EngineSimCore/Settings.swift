@@ -30,6 +30,12 @@ public struct Settings: Codable, Equatable {
     public var carIdle = 760.0
     public var carRedline = 6500.0
 
+    /// A public struct's memberwise init is INTERNAL by default, so from
+    /// another module the only visible initialiser was the one Decodable
+    /// synthesises -- which is why `Settings()` read as "missing argument
+    /// for parameter 'from'".
+    public init() {}
+
     public var mapMode: RpmMap.Mode {
         get { RpmMap.Mode(rawValue: mapModeRaw) ?? .stretch }
         set { mapModeRaw = newValue.rawValue }
