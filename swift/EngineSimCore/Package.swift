@@ -14,9 +14,20 @@ let package = Package(
     platforms: [.iOS(.v13), .macOS(.v11)],
     products: [
         .library(name: "EngineSimCore", targets: ["EngineSimCore"]),
+        .library(name: "PyEngineSimUI", targets: ["PyEngineSimUI"]),
     ],
     targets: [
         .target(name: "EngineSimCore"),
+        // The app's own sources, as a LIBRARY so `swift build` type-checks
+        // them.  Xcode owns the actual app target (and the signing), but a
+        // renamed API or a broken view should fail here first rather than
+        // when a window is opened.  App.swift carries the @main and is
+        // excluded, because an entry point cannot live in a library.
+        .target(
+            name: "PyEngineSimUI",
+            dependencies: ["EngineSimCore"],
+            path: "Sources/PyEngineSimUI"
+        ),
         .testTarget(
             name: "EngineSimCoreTests",
             dependencies: ["EngineSimCore"],

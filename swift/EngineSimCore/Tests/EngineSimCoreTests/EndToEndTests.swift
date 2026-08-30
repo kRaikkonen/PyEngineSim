@@ -173,8 +173,12 @@ final class EndToEndTests: XCTestCase {
             }
             print(String(format: "  %-18@ worst %7.1f dB (block %d)",
                          name, worst, worstBlock))
-            // OPEN DEFECT, stated rather than hidden: f2007 on the trackside
-            // ear does not reproduce.  Traced as far as the GEARBOX WHINE on
+            // OUT OF SCOPE by decision (Leo, 2026-08-30): the trackside ear
+            // is not a mode this ships in -- the car is for the CAR, and the
+            // app is heard from the cockpit or the chase cam.  Recorded here
+            // rather than deleted so nobody re-derives it as a mystery.
+            //
+            // What it is: f2007 on the trackside ear does not reproduce.  Traced as far as the GEARBOX WHINE on
             // the bay bus -- its pre-reverb value is 0.014854 where the Python
             // implies 0.016266, an 8.7 % shortfall present from block ZERO,
             // with every input to it (gear, speed, torque, wall-filter design,
