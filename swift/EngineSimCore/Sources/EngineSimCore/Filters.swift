@@ -132,15 +132,66 @@ public enum FilterDesign {
         return (b, a)
     }
 
-    /// Band-pass as a high-pass * low-pass cascade -- the same choice the
-    /// Python makes, and documented there for the same reason: not literally a
-    /// Butterworth band-pass, but the same order and, over the one wide band
-    /// this chain asks for, the same job.
+    /// TRUE digital Butterworth band-pass, as a list of BIQUADS.
+    ///
+    /// Each analog low-pass prototype pole maps to a conjugate pair straddling
+    /// the band, s = p*BW/2 +- sqrt((p*BW/2)^2 - w0^2); one zero goes at DC and
+    /// one at Nyquist per section; the bilinear transform is folded into the
+    /// prewarp; and the whole thing is normalised to unity at the band centre.
+    ///
+    /// This was a low-pass * high-pass cascade on both sides -- the same ORDER
+    /// but not the same filter, 10 dB down across the passband on the injector
+    /// design.  Desktop Python called scipy and got the real thing, so the
+    /// error only ever reached the phone.
+    public static func bandpassSections(order: Int, low w1: Double,
+                                        high w2: Double)
+        -> [(b: [Double], a: [Double])] {
+        let o1 = tan(Double.pi * w1 / 2.0)        // prewarp, bilinear folded in
+        let o2 = tan(Double.pi * w2 / 2.0)
+        let bw = o2 - o1, o0sq = o1 * o2
+        var sections = [(b: [Double], a: [Double])]()
+        for k in 0..<order {
+            let theta = Double.pi * Double(2 * k + order + 1) / Double(2 * order)
+            let p = Complex(cos(theta), sin(theta))       // unit-cutoff LP pole
+            let half = p * (bw / 2.0)
+            let root = (half * half - Complex(o0sq, 0)).sqrt()
+            for s in [half + root, half - root] where s.im >= 0 {
+                let z = Complex(1.0 + s.re, s.im) / Complex(1.0 - s.re, -s.im)
+                sections.append((b: [1.0, 0.0, -1.0],
+                                 a: [1.0, -2.0 * z.re, z.re * z.re + z.im * z.im]))
+            }
+        }
+        // unity at the band centre: the frequency whose prewarp is sqrt(o1*o2)
+        let w0 = 2.0 * atan(o0sq.squareRoot()) / Double.pi
+        let z0 = Complex(cos(Double.pi * w0), sin(Double.pi * w0))
+        var h = Complex(1, 0)
+        for s in sections {
+            h = h * (evaluate(s.b, at: z0) / evaluate(s.a, at: z0))
+        }
+        let g = 1.0 / h.magnitude
+        if !sections.isEmpty {
+            sections[0].b = sections[0].b.map { $0 * g }
+        }
+        return sections
+    }
+
+    /// The same filter flattened to one (b, a), for comparison and tests.
     public static func bandpass(order: Int, low: Double,
                                 high: Double) -> (b: [Double], a: [Double]) {
-        let lo = butter(order: order, wn: high, btype: "low")
-        let hi = butter(order: order, wn: low, btype: "high")
-        return (convolve(lo.b, hi.b), convolve(lo.a, hi.a))
+        var b = [1.0], a = [1.0]
+        for s in bandpassSections(order: order, low: low, high: high) {
+            b = convolve(b, s.b); a = convolve(a, s.a)
+        }
+        return (b, a)
+    }
+
+    /// Evaluate a polynomial in z^-1 at a point on the unit circle.
+    private static func evaluate(_ c: [Double], at z: Complex) -> Complex {
+        var acc = Complex(0, 0)
+        var zi = Complex(1, 0)
+        let zinv = Complex(1, 0) / z
+        for coeff in c { acc = acc + zi * coeff; zi = zi * zinv }
+        return acc
     }
 
     /// RBJ peaking EQ, as `_peaking` in audio.py -- including the fact that it
@@ -166,5 +217,40 @@ public enum FilterDesign {
             for (j, yv) in y.enumerated() { out[i + j] += xv * yv }
         }
         return out
+    }
+}
+
+/// Just enough complex arithmetic for the band-pass pole mapping.  Swift has
+/// no complex type in the standard library and pulling in Numerics for four
+/// operators would be a dependency for nothing.
+struct Complex {
+    var re: Double, im: Double
+    init(_ r: Double, _ i: Double) { re = r; im = i }
+
+    var magnitude: Double { (re * re + im * im).squareRoot() }
+
+    static func + (a: Complex, b: Complex) -> Complex {
+        Complex(a.re + b.re, a.im + b.im)
+    }
+    static func - (a: Complex, b: Complex) -> Complex {
+        Complex(a.re - b.re, a.im - b.im)
+    }
+    static func * (a: Complex, b: Complex) -> Complex {
+        Complex(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re)
+    }
+    static func * (a: Complex, s: Double) -> Complex {
+        Complex(a.re * s, a.im * s)
+    }
+    static func / (a: Complex, b: Complex) -> Complex {
+        let d = b.re * b.re + b.im * b.im
+        return Complex((a.re * b.re + a.im * b.im) / d,
+                       (a.im * b.re - a.re * b.im) / d)
+    }
+
+    /// The principal square root.
+    func sqrt() -> Complex {
+        let m = magnitude.squareRoot()
+        let th = atan2(im, re) / 2.0
+        return Complex(m * cos(th), m * sin(th))
     }
 }

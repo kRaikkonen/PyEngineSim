@@ -112,4 +112,39 @@ final class FilterTests: XCTestCase {
             XCTAssertLessThan(abs(a1), 1.0 + a2, "stability triangle, \(c.kind)")
         }
     }
+
+    /// The order-4 band-pass, against scipy's own coefficients.
+    ///
+    /// This used to be a low-pass * high-pass cascade on both sides: the same
+    /// ORDER but not the same filter -- 10 dB down across the passband on the
+    /// injector design.  Desktop Python called scipy and got the real thing,
+    /// so the divergence only ever reached the phone.
+    func testBandpassMatchesScipy() throws {
+        struct Design: Decodable {
+            let low: Double, high: Double, b: [Double], a: [Double]
+        }
+        let url = Bundle.module.url(forResource: "filters", withExtension: "json",
+                                    subdirectory: "Fixtures")
+            ?? Bundle.module.url(forResource: "filters", withExtension: "json")
+        guard let url else { throw XCTSkip("filters.json missing") }
+        let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        guard let dict = root as? [String: Any],
+              let raw = dict["bandpass"] else { throw XCTSkip("no bandpass designs") }
+        let designs = try JSONDecoder().decode(
+            [Design].self, from: JSONSerialization.data(withJSONObject: raw))
+
+        var worst = 0.0
+        for d in designs {
+            let got = FilterDesign.bandpass(order: 2, low: d.low, high: d.high)
+            XCTAssertEqual(got.b.count, d.b.count)
+            XCTAssertEqual(got.a.count, d.a.count)
+            for i in d.b.indices { worst = max(worst, abs(got.b[i] - d.b[i])) }
+            for i in d.a.indices { worst = max(worst, abs(got.a[i] - d.a[i])) }
+            // and it must factor into biquads that multiply back to the same thing
+            let sec = FilterDesign.bandpassSections(order: 2, low: d.low, high: d.high)
+            XCTAssertEqual(sec.count, 2, "order 4 is two biquads")
+        }
+        print("  bandpass: \(designs.count) designs, worst coefficient \(worst)")
+        XCTAssertLessThan(worst, 1e-11)
+    }
 }

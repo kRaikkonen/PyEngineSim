@@ -84,17 +84,47 @@ def _bilinear_onepole(wn, btype):
     return b, a
 
 
-def _np_butter(order, wn, btype="low"):
-    """Butterworth design.
+def _np_bandpass(order, w1, w2):
+    """TRUE digital Butterworth band-pass -- what scipy returns, by hand.
 
-    Bandpass is a high-pass * low-pass cascade: not literally a Butterworth
-    bandpass, but the same order and, over the one wide band this file asks
-    for (the 5-9 kHz injector clatter), the same job.
+    Each analog low-pass prototype pole maps to a conjugate PAIR straddling
+    the band (s = p*BW/2 +- sqrt((p*BW/2)^2 - w0^2)); `order` zeros go at DC
+    and `order` at Nyquist; the bilinear transform is folded into the prewarp.
+    Normalised to unity at the band centre, as scipy does.
+
+    This used to be a low-pass * high-pass cascade, which is the same ORDER
+    but not the same filter -- 10 dB down across the passband on the injector
+    design.  Desktop Python gets scipy, so that error only ever reached the
+    phone: it was running a filter the sound was never tuned on.
     """
+    o1 = math.tan(math.pi * float(w1) / 2.0)      # prewarp, bilinear folded in
+    o2 = math.tan(math.pi * float(w2) / 2.0)
+    bw, o0sq = o2 - o1, o1 * o2
+    b = np.array([1.0])
+    a = np.array([1.0])
+    for k in range(order):
+        theta = math.pi * (2 * k + order + 1) / (2 * order)
+        p = complex(math.cos(theta), math.sin(theta))   # unit-cutoff LP pole
+        half = p * bw / 2.0
+        root = (half * half - o0sq) ** 0.5
+        for s in (half + root, half - root):
+            if s.imag < 0.0:
+                continue                          # one of each conjugate pair
+            z = (1.0 + s) / (1.0 - s)             # bilinear
+            a = np.convolve(a, [1.0, -2.0 * z.real, abs(z) ** 2])
+            b = np.convolve(b, [1.0, 0.0, -1.0])  # a zero at DC and at Nyquist
+    # unity at the band centre: the frequency whose prewarp is sqrt(o1*o2)
+    w0 = 2.0 * math.atan(math.sqrt(o0sq)) / math.pi
+    z0 = complex(math.cos(math.pi * w0), math.sin(math.pi * w0))
+    num = sum(c * z0 ** -i for i, c in enumerate(b))
+    den = sum(c * z0 ** -i for i, c in enumerate(a))
+    return b * (1.0 / abs(num / den)), a
+
+
+def _np_butter(order, wn, btype="low"):
+    """Butterworth design by the bilinear transform."""
     if isinstance(wn, (list, tuple, np.ndarray)):
-        bl, al = _np_butter(order, float(wn[1]), "low")
-        bh, ah = _np_butter(order, float(wn[0]), "high")
-        return np.convolve(bl, bh), np.convolve(al, ah)
+        return _np_bandpass(order, float(wn[0]), float(wn[1]))
     wn = float(wn)
     if order <= 1:
         return _bilinear_onepole(wn, btype)
@@ -3097,6 +3127,16 @@ class Synthesizer:
                 sig = sig + a_fl * (0.40 * vex + 0.12 * edg)
         sig = self._tap("tailpipe exit", sig)  # gas tearing out of the tip
 
+        # audit stash: the listener run is reproduced in isolation by the Swift
+        # port, and it needs all THREE buses -- the tailpipe, the bay, and the
+        # intake sub-bus -- plus the generator as it stands here
+        if self.capture_stages:
+            _r = self._rng
+            self._dbg_listen = (
+                np.asarray(sig, dtype=np.float64).copy(),
+                np.asarray(bay, dtype=np.float64).copy(),
+                np.asarray(bayi, dtype=np.float64).copy(),
+                (int(_r.s0), int(_r.s1), int(_r.s2), int(_r.s3)), _r._spare)
         # --- OVERRUN DARKENING: a motoring engine (DFCO / no combustion) has no
         # sharp hot blowdown, so its exhaust note is physically DARK/muffled —
         # not the bright HF hash our residual synthesis leaves on high-boost,
@@ -3116,13 +3156,19 @@ class Synthesizer:
                 y, z1 = lfilter([oma], [1.0, -a_lp], y, zi=[self._over_lp_zi[1]])
                 self._over_lp_zi = [float(z0[0]), float(z1[0])]
             else:                                     # manual 2-pole cascade (no scipy)
+                # keep the DF2T state (a*y), NOT y: that is what scipy's zi is,
+                # and this pole MOVES every block (its cutoff follows the
+                # combustion load), so storing y would apply the new pole to the
+                # old sample and drift away from the scipy path every block.
                 y = np.empty_like(sig)
-                p0, p1 = self._over_lp_zi
+                s0, s1 = self._over_lp_zi
                 for i in range(len(sig)):
-                    p0 = oma * sig[i] + a_lp * p0
-                    p1 = oma * p0 + a_lp * p1
-                    y[i] = p1
-                self._over_lp_zi = [float(p0), float(p1)]
+                    y0 = oma * sig[i] + s0
+                    s0 = a_lp * y0
+                    y1 = oma * y0 + s1
+                    s1 = a_lp * y1
+                    y[i] = y1
+                self._over_lp_zi = [float(s0), float(s1)]
             sig = (1.0 - over) * sig + over * y        # blend: full LP only on overrun
 
         # --- 3-band EQ (low / mid / high knobs) -----------------------------
@@ -3265,6 +3311,12 @@ class Synthesizer:
             sig = self._reverb.process(sig)
         sig = self._tap("cabin/room", sig)
 
+        # audit stash: the master run is reproduced in isolation by the Swift
+        if self.capture_stages:
+            _r = self._rng
+            self._dbg_master = (np.asarray(sig, dtype=np.float64).copy(),
+                                (int(_r.s0), int(_r.s1), int(_r.s2),
+                                 int(_r.s3)), _r._spare)
         # --- auto-level (or fixed gain) + soft saturation + master volume ----
         if self.agc_enabled:
             # LOUDNESS-weighted level estimate: the ear barely counts deep LF
