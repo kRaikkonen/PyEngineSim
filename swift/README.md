@@ -100,6 +100,11 @@ So:
 2. Pick your iPhone at the top.
 3. Run.
 
+The shipped scheme **runs in Release**, deliberately.  Xcode's default is
+Debug, and an unoptimised build of this chain is roughly thirteen times slower
+— enough to put a phone at 380 % of a core and look like the whole port
+failed.  It is not a number worth letting anyone discover the hard way.
+
 Verified from the command line: the simulator build **succeeds**, and the
 device build gets all the way through compiling, linking and creating the
 provisioning profile before failing at `CodeSign` with

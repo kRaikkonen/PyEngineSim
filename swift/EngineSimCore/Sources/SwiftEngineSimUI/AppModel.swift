@@ -33,6 +33,9 @@ public final class AppModel: ObservableObject {
     @Published public var host = "192.168.0.10"
     @Published public var port = 35000
     @Published public var errorText: String?
+    /// What the audio session actually handed over, which is not always what
+    /// was asked for -- worth showing rather than assuming.
+    @Published public var audioInfo = ""
 
     // --- the parts --------------------------------------------------------
     public private(set) var library: EngineLibrary?
@@ -72,6 +75,11 @@ public final class AppModel: ObservableObject {
             }
             try out.start()
             engineName = mode.engine.name
+            audioInfo = String(format: "render %.0f Hz / %d -> out %.0f Hz, "
+                               + "buffer %.1f ms", out.renderRate,
+                               out.blockFrames, out.hardwareRate,
+                               out.ioBufferSeconds * 1000)
+            if let n = out.sessionNote { audioInfo += " (" + n + ")" }
             startTicking()
         } catch {
             errorText = error.localizedDescription

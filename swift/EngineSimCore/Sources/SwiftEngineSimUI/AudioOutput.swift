@@ -31,12 +31,23 @@ public final class AudioOutput {
     /// block, shallow enough that the note is not late.
     let queueDepth = 6
     let semaphore: DispatchSemaphore
+    /// The render thread and the hand that signals it run at the SAME quality
+    /// of service.  A user-interactive thread blocking on a semaphore signalled
+    /// from a default-QoS completion handler is a priority inversion, and the
+    /// scheduler says so out loud.  Matching them removes it, and userInitiated
+    /// is the honest description anyway: this produces ahead of a queue that is
+    /// already ~100 ms deep, it is not the audio thread.
+    let signalQueue = DispatchQueue(label: "enginesim.render.signal",
+                                    qos: .userInitiated)
 
     public private(set) var underruns = 0
     public private(set) var renderLoad = 0.0     // fraction of real time used
     public let renderRate: Double
     public let hardwareRate: Double
     public let blockFrames: Int
+    /// What the session actually gave us, as opposed to what was asked for.
+    public private(set) var ioBufferSeconds = 0.0
+    public private(set) var sessionNote: String?
 
     var thread: Thread?
     var running = false
@@ -53,13 +64,29 @@ public final class AudioOutput {
 
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        // .playback so it keeps going with the screen off and routes to the
-        // car; the mode is what CarPlay and Bluetooth hand to the head unit.
-        try session.setCategory(.playback, mode: .default,
-                                options: [.allowBluetoothA2DP, .allowAirPlay])
-        try session.setPreferredIOBufferDuration(Double(blockFrames) / renderRate)
+        // .playback: keeps going with the screen off and routes to the car.
+        //
+        // NO OPTIONS.  allowBluetoothA2DP and allowAirPlay are only valid with
+        // .playAndRecord -- passing them here returns paramErr (-50) and the
+        // category is not set at all.  For .playback that routing is the
+        // DEFAULT anyway, so the options were asking for what you already have
+        // and breaking the call to do it.
+        try session.setCategory(.playback, mode: .default)
         try session.setActive(true)
         hardwareRate = session.sampleRate      // what it ACTUALLY gave us
+
+        // A REQUEST, and a soft one: the buffer has to be sized for the
+        // hardware rate, not the render rate, and the system is free to refuse.
+        // So it is asked for after activation, when the real rate is known, and
+        // a refusal is recorded rather than thrown -- a buffer we did not get
+        // is a latency figure, not a reason to have no sound.
+        do {
+            try session.setPreferredIOBufferDuration(
+                Double(blockFrames) / hardwareRate)
+        } catch {
+            sessionNote = "buffer request refused: \(error.localizedDescription)"
+        }
+        ioBufferSeconds = session.ioBufferDuration
         #else
         hardwareRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
         #endif
@@ -82,7 +109,7 @@ public final class AudioOutput {
         running = true
         let t = Thread { [weak self] in self?.renderLoop() }
         t.name = "enginesim.render"
-        t.qualityOfService = .userInteractive
+        t.qualityOfService = .userInitiated
         thread = t
         t.start()
     }
@@ -118,7 +145,10 @@ public final class AudioOutput {
                 buf.floatChannelData![0].update(from: src.baseAddress!,
                                                 count: out.count)
             }
-            player.scheduleBuffer(buf) { [weak self] in self?.semaphore.signal() }
+            player.scheduleBuffer(buf) { [weak self] in
+                guard let self else { return }
+                self.signalQueue.async { self.semaphore.signal() }
+            }
         }
     }
 

@@ -172,6 +172,9 @@ public struct ContentView: View {
             .font(.caption)
             Text("dongle at \(model.host):\(String(model.port))")
                 .font(.caption2).foregroundColor(.secondary)
+            Text(model.audioInfo)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(.secondary)
         }
     }
 }

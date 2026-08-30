@@ -214,6 +214,74 @@ def main():
               encoding="utf-8", newline="\n") as fh:
         fh.write(text)
 
+    # ---- the scheme, set to RUN IN RELEASE ---------------------------------
+    # Xcode's default scheme runs Debug, and an unoptimised build of this chain
+    # is roughly thirteen times slower -- enough to put a phone at 380 % of a
+    # core and look like the port failed.  Shipping the scheme means pressing
+    # Run gives the real thing, instead of the number being a trap that
+    # everyone falls into once.
+    schemes = os.path.join(PROJ_DIR, "xcshareddata", "xcschemes")
+    os.makedirs(schemes, exist_ok=True)
+    scheme = '''<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion = "1520" version = "1.7">
+   <BuildAction parallelizeBuildables = "YES" buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting = "YES" buildForRunning = "YES"
+                           buildForProfiling = "YES" buildForArchiving = "YES"
+                           buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "%(target)s"
+               BuildableName = "%(app)s.app"
+               BlueprintName = "%(app)s"
+               ReferencedContainer = "container:%(app)s.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES">
+   </TestAction>
+   <LaunchAction buildConfiguration = "Release"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0" useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO" debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal" allowLocationSimulation = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "%(target)s"
+            BuildableName = "%(app)s.app"
+            BlueprintName = "%(app)s"
+            ReferencedContainer = "container:%(app)s.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES" savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO" debugDocumentVersioning = "YES">
+      <BuildableProductRunnable runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "%(target)s"
+            BuildableName = "%(app)s.app"
+            BlueprintName = "%(app)s"
+            ReferencedContainer = "container:%(app)s.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction buildConfiguration = "Debug"></AnalyzeAction>
+   <ArchiveAction buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES"></ArchiveAction>
+</Scheme>
+''' % {"target": uid("target"), "app": APP}
+    with open(os.path.join(schemes, APP + ".xcscheme"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(scheme)
+
     ws = os.path.join(PROJ_DIR, "project.xcworkspace")
     os.makedirs(ws, exist_ok=True)
     with open(os.path.join(ws, "contents.xcworkspacedata"), "w",
@@ -224,7 +292,9 @@ def main():
                  '   </FileRef>\n'
                  '</Workspace>\n')
     print("wrote %s (%d objects)" % (PROJ_DIR, len(o)))
-    print("  open it, pick your team if Xcode asks, and run.")
+    print("  the scheme RUNS IN RELEASE -- a debug build of this chain is "
+          "~13x slower")
+    print("  open it, pick your phone, and run.")
 
 
 if __name__ == "__main__":
