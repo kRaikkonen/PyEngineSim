@@ -1732,9 +1732,53 @@ class Synthesizer:
         fire_hz = max(self.sim.rpm, 1.0) / 120.0 * eng.num_cylinders
         ka = 2.0 * math.pi * fire_hz * a_tip / c
         g *= max(1.0 - 0.5 * ka * ka, 0.55)
-        g1 = min(g * _rend(c / (4.0 * l_primary)), 0.995)
-        g3 = min(g * _rend(c / (4.0 * l_mid)), 0.995)
-        g2 = min(g * _rend(c / (4.0 * l_total)), 0.995)
+
+        # ---- JUNCTION REFLECTION (为什么真管子不是风琴管).  A waveguide only
+        # rings as hard as its far end SENDS BACK, and only the last section
+        # actually ends at the open air.  The primary ends at the COLLECTOR and
+        # the mid section ends at the MUFFLER, and at an area step S1 -> S2 a
+        # plane wave reflects |R| = (S2-S1)/(S2+S1) and TRANSMITS the rest on
+        # down the system.  Scoring all three ends with the open-end loss is
+        # what made every pipe reflect ~98% per pass: round-trip gains came out
+        # 0.92-0.99 and the comb stood 21-37 dB above its own median, i.e. an
+        # organ pipe.  That was the buzz.
+        #
+        # Collector area: a merge is sized between the two design limits --
+        # equal to one primary if the pulses never overlap, n primaries if they
+        # fully merge -- so the geometric mean sqrt(n) is the working figure,
+        # and it matches real headers (1.75" 4-into-1 -> 2.5" collector is an
+        # area ratio of 2.04 against sqrt(4) = 2.0).  On top of that every
+        # system steps up in pipe size going aft, worth about 1.2 in area, and
+        # that step is the only reflector when each cylinder has its own runner.
+        n_per = eng.num_cylinders / max(int(eng.exhaust_channels), 1)
+        ar_coll = 1.2 * math.sqrt(max(n_per, 1.0))
+        r_coll = (ar_coll - 1.0) / (ar_coll + 1.0)
+
+        # Muffler inlet: the box is a big expansion and therefore a genuinely
+        # strong reflector -- that IS the mechanism a reflective muffler works
+        # by, so this end stays ringy and keeps the body note.  A straight-
+        # through absorptive box does not step the area at all; its perforated
+        # tube couples to the packing instead, so most of that reflection is
+        # simply not there.
+        v_box_j = max(getattr(eng, "muffler_volume_m3", 0.003), 1e-5)
+        l_box_j = max(eng.muffler_neck_len_m * 4.0, 0.15)
+        s_pipe = math.pi * rad * rad
+        ar_box = max(v_box_j / l_box_j / s_pipe, 1.0)
+        if absorptive:
+            ar_box = 1.0 + 0.25 * (ar_box - 1.0)
+        r_box = (ar_box - 1.0) / (ar_box + 1.0)
+
+        g1 = min(g * r_coll, 0.995)
+        g3 = min(g * r_box, 0.995)
+        # The full-system loop runs valve -> tip -> valve, so it has to get PAST
+        # the collector and the box, once each way.  Crossing an area step both
+        # ways leaves (1 - R^2) of the amplitude -- and that is not a detail: a
+        # reflective muffler IS a device for stopping waves getting through, so
+        # a stock box drops this loop to a third while a straight pipe barely
+        # touches it.  Only the tip itself is scored with the open-end loss,
+        # because only the tip is actually open.
+        thru = (1.0 - r_coll * r_coll) * (1.0 - r_box * r_box)
+        g2 = min(g * _rend(c / (4.0 * l_total)) * thru, 0.995)
 
         # ---- IN-PIPE REVERB NETWORK (管内混响) — the system's own tail, not
         # an effect.  RT60 derives from the hardware: a big stock box STORES

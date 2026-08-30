@@ -141,9 +141,49 @@ public final class ResonanceModel {
         }
         let ka = 2.0 * Double.pi * fireHz * aTip / c
         g *= max(1.0 - 0.5 * ka * ka, 0.55)          // firing-centroid escape
-        r.g1 = min(g * rend(c / (4.0 * lPrimary)), 0.995)
-        r.g3 = min(g * rend(c / (4.0 * lMid)), 0.995)
-        r.g2 = min(g * rend(c / (4.0 * lTotal)), 0.995)
+        // ---- JUNCTION REFLECTION.  A waveguide only rings as hard as its far
+        // end SENDS BACK, and only the last section actually ends at the open
+        // air.  The primary ends at the COLLECTOR and the mid section at the
+        // MUFFLER; at an area step S1 -> S2 a plane wave reflects
+        // |R| = (S2-S1)/(S2+S1) and transmits the rest onward.  Scoring all
+        // three ends with the open-end loss made every pipe reflect ~98% per
+        // pass -- round-trip gains of 0.92-0.99 and a comb standing 21-37 dB
+        // above its own median, i.e. an organ pipe.  That was the buzz.
+        //
+        // Collector area sits between the two design limits: one primary if
+        // the pulses never overlap, n primaries if they fully merge, so the
+        // geometric mean sqrt(n) is the working figure and it matches real
+        // headers (1.75" 4-into-1 -> 2.5" collector is an area ratio of 2.04
+        // against sqrt(4) = 2.0).  Every system also steps up in pipe size
+        // going aft, worth about 1.2 in area, and that step is the only
+        // reflector when each cylinder has its own runner.
+        let nPer = Double(eng.numCylinders) / Double(max(eng.exhaustChannels, 1))
+        let arColl = 1.2 * (max(nPer, 1.0)).squareRoot()
+        let rColl = (arColl - 1.0) / (arColl + 1.0)
+
+        // Muffler inlet: a big expansion, and therefore a genuinely strong
+        // reflector -- that IS how a reflective muffler works, so this end
+        // stays ringy and keeps the body note.  A straight-through absorptive
+        // box does not step the area at all; its perforated tube couples to
+        // the packing instead, so most of that reflection is simply not there.
+        let vBoxJ = max(eng.mufflerVolumeM3, 1e-5)
+        let lBoxJ = max(eng.mufflerNeckLenM * 4.0, 0.15)
+        let sPipe = Double.pi * rad * rad
+        var arBox = max(vBoxJ / lBoxJ / sPipe, 1.0)
+        if absorptive { arBox = 1.0 + 0.25 * (arBox - 1.0) }
+        let rBox = (arBox - 1.0) / (arBox + 1.0)
+
+        r.g1 = min(g * rColl, 0.995)
+        r.g3 = min(g * rBox, 0.995)
+        // The full-system loop runs valve -> tip -> valve, so it has to get
+        // PAST the collector and the box, once each way.  Crossing an area step
+        // both ways leaves (1 - R^2) of the amplitude -- not a detail: a
+        // reflective muffler IS a device for stopping waves getting through, so
+        // a stock box drops this loop to a third while a straight pipe barely
+        // touches it.  Only the tip is scored with the open-end loss, because
+        // only the tip is actually open.
+        let thru = (1.0 - rColl * rColl) * (1.0 - rBox * rBox)
+        r.g2 = min(g * rend(c / (4.0 * lTotal)) * thru, 0.995)
 
         let vBox = max(eng.mufflerVolumeM3, 1e-5)
         var rt60 = 0.06 + 0.24 * (1.0 - eng.exhaustOpenness)
