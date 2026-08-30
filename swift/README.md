@@ -73,11 +73,14 @@ In Xcode:
 
 1. **File > New > Project > iOS > App.**  Product name `PyEngineSim`,
    interface SwiftUI, language Swift.  Save it over `swift/PyEngineSimApp/`.
-2. **Delete** the `ContentView.swift` and `<name>App.swift` Xcode generates.
-3. **Add** `swift/PyEngineSimApp/PyEngineSim/App.swift` and, from
-   `swift/EngineSimCore/Sources/PyEngineSimUI/`, the three UI files.
+2. **Delete** the `ContentView.swift` and `PyEngineSimApp.swift` Xcode
+   generates (Move to Trash).
+3. **Add** the one source file the target needs:
+   `swift/PyEngineSimApp/PyEngineSim/App.swift`.
 4. **File > Add Package Dependencies > Add Local**, pick
-   `swift/EngineSimCore`, and add the `EngineSimCore` library to the target.
+   `swift/EngineSimCore`, and add BOTH library products (`EngineSimCore` and
+   `PyEngineSimUI`) to the target.  The whole UI lives in the package, which
+   is why the app is one file.
 5. **Add the three JSON files** to the target's *Copy Bundle Resources*:
    `docs/presets.json`, `docs/engine_voicing.json`, `docs/engine_tables.json`.
    The app looks for them by name at the bundle root.

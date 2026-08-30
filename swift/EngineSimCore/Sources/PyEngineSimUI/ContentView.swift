@@ -12,10 +12,12 @@
 import SwiftUI
 import EngineSimCore
 
-struct ContentView: View {
+public struct ContentView: View {
     @StateObject private var model = AppModel()
 
-    var body: some View {
+    public init() {}
+
+    public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header

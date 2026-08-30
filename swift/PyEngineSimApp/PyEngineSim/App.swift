@@ -2,14 +2,18 @@
 //  App.swift
 //  The entry point -- Xcode's, not the package's.
 //
-//  Kept in its own file and EXCLUDED from the SwiftPM target: an @main
-//  attribute cannot live in a library, but the rest of the app should still
-//  type-check from the command line.  That way a broken view or a renamed API
-//  is caught by `swift build` on the way past, instead of by opening Xcode and
-//  finding out there.
+//  This is the ONLY source file the Xcode target needs.  Everything else lives
+//  in the package, so adding the app to Xcode is one file plus one local
+//  package reference -- and the whole UI still type-checks from the command
+//  line, which is where a broken view should be caught rather than by opening
+//  a window and finding out.
+//
+//  An @main attribute cannot live in a library, which is the only reason this
+//  file is outside the package at all.
 //
 
 import SwiftUI
+import PyEngineSimUI
 
 @main
 struct PyEngineSimApp: App {
