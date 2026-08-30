@@ -114,6 +114,43 @@ final class DriveModelTests: XCTestCase {
                        "a disarmed stage must not touch the generator")
     }
 
+    /// Count the distinct bangs in one lift: a block that is loud after a
+    /// quiet one is a new pop.
+    func popCount(onGasSeconds: Double, coastSeconds: Double,
+                  lifts: Int = 1) -> Int {
+        let pops = OverrunPops(sampleRate: 32000,
+                               cache: FilterCache(sampleRate: 32000),
+                               rng: PortableRNG(seed: 7))
+        pops.enabled = true
+        let P = ["pops": 1.0, "pop_muff": 0.4, "pops_reverb": 0.0]
+        var t = 0.0
+        for lift in 0..<lifts {
+            t = 0
+            while t < onGasSeconds {
+                _ = pops.render(frames: 256, rpm: 5000, throttle: 1.0,
+                                idleRpm: 800, redlineRpm: 6500, antiLag: false,
+                                ignitionOn: true, params: P)
+                t += 256.0 / 32000.0
+            }
+            if lift == lifts - 1 { break }
+            t = 0
+            while t < coastSeconds {
+                _ = pops.render(frames: 256, rpm: 5000, throttle: 0.0,
+                                idleRpm: 800, redlineRpm: 6500, antiLag: false,
+                                ignitionOn: true, params: P)
+                t += 256.0 / 32000.0
+            }
+        }
+        t = 0
+        while t < coastSeconds {
+            _ = pops.render(frames: 256, rpm: 5000, throttle: 0.0,
+                            idleRpm: 800, redlineRpm: 6500,
+                            antiLag: false, ignitionOn: true, params: P)
+            t += 256.0 / 32000.0
+        }
+        return pops.fired
+    }
+
     func testPopsNeedTheLiftAndTheLoading() {
         func bangs(onGasSeconds: Double) -> Double {
             let cache = FilterCache(sampleRate: 32000)
@@ -144,6 +181,20 @@ final class DriveModelTests: XCTestCase {
         let loaded = bangs(onGasSeconds: 4.0)
         print(String(format: "  lift after a pull: peak %.3f", loaded))
         XCTAssertGreaterThan(loaded, 0.02, "a lift after a pull must CRACKLE")
+
+        // ...and then STOP.  A finite budget per lift is the difference
+        // between a car and a fireworks display; without it this crackles all
+        // the way down to idle.
+        let counted = popCount(onGasSeconds: 4.0, coastSeconds: 6.0)
+        print("  bangs in one lift: \(counted)")
+        XCTAssertGreaterThanOrEqual(counted, 3, "a lift should crackle...")
+        XCTAssertLessThanOrEqual(counted, 4, "...three or four, not a stream")
+
+        // and a second lift refills it -- but only after going back on the gas
+        let twice = popCount(onGasSeconds: 4.0, coastSeconds: 6.0,
+                             lifts: 2)
+        print("  bangs over two lifts: \(twice)")
+        XCTAssertGreaterThan(twice, counted, "going back on the gas refills it")
 
         // and on the gas it must be silent -- pops are a lift-off event
         let cache = FilterCache(sampleRate: 32000)

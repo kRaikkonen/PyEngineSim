@@ -27,8 +27,12 @@ public struct Settings: Codable, Equatable {
     /// sliders | pedal | live.  The pedal is an OFFLINE mode by definition:
     /// it invents the car, so it cannot be the source while a real one is
     /// talking.
-    public var source = "sliders"
+    /// The pedal is what the app opens on: it is the mode you can use without
+    /// a dongle, a car, or reading anything first.
+    public var source = "pedal"
     public var pops = true
+    /// Keep the note up when you lift.  Not physical, and on by choice.
+    public var sustainOnLift = 0.85
     public var host = "192.168.0.10"
     public var port = 35000
     public var carIdle = 760.0

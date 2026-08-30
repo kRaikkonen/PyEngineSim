@@ -95,6 +95,9 @@ public final class PedalSource: TelemetrySource {
     public private(set) var rpm: Double
     public var rawRPM: Double { rpm }
     public var throttle: Double = 0
+    /// 0..1.  Peak deceleration is capped at 0.9 g, which is about what a road
+    /// car on a dry road can actually do before the tyres give up.
+    public var brake: Double = 0
     public private(set) var speed: Double = 0        // m/s
     public private(set) var gear: Int = 1
     public var mapKPa: Double = 0
@@ -157,7 +160,10 @@ public final class PedalSource: TelemetrySource {
             var newW = w + torque / max(table.inertia, 0.01) * dt
             newW = max(newW, table.idle_rpm * 0.75 * 2.0 * Double.pi / 60.0)
             rpm = min(newW * 60.0 / (2.0 * Double.pi), table.redline_rpm * 1.01)
-            speed = max(speed - 0.6 * dt * max(speed, 0), 0)   // coasting
+            // coasting, plus whatever the brake is doing
+            let decel = 0.6 + brake * 9.0
+            speed = max(speed - decel * dt * max(speed, 0.0) / max(speed, 1.0)
+                        * max(speed, 0.0), 0)
         } else {
             let ratio = table.gear_ratios[gear - 1] * table.final_drive
             let r = max(table.wheel_radius, 0.05)
@@ -170,7 +176,12 @@ public final class PedalSource: TelemetrySource {
             let drag = 0.5 * airDensity * dragArea * speed * abs(speed)
             let roll = rollingCoefficient * table.vehicle_mass * PedalSource.g
                 * (speed > 0.1 ? 1.0 : speed * 10.0)
-            speed = max(speed + (force - drag - roll) / mEff * dt, 0)
+            // The brake acts on the CAR, not on the crank -- so in gear it
+            // drags the revs down through the ratio, which is what makes
+            // braking sound like braking rather than like lifting.
+            let braking = brake * table.vehicle_mass * PedalSource.g * 0.9
+                * (speed > 0.2 ? 1.0 : speed * 5.0)
+            speed = max(speed + (force - drag - roll - braking) / mEff * dt, 0)
             // in gear the crank IS the wheels, through the ratio
             let geared = speed / r * ratio * 60.0 / (2.0 * Double.pi)
             // ...until the clutch would have to slip to keep it above idle

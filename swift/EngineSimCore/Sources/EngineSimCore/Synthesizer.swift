@@ -61,6 +61,20 @@ public final class Synthesizer {
         didSet { listener.pov = pov }
     }
     public var timeScale = 1.0
+    /// 0 = physical, 1 = the note never drops on a lift.
+    ///
+    /// A real engine goes QUIET when you lift -- no combustion, so nothing to
+    /// radiate, and the level control follows it down.  That is correct and it
+    /// is not always what you want: on a phone, in a car, the interesting part
+    /// of a lift is the overrun and the bangs, and having the whole thing duck
+    /// underneath them buries the very event you lifted to hear.
+    ///
+    /// So this raises the COMBUSTION LOAD that the loudness paths see -- the
+    /// level ceiling, the radiation mix, the jet shear, the overrun
+    /// darkening -- while leaving the pulse train, the valve and the pops on
+    /// the real throttle.  It is a deliberate untruth, kept in one named
+    /// place and defaulting to OFF so nothing else has to know about it.
+    public var sustainOnLift = 0.0
     public var volume = 1.0 { didSet { master.volume = volume } }
 
     /// Read after each block.
@@ -202,7 +216,10 @@ public final class Synthesizer {
             ?? min(max((0.54 - pr) / 0.54, 0.0), 1.0)
         // POSITIVE blowdown only: on the overrun the cylinder is in vacuum, and
         // taking the magnitude there reads as high load and brightens the hiss
-        let combLoad = dps > 1e-12 ? min(max(strength * 1.25, 0.0), 1.0) : 0.0
+        let combLoadTrue = dps > 1e-12 ? min(max(strength * 1.25, 0.0), 1.0) : 0.0
+        // what the LOUDNESS paths are told, which may be a lie -- see above
+        let k = min(max(sustainOnLift, 0.0), 1.0)
+        let combLoad = combLoadTrue + (1.0 - combLoadTrue) * k
 
         // each pulse is scaled by the pressure the physics captured as THAT
         // cylinder's valve opened -- so a cylinder the limiter cut goes quiet

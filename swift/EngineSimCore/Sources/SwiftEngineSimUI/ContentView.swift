@@ -16,7 +16,7 @@ public struct ContentView: View {
     @StateObject private var model = AppModel()
     @State private var pickingEngine = false
     @State private var pendingEngine = ""
-    @State private var pedalDown = false
+    @State private var braking = false
 
     public init() {}
 
@@ -24,6 +24,7 @@ public struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
+                source
                 readouts
                 if model.source == .sliders { manualControls }
                 if model.source == .pedal { pedalControls }
@@ -32,7 +33,6 @@ public struct ContentView: View {
                 layers
                 mapping
                 realCar
-                link
                 if let e = model.errorText {
                     Text(e).font(.footnote).foregroundColor(.red)
                 }
@@ -62,8 +62,13 @@ public struct ContentView: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
             Divider()
             picker
-            Spacer(minLength: 0)
         }
+        // Sized to the wheel plus its bar, so the sheet is not two thirds
+        // empty space with the wheel stranded at the top.  The drag indicator
+        // is there to say out loud that it can be swiped away -- the v1 picker
+        // could not be, and that is worth being obvious about.
+        .presentationDetents([.height(292)])
+        .presentationDragIndicator(.visible)
     }
 
     // The wheel itself is iOS-only; the macOS build of this module exists to
@@ -77,6 +82,7 @@ public struct ContentView: View {
         }
         .pickerStyle(.wheel)
         .labelsHidden()
+        .frame(maxHeight: .infinity)
         #else
         List(model.engineKeys, id: \.self) { k in
             Button(model.engineName(k)) { pendingEngine = k }
@@ -157,15 +163,16 @@ public struct ContentView: View {
     // engine what revs to be at -- it tells it how much torque to make, and
     // the revs are the CONSEQUENCE.  So it climbs fast in first and slowly in
     // sixth, and it falls on a lift because a shut throttle makes negative
-    // torque.  That is the whole difference from the slider above.
+    // torque.  That is the whole difference from the rpm slider.
+    //
+    // The throttle is a SLIDER, not a hold: you can leave it somewhere.  A
+    // press-and-hold is either all or nothing, and most of driving is neither.
     private var pedalControls: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Button {
-                    model.downshift()
-                } label: {
+                Button { model.downshift() } label: {
                     Text("DOWN").font(.caption).bold()
-                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .frame(maxWidth: .infinity, minHeight: 48)
                         .background(Color.secondary.opacity(0.14))
                         .cornerRadius(9)
                 }.buttonStyle(.plain)
@@ -176,36 +183,44 @@ public struct ContentView: View {
                     Text("gear").font(.system(size: 9))
                         .foregroundColor(.secondary)
                 }
-                .frame(width: 62)
+                .frame(width: 58)
 
-                Button {
-                    model.upshift()
-                } label: {
+                Button { model.upshift() } label: {
                     Text("UP").font(.caption).bold()
-                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .frame(maxWidth: .infinity, minHeight: 48)
                         .background(Color.accentColor.opacity(0.22))
                         .cornerRadius(9)
                 }.buttonStyle(.plain)
             }
 
-            // press and HOLD: the gesture is the pedal, so there is no state
-            // to get stuck in and nothing to remember to turn off
-            Text(pedalDown ? "THROTTLE" : "PRESS AND HOLD")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("THROTTLE").font(.caption2).foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f%%", model.pedalThrottle * 100))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                Slider(value: Binding(get: { model.pedalThrottle },
+                                      set: { model.setPedal($0) }), in: 0...1)
+            }
+
+            // The brake acts on the CAR, so in gear it drags the revs down
+            // through the ratio -- which is why braking sounds like braking
+            // and not like lifting.  Held, because a brake IS held.
+            Text(braking ? "BRAKING" : "BRAKE")
                 .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 92)
-                .background(pedalDown ? Color.accentColor.opacity(0.35)
-                                      : Color.secondary.opacity(0.14))
-                .cornerRadius(12)
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background(braking ? Color.red.opacity(0.38)
+                                    : Color.secondary.opacity(0.14))
+                .cornerRadius(11)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in
-                            if !pedalDown { pedalDown = true; model.setPedal(1.0) }
+                            if !braking { braking = true; model.setBrake(1.0) }
                         }
-                        .onEnded { _ in
-                            pedalDown = false
-                            model.setPedal(0.0)      // and THIS is what pops
-                        }
+                        .onEnded { _ in braking = false; model.setBrake(0.0) }
                 )
             Text("neutral revs free · in gear it has to drag the car along")
                 .font(.system(size: 10)).foregroundColor(.secondary)
@@ -408,10 +423,11 @@ public struct ContentView: View {
         }
     }
 
-    // ---------------------------------------------------------------- link
-    private var link: some View {
+    // -------------------------------------------------------------- source
+    // At the TOP, because it is the first decision: everything below it means
+    // something different depending on which of the three is driving.
+    private var source: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("SOURCE").font(.caption2).foregroundColor(.secondary)
             HStack(spacing: 8) {
                 ForEach([AppModel.Source.sliders, .pedal, .live], id: \.self) { s in
                     Button(s == .live ? "the car" : s.rawValue) {
@@ -430,8 +446,10 @@ public struct ContentView: View {
                 Text("pops").font(.caption2).foregroundColor(.secondary)
             }
             .font(.caption)
-            Text("dongle at \(model.host):\(String(model.port))")
-                .font(.caption2).foregroundColor(.secondary)
+            if model.source == .live {
+                Text("dongle at \(model.host):\(String(model.port))")
+                    .font(.caption2).foregroundColor(.secondary)
+            }
             Text(model.audioInfo)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundColor(.secondary)

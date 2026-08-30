@@ -38,6 +38,16 @@ public final class OverrunPops {
     public var enabled = false
 
     var wasOnGas = 0.0
+    /// How many bangs are LEFT in this lift.  The pipe holds a finite amount
+    /// of unburnt charge: once it has burnt off there is nothing to light
+    /// until you fill it again.  Without this it crackles all the way down to
+    /// idle, which is a fireworks display rather than a car.
+    var budget = 0
+    var onGas = false
+    /// How many have actually gone off.  Counting them from the waveform is
+    /// unreliable -- consecutive bangs overlap and read as one -- so the
+    /// stage says so itself.
+    public private(set) var fired = 0
     var age = 1 << 30
     var length = 0
     var f0 = 120.0
@@ -66,10 +76,20 @@ public final class OverrunPops {
         if throttle > 0.5 { wasOnGas = min(1.0, wasOnGas + 0.05) }
         else { wasOnGas *= 0.996 }
 
+        // THE LIFT is the event, not the coasting: crossing from on-gas to
+        // shut is what fills the budget, and it only refills by going back on
+        // the gas.  How many depends on how loaded the pipe was, so a lift
+        // after a hard pull gives four and a lift after trundling gives two.
+        let nowOnGas = throttle > 0.5
+        if onGas && !nowOnGas {
+            budget = 2 + Int((wasOnGas * 2.0).rounded())
+        }
+        onGas = nowOnGas
+
         let overrun = ignitionOn && throttle < 0.06 && rpm > idleRpm * 1.5
         // a new pop once the last is mostly done, which is what lets it
         // crackle rather than bang once
-        if overrun && Double(age) > Double(length) * 0.45 {
+        if overrun && budget > 0 && Double(age) > Double(length) * 0.45 {
             let rf = min(rpm / max(redlineRpm, 1.0), 1.0)
             let aggr = antiLag ? 2.4 : 1.0
             let rate = lvl * aggr * (0.06 + 0.55 * rf) * (0.3 + 0.7 * wasOnGas)
@@ -79,6 +99,8 @@ public final class OverrunPops {
                 length = Int(sr * (big ? 0.16 : 0.085))
                 f0 = (big ? 95.0 : 150.0) * (0.85 + 0.4 * rng.uniform())
                 amp = (big ? 1.0 : 0.6) * (0.6 + 0.7 * rng.uniform())
+                budget -= 1
+                fired += 1
             }
         }
 

@@ -34,6 +34,13 @@ public final class AppModel: ObservableObject {
     public enum Source: String { case sliders, pedal, live }
     @Published public var source = Source.sliders
     @Published public var popsOn = true
+    /// Keep the note up on a lift.  Not physical, on by choice -- the
+    /// interesting part of a lift is the overrun and the bangs, and having
+    /// everything duck underneath them buries what you lifted to hear.
+    @Published public var sustainOnLift = 0.85
+    /// The pedal's own controls, published so the sliders track them.
+    @Published public var pedalThrottle = 0.0
+    @Published public var pedalBrake = 0.0
     /// Set while the rev limiter is cutting, so the screen can show it.
     @Published public var limiting = false
     public var manual: Bool { source != .live }
@@ -94,6 +101,7 @@ public final class AppModel: ObservableObject {
             hidden = Set(saved.hidden)
             source = Source(rawValue: saved.source) ?? .sliders
             popsOn = saved.pops
+            sustainOnLift = saved.sustainOnLift
             host = saved.host
             port = saved.port
             carIdle = saved.carIdle
@@ -130,6 +138,7 @@ public final class AppModel: ObservableObject {
                                out.ioBufferSeconds * 1000)
             if let n = out.sessionNote { audioInfo += " (" + n + ")" }
             applyLayers()                    // restore the hidden stages
+            applySustain()
             setSource(source)                // rebuild the pedal, or reconnect
             startTicking()
         } catch {
@@ -194,6 +203,7 @@ public final class AppModel: ObservableObject {
             car?.telemetry = pedalSource
         }
         applyPops()                           // and a new synth needs re-arming
+        applySustain()
         persist()
     }
 
@@ -287,6 +297,7 @@ public final class AppModel: ObservableObject {
         s.hidden = hidden.sorted { $0.rawValue < $1.rawValue }
         s.source = source.rawValue
         s.pops = popsOn
+        s.sustainOnLift = sustainOnLift
         s.host = host
         s.port = port
         s.carIdle = carIdle
@@ -312,6 +323,8 @@ public final class AppModel: ObservableObject {
         learnRange = s.learnRange
         pushRange()
         popsOn = s.pops
+        sustainOnLift = s.sustainOnLift
+        applySustain()
         setSource(Source(rawValue: s.source) ?? .sliders)
         persist()
     }
@@ -362,6 +375,7 @@ public final class AppModel: ObservableObject {
             connect()
         }
         applyPops()
+        applySustain()
         persist()
     }
 
@@ -381,8 +395,24 @@ public final class AppModel: ObservableObject {
 
     func applyPops() { car?.synth?.pops.enabled = popsOn }
 
+    func applySustain() { car?.synth?.sustainOnLift = sustainOnLift }
+
+    public func setSustainOnLift(_ v: Double) {
+        sustainOnLift = v
+        applySustain()
+        persist()
+    }
+
     // ------------------------------------------------------------- driving
-    public func setPedal(_ v: Double) { pedalSource?.throttle = v }
+    public func setPedal(_ v: Double) {
+        pedalThrottle = v
+        pedalSource?.throttle = v
+    }
+
+    public func setBrake(_ v: Double) {
+        pedalBrake = v
+        pedalSource?.brake = v
+    }
     public func upshift() { pedalSource?.upshift() }
     public func downshift() { pedalSource?.downshift() }
     public var pedalGear: Int { pedalSource?.gear ?? 0 }
