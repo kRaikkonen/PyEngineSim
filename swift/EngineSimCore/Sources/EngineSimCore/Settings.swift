@@ -22,14 +22,18 @@ import Foundation
 
 public struct Settings: Codable, Equatable {
     public var engineKey = "a3"
-    public var mapModeRaw = RpmMap.Mode.stretch.rawValue
+    /// DIRECT by default because demo mode drives the engine ITSELF -- there
+    /// is no other car to stretch from, so any other mapping would be
+    /// distorting a number it invented.  It matters once a real car is
+    /// talking, and that is when the app offers the choice.
+    public var mapModeRaw = RpmMap.Mode.direct.rawValue
     public var hidden: [Stage] = []
     /// sliders | pedal | live.  The pedal is an OFFLINE mode by definition:
     /// it invents the car, so it cannot be the source while a real one is
     /// talking.
-    /// The pedal is what the app opens on: it is the mode you can use without
-    /// a dongle, a car, or reading anything first.
-    public var source = "pedal"
+    /// demo | live.  Demo is what the app opens on: it is the mode you can
+    /// use without a dongle, a car, or reading anything first.
+    public var source = "demo"
     public var pops = true
     /// Keep the note up when you lift.  Not physical, and on by choice.
     public var sustainOnLift = 0.85

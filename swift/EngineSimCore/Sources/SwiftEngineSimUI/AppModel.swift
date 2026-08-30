@@ -31,8 +31,10 @@ public final class AppModel: ObservableObject {
     /// Where the revs come from.  The pedal INVENTS the car, so it is an
     /// offline mode by definition -- it cannot be the source while a real one
     /// is talking, and picking the car drops it.
-    public enum Source: String { case sliders, pedal, live }
-    @Published public var source = Source.sliders
+    /// The sliders are gone from the UI: demo does everything they did and
+    /// more, and two hand-driven modes is one too many to explain.
+    public enum Source: String { case demo, live }
+    @Published public var source = Source.demo
     @Published public var popsOn = true
     /// Keep the note up on a lift.  Not physical, on by choice -- the
     /// interesting part of a lift is the overrun and the bangs, and having
@@ -62,6 +64,13 @@ public final class AppModel: ObservableObject {
     @Published public var learnRange = true
     /// The highest the car has actually been seen to rev this session.
     public var seenMax: Double { car?.rpmMap.seenMax ?? 0 }
+    /// Per-cylinder firing lamps, straight off the audio crank.
+    public var cylinderLight: [Double] { car?.synth?.cylinderLight ?? [] }
+    /// How close to the limiter, 0..1 -- what the shift lights read.
+    public var revFraction: Double {
+        let r = car?.engine.redlineRpm ?? 1
+        return min(max(simRPM / max(r, 1), 0), 1.05)
+    }
 
     // --- the parts --------------------------------------------------------
     public private(set) var library: EngineLibrary?
@@ -76,8 +85,7 @@ public final class AppModel: ObservableObject {
     public var engineKeys: [String] { library?.keys ?? [] }
     public var sourceIcon: String {
         switch source {
-        case .sliders: return "slider.horizontal.3"
-        case .pedal: return "pedal.accelerator"
+        case .demo: return "gamecontroller"
         case .live: return "antenna.radiowaves.left.and.right"
         }
     }
@@ -99,7 +107,9 @@ public final class AppModel: ObservableObject {
             engineKey = saved.engineKey
             mapMode = saved.mapMode
             hidden = Set(saved.hidden)
-            source = Source(rawValue: saved.source) ?? .sliders
+            // "pedal" and "sliders" are what these were called before
+            source = Source(rawValue: saved.source)
+                ?? (saved.source == "pedal" ? .demo : .demo)
             popsOn = saved.pops
             sustainOnLift = saved.sustainOnLift
             host = saved.host
@@ -198,7 +208,7 @@ public final class AppModel: ObservableObject {
         try? car?.setEngine(key)
         engineName = car?.engine.name ?? key
         applyLayers()          // the new synth starts with every layer visible
-        if source == .pedal {
+        if source == .demo {
             makePedal()                       // new car, new ratios and torque
             car?.telemetry = pedalSource
         }
@@ -325,7 +335,9 @@ public final class AppModel: ObservableObject {
         popsOn = s.pops
         sustainOnLift = s.sustainOnLift
         applySustain()
-        setSource(Source(rawValue: s.source) ?? .sliders)
+        // an unknown name means a setup saved before the modes changed; demo
+        // is the safe landing, since it needs nothing to be plugged in
+        setSource(Source(rawValue: s.source) ?? .demo)
         persist()
     }
 
@@ -362,14 +374,14 @@ public final class AppModel: ObservableObject {
         source = s
         if s != .live { obd?.stop(); obd = nil }
         switch s {
-        case .sliders:
-            pedalSource = nil
-            car?.telemetry = manualSource
-            linkState = "sliders"
-        case .pedal:
+        case .demo:
             makePedal()
             car?.telemetry = pedalSource
-            linkState = "pedal"
+            linkState = "demo"
+            // demo drives the engine itself, so there is no second car to
+            // stretch from: anything but direct would distort a number this
+            // app invented in the first place
+            setMapMode(.direct)
         case .live:
             pedalSource = nil
             connect()
@@ -449,8 +461,9 @@ public final class AppModel: ObservableObject {
                     self.linkState = "offline"
                     // a link that will not open falls back to the sliders
                     // rather than leaving the app with no source at all
-                    self.source = .sliders
-                    self.car?.telemetry = self.manualSource
+                    // a link that will not open falls back to demo rather
+                    // than leaving the app with no source at all
+                    self.setSource(.demo)
                 }
             }
         }

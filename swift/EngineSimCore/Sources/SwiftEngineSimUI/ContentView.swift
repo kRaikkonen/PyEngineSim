@@ -17,6 +17,7 @@ public struct ContentView: View {
     @State private var pickingEngine = false
     @State private var pendingEngine = ""
     @State private var braking = false
+    @State private var blink = false
 
     public init() {}
 
@@ -24,22 +25,35 @@ public struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                source
+                sourceSwitch
                 readouts
-                if model.source == .sliders { manualControls }
-                if model.source == .pedal { pedalControls }
+                shiftLights
+                ignition
+                if model.source == .demo { pedalControls }
                 engineChooser
                 slots
                 layers
-                mapping
-                realCar
+                // Only worth showing once a REAL car is talking: in demo
+                // there is nothing to map from, so the controls would be
+                // three ways of saying the same thing.
+                if model.source == .live {
+                    mapping
+                    realCar
+                }
                 if let e = model.errorText {
                     Text(e).font(.footnote).foregroundColor(.red)
                 }
             }
             .padding(20)
         }
-        .onAppear { model.boot() }
+        .onAppear {
+            model.boot()
+            // the limiter flash: a steady strip and a flashing one look
+            // completely different at a glance, which is the whole job
+            Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in
+                blink.toggle()
+            }
+        }
         // A SHEET, not a bare wheel.  The v1 app put a picker inline and it
         // could not be dismissed -- a control you cannot get out of is worse
         // than no control.  A sheet closes three ways: Done, Cancel, or a
@@ -155,6 +169,66 @@ public struct ContentView: View {
             Slider(value: Binding(get: { model.pedal },
                                   set: { model.setManualPedal($0) }),
                    in: 0...1)
+        }
+    }
+
+    // -------------------------------------------------------- shift lights
+    // The strip off a steering wheel: green as it comes on song, blue as the
+    // shift point arrives, red past it, and the whole thing FLASHING at the
+    // limiter.  It reads at a glance and without a number, which is the point
+    // of it existing on a wheel in the first place.
+    private var shiftLights: some View {
+        HStack(spacing: 5) { ForEach(0..<10, id: \.self) { lamp($0) } }
+    }
+
+    /// Split out of the strip above: as one expression the type checker gives
+    /// up on it, and a view that will not compile is not a clever view.
+    private func lamp(_ i: Int) -> some View {
+        let lit = model.revFraction >= 0.62 + Double(i) * 0.038
+        let dim = model.limiting && blink
+        let fill: Color = lit ? shiftColour(i) : Color.secondary.opacity(0.16)
+        return RoundedRectangle(cornerRadius: 3)
+            .fill(fill)
+            .frame(height: 12)
+            .opacity(dim ? 0.25 : 1.0)
+    }
+
+    private func shiftColour(_ i: Int) -> Color {
+        if i < 4 { return .green }
+        if i < 7 { return .blue }
+        return .red
+    }
+
+    // ------------------------------------------------------------ ignition
+    // One lamp per cylinder, lit BY the firing offsets the audio is using --
+    // not by a timer that happens to look similar.  So a V12 shows its two
+    // banks alternating and a rotary shows three, because that is what the
+    // engine's own offsets say.
+    private var ignition: some View {
+        let lights = model.cylinderLight
+        return VStack(alignment: .leading, spacing: 5) {
+            Text("IGNITION").font(.caption2).foregroundColor(.secondary)
+            let rows = lights.count > 6 ? 2 : 1
+            let perRow = (lights.count + rows - 1) / max(rows, 1)
+            VStack(spacing: 5) {
+                ForEach(0..<rows, id: \.self) { r in
+                    HStack(spacing: 7) {
+                        ForEach(0..<perRow, id: \.self) { c in
+                            let i = r * perRow + c
+                            Circle()
+                                .fill(i < lights.count
+                                      ? Color.orange.opacity(0.15 + 0.85 * lights[i])
+                                      : Color.clear)
+                                .overlay(Circle().stroke(
+                                    i < lights.count
+                                    ? Color.secondary.opacity(0.45) : .clear,
+                                    lineWidth: 1))
+                                .frame(width: 15, height: 15)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
         }
     }
 
@@ -426,10 +500,10 @@ public struct ContentView: View {
     // -------------------------------------------------------------- source
     // At the TOP, because it is the first decision: everything below it means
     // something different depending on which of the three is driving.
-    private var source: some View {
+    private var sourceSwitch: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                ForEach([AppModel.Source.sliders, .pedal, .live], id: \.self) { s in
+                ForEach([AppModel.Source.demo, .live], id: \.self) { s in
                     Button(s == .live ? "the car" : s.rawValue) {
                         model.setSource(s)
                     }

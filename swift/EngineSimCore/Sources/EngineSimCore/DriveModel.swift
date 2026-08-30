@@ -30,6 +30,9 @@ public struct TorqueTable: Decodable {
     public let rpm: [Double]
     public let throttle: [Double]
     public let gas: [[Double]]          // [throttle][rpm]
+    public let boost: [[Double]]        // bar gauge, same axes
+    public let turbo_lag: Double
+    public let induction: String
     public let friction: [Double]       // static, linear*w, quad*w^2
     public let torque_limit_nm: Double
     public let power_limit_kw: Double
@@ -47,6 +50,17 @@ public struct TorqueTable: Decodable {
 
     /// Bilinear over the grid, clamped at the edges.
     public func gasTorque(rpm r: Double, throttle t: Double) -> Double {
+        interpolate(gas, rpm: r, throttle: t)
+    }
+
+    /// The boost this engine SETTLES at here.  What it does on the way is the
+    /// driving model's business, not the table's.
+    public func targetBoost(rpm r: Double, throttle t: Double) -> Double {
+        interpolate(boost, rpm: r, throttle: t)
+    }
+
+    func interpolate(_ grid: [[Double]], rpm r: Double,
+                     throttle t: Double) -> Double {
         func span(_ axis: [Double], _ v: Double) -> (Int, Int, Double) {
             if v <= axis[0] { return (0, 0, 0) }
             if v >= axis[axis.count - 1] {
@@ -59,8 +73,8 @@ public struct TorqueTable: Decodable {
         }
         let (r0, r1, fr) = span(rpm, r)
         let (t0, t1, ft) = span(throttle, t)
-        let a = gas[t0][r0] + (gas[t0][r1] - gas[t0][r0]) * fr
-        let b = gas[t1][r0] + (gas[t1][r1] - gas[t1][r0]) * fr
+        let a = grid[t0][r0] + (grid[t0][r1] - grid[t0][r0]) * fr
+        let b = grid[t1][r0] + (grid[t1][r1] - grid[t1][r0]) * fr
         return a + (b - a) * ft
     }
 
@@ -101,6 +115,9 @@ public final class PedalSource: TelemetrySource {
     public private(set) var speed: Double = 0        // m/s
     public private(set) var gear: Int = 1
     public var mapKPa: Double = 0
+    /// Live boost, bar gauge -- lagged toward the table's steady state, so a
+    /// floored pedal SPOOLS instead of arriving.
+    public private(set) var boost = 0.0
     public var baroKPa: Double = 101.3
     public var speedValid: Bool { true }
     public var hz: Double = 0
@@ -187,7 +204,26 @@ public final class PedalSource: TelemetrySource {
             // ...until the clutch would have to slip to keep it above idle
             rpm = max(geared, table.idle_rpm)
         }
-        mapKPa = baroKPa * min(0.25 + 0.85 * demand, 1.0)
+        // --- the turbo -------------------------------------------------
+        // A first-order lag toward the steady state, with the time constant
+        // shortening as exhaust energy rises -- so the SAME turbo is laggy
+        // down low and snappy up top, which is the whole character of one.
+        if table.induction != "na" {
+            let target = table.targetBoost(rpm: rpm, throttle: demand)
+            let rf = min(rpm / max(table.redline_rpm, 1.0), 1.0)
+            let exhaustPower = max(rf * (1.0 + max(boost, 0.0)), 0.06)
+            let tau = target > boost
+                ? min(max(table.turbo_lag * (0.35 / exhaustPower), 0.05), 4.0)
+                : 0.18                     // it bleeds off fast on a lift
+            boost += (target - boost) * min(dt / tau, 1.0)
+        } else {
+            boost = 0
+        }
+
+        // MAP is what the synth reads for boost, so it has to carry it: the
+        // throttle's restriction of an already-boosted supply.
+        let restricted = min(0.25 + 0.85 * demand, 1.0)
+        mapKPa = baroKPa * restricted * (1.0 + max(boost, 0.0))
             * (rpm > 300 ? 1.0 : 0.0)
     }
 }

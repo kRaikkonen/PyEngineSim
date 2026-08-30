@@ -38,14 +38,30 @@ def main():
         lo, hi = 300.0, eng.redline_rpm * 1.08
         rpms = [lo + (hi - lo) * i / (N_RPM - 1.0) for i in range(N_RPM)]
         thrs = [i / (N_THR - 1.0) for i in range(N_THR)]
-        grid = []
+        grid, boost = [], []
         for t in thrs:
             tq, _ = sim.dyno_curve(rpms, throttle=t, raw_gas=True)
             grid.append([float(v) for v in tq])
+            # the STEADY-STATE boost the same turbine/compressor balance
+            # settles at.  The driving model lags toward it with the engine's
+            # own turbo_lag, which is what makes a floored pedal spool rather
+            # than arrive.
+            row = []
+            for r in rpms:
+                if eng.induction == "na":
+                    row.append(0.0)
+                elif sim._boost_lut is not None:
+                    row.append(float(sim._boost_lut.eval2(r, t)))
+                else:
+                    row.append(float(eng.boost_bar * t))
+            boost.append(row)
         data[key] = {
             "rpm": rpms,
             "throttle": thrs,
             "gas": grid,                       # [throttle][rpm]
+            "boost": boost,                    # bar gauge, same axes
+            "turbo_lag": float(getattr(eng, "turbo_lag", 0.5)),
+            "induction": eng.induction,
             "friction": [eng.friction_static, eng.friction_linear,
                          eng.friction_quad],
             "torque_limit_nm": float(eng.torque_limit_nm),

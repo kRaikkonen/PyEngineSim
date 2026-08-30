@@ -108,6 +108,15 @@ public final class Synthesizer {
                                            res1: 0.0, res2: 0.0)
     public internal(set) var cylScale: [Double]
 
+    /// Per-cylinder firing brightness, 0..1, decaying after each fire.
+    ///
+    /// Read straight off the audio crank and the engine's own firing offsets,
+    /// so the lamps are lit BY the thing you are hearing rather than by a
+    /// timer that happens to look similar -- on a V12 you can watch the two
+    /// banks alternate, and on a rotary there are three of them, because that
+    /// is what the offsets say.
+    public private(set) var cylinderLight: [Double]
+
     var audioCrank = 0.0
     var cold = 1.0
     var lastLevelForBlowout = 0.0
@@ -151,6 +160,7 @@ public final class Synthesizer {
         pops = OverrunPops(sampleRate: sampleRate, cache: cache, rng: rng,
                            block: block)
         cylScale = [Double](repeating: 1.0, count: engine.numCylinders)
+        cylinderLight = [Double](repeating: 0, count: voicing.offsets.count)
         params = voicing.params
         for (k, v) in Synthesizer.defaultParams where params[k] == nil {
             params[k] = v
@@ -349,7 +359,9 @@ public final class Synthesizer {
         // ONE crank, owned by the pulse train.  Keeping a second copy here
         // that advances by the same rule is an invitation to drift: they only
         // stay equal for as long as nobody adds a branch to one of them.
+        let crankBefore = audioCrank
         audioCrank = pulses.audioCrank
+        updateLights(from: crankBefore, to: audioCrank, dps: dps, frames: frames)
         es.crank = audioCrank
         let ex = exit.process(sig, r: r, state: es, params: params, vx: vx)
         sig = ex.out
@@ -375,6 +387,25 @@ public final class Synthesizer {
         return out
     }
 
+
+    /// Did each cylinder's firing angle pass during this block?
+    func updateLights(from a: Double, to b: Double, dps: Double, frames: Int) {
+        let decay = exp(-Double(frames) / sampleRate / 0.045)
+        for i in cylinderLight.indices { cylinderLight[i] *= decay }
+        guard dps > 1e-12 else { return }
+        let swept = dps * Double(frames)
+        guard swept < 720.0 else {                 // faster than one cycle
+            for i in cylinderLight.indices { cylinderLight[i] = 1.0 }
+            return
+        }
+        for (i, off) in setup.offsets.enumerated() where i < cylinderLight.count {
+            // the firing angle, measured from where the block started
+            var d = off.truncatingRemainder(dividingBy: 720.0)
+                - a.truncatingRemainder(dividingBy: 720.0)
+            if d < 0 { d += 720.0 }
+            if d <= swept { cylinderLight[i] = 1.0 }
+        }
+    }
 }
 
 let pAtm = 101325.0

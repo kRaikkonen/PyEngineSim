@@ -88,6 +88,32 @@ final class DriveModelTests: XCTestCase {
                       "flat out in first, it should reach the limiter")
     }
 
+    /// A floored pedal has to SPOOL, not arrive: a turbo that reaches full
+    /// boost instantly is a supercharger, and it was reaching none at all --
+    /// the MAP the pedal reported never exceeded ambient, so the synth was
+    /// told the car was NA no matter what it was driving.
+    func testTheTurboSpools() throws {
+        let p = PedalSource(table: try table("a3"))
+        XCTAssertEqual(p.boost, 0, accuracy: 1e-9)
+        run(p, seconds: 0.15, throttle: 1.0, gear: 2)
+        let early = p.boost
+        run(p, seconds: 5.0, throttle: 1.0)
+        let settled = p.boost
+        print(String(format: "  boost: %.2f bar early, %.2f settled",
+                     early, settled))
+        XCTAssertLessThan(early, settled * 0.8, "it must take TIME")
+        XCTAssertGreaterThan(settled, 0.5, "...and then actually arrive")
+        // and the synth reads boost off MAP, so MAP has to carry it
+        XCTAssertGreaterThan(p.mapKPa, p.baroKPa * 1.2,
+                             "MAP must exceed ambient on a boosted engine")
+
+        // an NA engine must stay at zero, not pick up a phantom
+        let na = PedalSource(table: try table("aven"))
+        run(na, seconds: 3.0, throttle: 1.0, gear: 2)
+        XCTAssertEqual(na.boost, 0, accuracy: 1e-12)
+        XCTAssertLessThanOrEqual(na.mapKPa, na.baroKPa + 1e-9)
+    }
+
     /// The pedal has to be indistinguishable from any other source, or the
     /// chain would need to know which one is talking to it.
     func testItIsJustATelemetrySource() throws {
