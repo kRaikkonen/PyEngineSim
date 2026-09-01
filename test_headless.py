@@ -241,6 +241,95 @@ def run_layer_switches():
     print(f"  all {len(Synthesizer.STAGES)} layers live, all visible by default")
 
 
+def run_swift_parity():
+    """The three behaviours the Swift app grew first, now shared.
+
+    They are ported line-for-line, so what is checked here is that the PYTHON
+    side really does them -- a silent no-op would leave the two builds sounding
+    different while every other test still passed.
+    """
+    from engine_sim.audio import Synthesizer
+    from engine_sim.units import rpm_to_rads
+
+    print("")
+    print("Swift parity (pop budget / lift sustain / firing lamps)")
+
+    # -- a lift gives three or four bangs and then stops -------------------
+    # Without the budget it crackles all the way down to idle, which is a
+    # fireworks display rather than a car.
+    sim = Simulator(presets.ALL["a45"]())
+    sim.ignition_on = True
+    syn = Synthesizer(sim, sample_rate=32000, seed=1)
+    syn.enabled = False
+    syn.pops_on = True
+    sim.omega = rpm_to_rads(4000.0)
+    sim.throttle = 1.0
+    for _ in range(120):                       # load the pipe with fuel
+        syn._render_block(256)
+    sim.throttle = 0.0                         # THE LIFT
+    syn._render_block(256)
+    budget = syn._pop_budget
+    fired0 = syn.pops_fired
+    for _ in range(700):                       # coast a long way (5.6 s)
+        syn._render_block(256)
+    fired = syn.pops_fired - fired0
+    print("  lift after a hard pull: budget %d, %d bangs in 5.6 s"
+          % (budget, fired))
+    assert 3 <= budget <= 4, "a loaded pipe should give 3-4 bangs, got %d" % budget
+    assert fired == budget, "fired %d but the budget was %d" % (fired, budget)
+    sim.throttle = 1.0                         # back on the gas refills it
+    for _ in range(120):
+        syn._render_block(256)
+    sim.throttle = 0.0
+    syn._render_block(256)
+    assert syn._pop_budget >= 3, "going back on the gas must refill the budget"
+    print("  going back on the gas refills it to %d" % syn._pop_budget)
+
+    # -- the lift sustain holds the note up -------------------------------
+    def lift_level(sustain):
+        sim = Simulator(presets.ALL["a45"]())
+        sim.ignition_on = True
+        sy = Synthesizer(sim, sample_rate=32000, seed=1)
+        sy.enabled = False
+        sy.sustain_on_lift = sustain
+        sim.omega = rpm_to_rads(4000.0)
+        sim.throttle = 1.0
+        for _ in range(80):
+            sy._render_block(256)
+        sim.throttle = 0.0
+        y = np.concatenate([np.asarray(sy._render_block(256))
+                            for _ in range(60)])
+        y = y[len(y) // 2:]
+        return 20.0 * math.log10(float(np.sqrt(np.mean(y * y))) + 1e-12)
+
+    off, on = lift_level(0.0), lift_level(0.85)
+    print("  lift level %+.1f dB at 0.0 -> %+.1f dB at 0.85" % (off, on))
+    assert on > off + 0.5, "sustain_on_lift must hold the note UP on a lift"
+
+    # -- the lamps are lit by the firing offsets, not by a timer -----------
+    sim = Simulator(presets.ALL["aven"]())
+    sim.ignition_on = True
+    syn = Synthesizer(sim, sample_rate=32000, seed=1)
+    syn.enabled = False
+    assert len(syn.cylinder_light) == len(syn._offsets)
+    sim.omega = rpm_to_rads(1200.0)
+    sim.throttle = 0.4
+    seen = np.zeros(len(syn.cylinder_light))
+    for _ in range(400):
+        syn._render_block(256)
+        seen = np.maximum(seen, syn.cylinder_light)
+    lit = int((seen > 0.5).sum())
+    print("  %d/%d cylinders lit over 400 blocks" % (lit, len(seen)))
+    assert lit == len(seen), "every cylinder must light at least once"
+    # and they must DECAY -- a lamp stuck on is not an ignition lamp
+    sim.ignition_on = False
+    sim.omega = rpm_to_rads(0.0)
+    for _ in range(200):
+        syn._render_block(256)
+    assert syn.cylinder_light.max() < 0.05, "lamps must decay when nothing fires"
+    print("  lamps decay once the engine stops")
+
+
 if __name__ == "__main__":
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
@@ -249,4 +338,5 @@ if __name__ == "__main__":
     run_filter_fallback()
     run_layer_switches()
     run_audio_sink()
+    run_swift_parity()
     print("\nAll headless checks passed.")

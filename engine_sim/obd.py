@@ -656,7 +656,7 @@ class OBDTelemetry:
 # --------------------------------------------------------------------------
 CAR_PROFILES = {
     #  key          idle   redline
-    "a3": (800.0, 6500.0),          # Audi A3 8Y / 8Y facelift, TFSI petrol
+    "a3": (760.0, 6500.0),          # Audi A3 8Y / 8Y facelift, TFSI petrol
     "generic": (800.0, 6500.0),
     "diesel": (750.0, 4800.0),
     "highrev": (900.0, 8500.0),

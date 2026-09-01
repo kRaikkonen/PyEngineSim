@@ -126,13 +126,13 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
 
     g = ap.add_argument_group("engine")
-    g.add_argument("--engine", default="rs3",
+    g.add_argument("--engine", default="a3",
                    help="preset key to play (default: rs3, the 8Y RS3 five-pot)")
     g.add_argument("--list-engines", action="store_true",
                    help="print every preset key and exit")
 
     g = ap.add_argument_group("rpm mapping")
-    g.add_argument("--map", choices=RpmMap.MODES, default="stretch",
+    g.add_argument("--map", choices=RpmMap.MODES, default="direct",
                    help="how your rev range maps onto the engine's "
                         "(default: stretch = your redline is its redline)")
     g.add_argument("--car", choices=sorted(CAR_PROFILES), default="a3",
@@ -170,6 +170,12 @@ def main(argv=None):
 
     g = ap.add_argument_group("audio")
     g.add_argument("--volume", type=float, default=1.0, help="0..1")
+    g.add_argument("--no-pops", action="store_true",
+                   help="no overrun pops on a lift (they are on by default)")
+    g.add_argument("--sustain", type=float, default=0.85,
+                   help="0..1, how much of the note to KEEP when you lift. "
+                        "0 is physical (shut throttle, quiet engine); the "
+                        "default holds it up, which is nicer and not real")
     g.add_argument("--pov", choices=("chase", "cockpit", "trackside"),
                    default="cockpit", help="listener perspective (default: cockpit)")
     g.add_argument("--rate", type=int, default=None, help="sample rate")
@@ -259,6 +265,8 @@ def main(argv=None):
         syn.host_latency = max(args.host_latency, 0.005)
         syn.pov = args.pov
         syn.volume = max(0.0, min(args.volume, 1.0))
+        syn.pops_on = not args.no_pops
+        syn.sustain_on_lift = max(0.0, min(args.sustain, 1.0))
         return syn
 
     mode = CarMode(engine_key=args.engine, telemetry=tm, rpm_map=rmap,

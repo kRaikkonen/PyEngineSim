@@ -129,6 +129,7 @@ TR_ZH = {
     "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
     "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slip": "打滑", "Slow-mo": "慢动作", "Slow": "慢",
+    "Sustain": "松油延音",
     "off": "关", "Firing order:": "点火顺序:",
     # gauges / readouts
     "RPM": "转速", "TORQUE": "扭矩", "POWER": "功率", "THROTTLE": "油门",
@@ -475,6 +476,12 @@ class App:
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
              lambda: sy.pops_on, 1),
+            # KEEP THE NOTE UP ON A LIFT.  Deliberately not physical -- a shut
+            # throttle really does go quiet -- and it is the nicer way round,
+            # so it matches the phone app and can be switched off here.
+            (T("Sustain"), lambda: setattr(
+                sy, "sustain_on_lift", 0.0 if sy.sustain_on_lift > 0.0 else 0.85),
+             lambda: sy.sustain_on_lift > 0.0, 1),
             # tyre-slip dynamics (friction circle + wheelspin): OPT-IN — the grip
             # cap changes launch feel a lot, so it stays off unless asked for
             (T("Slip"), lambda: setattr(self, "traction_on", not self.traction_on),
@@ -588,7 +595,7 @@ class App:
         on a CAR change it is False so GPF/Cat reset to the new engine's own
         has_gpf / has_cat instead of carrying the previous car's exhaust kit."""
         saved = dict(self.synth.params) if self.synth else None
-        _flags = ["cabin"]
+        _flags = ["cabin", "pops_on", "sustain_on_lift"]
         if keep_engine_flags:
             _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
@@ -604,6 +611,11 @@ class App:
                 setattr(self.synth, f, v)
         else:
             self._apply_voice()
+            # what the phone app opens on -- pops armed and the note held up
+            # through a lift.  Both are toggles, so this is a starting point
+            # rather than a decision.
+            self.synth.pops_on = True
+            self.synth.sustain_on_lift = 0.85
         if start:
             self.synth.start()
 

@@ -888,6 +888,11 @@ class Synthesizer:
         self._offsets = np.array([c.cycle_offset_deg for c in cyls], dtype=np.float64)
         self._stroke_ref = cyls[0].stroke        # blowdown-pulse depth ~ stroke
         self._audio_crank = 0.0
+        # PER-CYLINDER FIRING LAMPS, lit by the firing offsets the audio is
+        # actually using rather than by a timer that happens to look similar.
+        # So a V12 shows its two banks alternating and a rotary shows three,
+        # because that is what the engine's own offsets say.
+        self.cylinder_light = np.zeros(ncyl, dtype=np.float64)
 
         # VIRTUAL-ANALOG single-firing SHAPE — gas-dynamic blowdown SHARPNESS.
         # The single combustion's exhaust pulse is the discharge of the cylinder
@@ -1168,6 +1173,14 @@ class Synthesizer:
         self._pop_len = 1         # length of the current pop (samples)
         self._pop_f0 = 180.0      # pop base pitch (glides down)
         self._pop_amp = 0.0       # pop strength
+        self._pop_budget = 0      # bangs LEFT in this lift (the pipe empties)
+        self._pop_on_gas = False  # for spotting the on-gas -> lift EDGE
+        self.pops_fired = 0       # bangs actually let off, for a UI to read
+        # KEEP THE NOTE UP ON A LIFT.  0 = physical (shut throttle, quiet
+        # engine); 1 = the loudness paths are told the engine is still on
+        # load.  Deliberately not physical, and off by default so the model
+        # stays honest unless something asks for it.
+        self.sustain_on_lift = 0.0
         self.o_chord = False      # hidden 'o' easter egg: turbo V7 + Bdim blow-off
         self._bdim_phase = 0.0    # Bdim blow-off oscillator phase
         self.fire_chord = 0       # firing-body chord voicing index (hidden keys 1-6)
@@ -2275,6 +2288,7 @@ class Synthesizer:
             # tap a reimplementation is held to
             self._tap("bang", chans[0])
             self._tap("fizz", fizz_chans[0])
+        self._update_lights(self._audio_crank, dps, frames)
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -3085,7 +3099,14 @@ class Synthesizer:
         # the HF radiation fully on and brightened the residual hiss into the
         # "air noise covering the engine".  Real combustion = pressure ABOVE
         # atmosphere, so gate on the positive part only.
-        comb_load = min(max(strength * 1.25, 0.0), 1.0) if dps > 1e-12 else 0.0
+        comb_load_true = (min(max(strength * 1.25, 0.0), 1.0)
+                          if dps > 1e-12 else 0.0)
+        # what the LOUDNESS paths are told, which may be a lie: sustain_on_lift
+        # holds the perceived load up when the throttle shuts, so lifting does
+        # not drop the engine to a whisper.  At the default 0.0 this is exactly
+        # comb_load_true and nothing changes.
+        k = min(max(self.sustain_on_lift, 0.0), 1.0)
+        comb_load = comb_load_true + (1.0 - comb_load_true) * k
         self._comb_load = comb_load           # reused by the overrun darkening
         rad *= comb_load       # no combustion (overrun) -> no sharp radiation
         if rad > 1e-3:
@@ -3822,6 +3843,30 @@ class Synthesizer:
             gw, self._wall_gw_zi = lfilter(b, a, gw, zi=self._wall_gw_zi)
         return out, gw
 
+    def _update_lights(self, crank_before, dps, frames):
+        """Did each cylinder's firing angle pass during this block?
+
+        Read off the SAME offsets that place the pulses, so the lamps and the
+        sound can never disagree.
+        """
+        decay = math.exp(-frames / self.sample_rate / 0.045)
+        self.cylinder_light *= decay
+        if dps <= 1e-12:
+            return
+        swept = dps * frames
+        if swept >= 720.0:                       # faster than one whole cycle
+            self.cylinder_light[:] = 1.0
+            return
+        a = crank_before % 720.0
+        for i, off in enumerate(self._offsets):
+            if i >= len(self.cylinder_light):
+                break
+            d = (off % 720.0) - a                # measured from the block start
+            if d < 0:
+                d += 720.0
+            if d <= swept:
+                self.cylinder_light[i] = 1.0
+
     def _overrun_pops(self, frames):
         """Overrun exhaust pops/bangs ('放炮') — modelled like little combustion
         events: each pop is a sharp transient + a PILE-DRIVING power chord (root
@@ -3838,10 +3883,24 @@ class Synthesizer:
             self._was_on_gas = min(1.0, self._was_on_gas + 0.05)
         else:
             self._was_on_gas *= 0.996
+        # THE LIFT is the event, not the coasting: crossing from on-gas to shut
+        # is what fills the budget, and it only refills by going back on the
+        # gas.  The pipe holds a finite amount of unburnt charge -- once it has
+        # burnt off there is nothing left to light until you fill it again.
+        # Without this it crackles all the way down to idle, which is a
+        # fireworks display rather than a car.  How many depends on how loaded
+        # the pipe was, so a lift after a hard pull gives four and a lift after
+        # trundling gives two.
+        now_on_gas = sim.throttle > 0.5
+        if self._pop_on_gas and not now_on_gas:
+            # floor(x+0.5), NOT round(): Swift rounds halves away from zero and
+            # Python rounds them to even, so round(0.5) is 0 here and 1 there.
+            self._pop_budget = 2 + int(math.floor(self._was_on_gas * 2.0 + 0.5))
+        self._pop_on_gas = now_on_gas
         overrun = (sim.ignition_on and sim.throttle < 0.06
                    and rpm > eng.idle_rpm * 1.5)
         # trigger a new pop once the previous one is mostly done (allows crackle)
-        if overrun and self._pop_age > self._pop_len * 0.45:
+        if overrun and self._pop_budget > 0 and self._pop_age > self._pop_len * 0.45:
             rf = min(rpm / max(eng.redline_rpm, 1.0), 1.0)
             aggr = 2.4 if eng.anti_lag else 1.0
             rate = lvl * aggr * (0.06 + 0.55 * rf) * (0.3 + 0.7 * self._was_on_gas)
@@ -3851,6 +3910,8 @@ class Synthesizer:
                 self._pop_len = int(sr * (0.16 if big else 0.085))
                 self._pop_f0 = (95.0 if big else 150.0) * (0.85 + 0.4 * self._rng.random())
                 self._pop_amp = (1.0 if big else 0.6) * (0.6 + 0.7 * self._rng.random())
+                self._pop_budget -= 1
+                self.pops_fired += 1
         out = np.zeros(frames, dtype=np.float64)
         if self._pop_age < self._pop_len:
             n = np.arange(frames)
