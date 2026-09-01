@@ -52,7 +52,11 @@ final class BayAnimator {
         last = now
         let scaled = dt * max(timeScale, 0.0)
         let advanced = crankDeg + rpm * 6.0 * scaled          // deg/s = rpm*6
-        crankDeg = advanced.truncatingRemainder(dividingBy: 720.0)
+        // 2160, not 720.  A piston repeats every 720 but a ROTOR takes 1080 of
+        // shaft to come round, and 2160 is the first angle that is a whole
+        // number of both -- wrapping at 720 would jog every rotary a third of
+        // a turn backwards twice per cycle.
+        crankDeg = advanced.truncatingRemainder(dividingBy: 2160.0)
         pulses.update(bay: bay, crankAngleDeg: crankDeg, dt: scaled,
                       soundSpeed: soundSpeed, load: load, rpm: rpm)
     }
@@ -133,6 +137,15 @@ struct EngineBayView: View {
     // Interpolation rather than String(format:) with %@ -- this project has
     // already been bitten once by bridging a Swift string through a C format.
     private func bayLine(_ b: EngineBay) -> String {
+        // A rotary's bore, stroke and therefore displacement are PLACEHOLDERS
+        // in the preset -- they exist so the pulse model has a pulse size, and
+        // reading them out would claim a 787B is 3.2 L when it is 2.6.  So a
+        // rotary is described by what is actually known about it.
+        if b.layout == .rotary {
+            let kk = (b.rotary?.k ?? 7).rounded()
+            return "\(b.rotorCount)-rotor Wankel  ·  R/e \(Int(kk))"
+                + "  ·  " + b.charger.label
+        }
         let c = b.engine.cylinders.first
         let bore = ((c?.bore ?? 0) * 1000.0).rounded()
         let str = ((c?.stroke ?? 0) * 1000.0).rounded()
@@ -150,6 +163,13 @@ struct EngineBayView: View {
 
     private func firingLine(_ b: EngineBay) -> String {
         let every = Int((720.0 / Double(max(b.cylinderCount, 1))).rounded())
+        if b.layout == .rotary {
+            // Numbering the pseudo-cylinders would invent eight of them on a
+            // four-rotor engine, so the ROTORS are named instead.
+            let order = (1...b.rotorCount).map(String.init).joined(separator: "-")
+            return "fires every \(every)°  ·  rotors \(order)"
+                + "  ·  each face 1080°"
+        }
         let order = b.firingOrder.map { String($0 + 1) }.joined(separator: "-")
         return "fires every \(every)°  ·  \(order)"
     }
@@ -179,6 +199,19 @@ struct EngineBayView: View {
     private func render(_ ctx: GraphicsContext, size: CGSize, a: BayAnimator) {
         let b = a.bay
         guard b.cylinderCount > 0 else { return }
+        // A rotary has no pistons, no rods and no crank line, so it does not
+        // get a version of that drawing with the parts renamed -- it gets its
+        // own, built from the epitrochoid.
+        if let r = b.rotary {
+            renderRotary(ctx, size: size, a: a, geo: r)
+            return
+        }
+        renderPistons(ctx, size: size, a: a)
+    }
+
+    private func renderPistons(_ ctx: GraphicsContext, size: CGSize,
+                               a: BayAnimator) {
+        let b = a.bay
 
         // The crank line runs across the picture and every cylinder stands on
         // it at its own station, which is the ordinary side-on cutaway.  A V
@@ -201,7 +234,8 @@ struct EngineBayView: View {
         }
 
         drawCrankLine(ctx, size: size, margin: margin, crankY: crankY)
-        drawHeaders(ctx, size: size, a: a, geo: geo, crankY: crankY)
+        drawHeaders(ctx, size: size, a: a, geo: geo,
+                    pipeIndices: Array(geo.indices))
         for (i, s) in b.slots.enumerated() {
             drawCylinder(ctx, g: geo[i], slot: s, bay: b, a: a,
                          strokePx: strokePx)
@@ -319,6 +353,173 @@ struct EngineBayView: View {
         drawValve(ctx, g: g, side: 1, lift: lift.exhaust, colour: .red)
     }
 
+    // MARK: - rotary
+
+    /// A Wankel drawn as a Wankel: epitrochoid housing, a triangular rotor
+    /// orbiting inside it at a third of shaft speed, and the three chambers
+    /// coloured by the stroke each one is actually on.
+    ///
+    /// The apexes are not placed against the housing by hand -- they land on
+    /// it because the geometry says they must, which is the whole trick of the
+    /// thing and worth being able to see.
+    private func renderRotary(_ ctx: GraphicsContext, size: CGSize,
+                              a: BayAnimator, geo r: RotaryGeometry) {
+        let b = a.bay
+        let n = r.rotors
+        let cellW = size.width / CGFloat(n)
+        // the housing spans R+e across the major axis and R-e the other way
+        let span = CGFloat(r.radius + r.eccentricity)
+        let scale = min(cellW * 0.40, size.height * 0.36) / span
+        let lights = model.cylinderLight
+
+        var ports: [CylGeo] = []
+        ports.reserveCapacity(b.cylinderCount)
+
+        for rotor in 0..<n {
+            let o = CGPoint(x: cellW * (CGFloat(rotor) + 0.5),
+                            y: size.height * 0.42)
+            func P(_ x: Double, _ y: Double) -> CGPoint {
+                CGPoint(x: o.x + CGFloat(x) * scale, y: o.y - CGFloat(y) * scale)
+            }
+            func housingPt(_ phi: Double) -> CGPoint {
+                let h = r.housing(phi)
+                return P(h.x, h.y)
+            }
+
+            // ---- housing -------------------------------------------------
+            var shell = Path()
+            for i in 0...144 {
+                let p = housingPt(Double(i) * 2.5)
+                if i == 0 { shell.move(to: p) } else { shell.addLine(to: p) }
+            }
+            shell.closeSubpath()
+            ctx.fill(shell, with: .color(.white.opacity(0.04)))
+
+            let beta = r.rotorAngleDeg(a.crankDeg, rotor: rotor)
+            let apexPt: (Int) -> CGPoint = { kk in
+                let p = r.apex(a.crankDeg, rotor: rotor, kk)
+                return P(p.x, p.y)
+            }
+
+            // ---- the three chambers -------------------------------------
+            // Each is the region between one rotor flank and the housing arc
+            // that its two apexes cut off, so it is drawn as exactly that.
+            for kk in 0..<3 {
+                let phi0 = beta + Double(kk) * 120.0
+                var chamber = Path()
+                chamber.move(to: housingPt(phi0))
+                var t = 6.0
+                while t <= 120.0 {
+                    chamber.addLine(to: housingPt(phi0 + t))
+                    t += 6.0
+                }
+                chamber.addQuadCurve(to: apexPt(kk),
+                                     control: flankControl(r, rotor: rotor,
+                                                           kk: kk, crank: a.crankDeg,
+                                                           project: P))
+                chamber.closeSubpath()
+
+                let phase = r.chamberStroke(a.crankDeg, rotor: rotor, kk)
+                let fill = r.chamberFill(a.crankDeg, rotor: rotor, kk)
+                var colour = strokeColour(phase).opacity(0.22)
+                if phase == .power {
+                    // brightest right at the plugs and fading as it expands,
+                    // with the audio's own lamp for this rotor folded in so
+                    // the flash cannot disagree with the bang
+                    var glow = 1.0 - fill
+                    for i in stride(from: rotor, to: lights.count, by: n) {
+                        glow = max(glow, lights[i])
+                    }
+                    colour = Color(red: 1.0, green: 0.55, blue: 0.12)
+                        .opacity(0.18 + 0.75 * glow)
+                }
+                ctx.fill(chamber, with: .color(colour))
+            }
+
+            // ---- rotor body ---------------------------------------------
+            var rotorPath = Path()
+            rotorPath.move(to: apexPt(0))
+            for kk in 0..<3 {
+                rotorPath.addQuadCurve(
+                    to: apexPt((kk + 1) % 3),
+                    control: flankControl(r, rotor: rotor, kk: kk,
+                                          crank: a.crankDeg, project: P))
+            }
+            rotorPath.closeSubpath()
+            ctx.fill(rotorPath, with: .color(Color.gray.opacity(0.55)))
+            ctx.stroke(rotorPath, with: .color(.white.opacity(0.65)),
+                       lineWidth: 1.5)
+
+            // apex seals: the three points that make the whole thing work
+            for kk in 0..<3 {
+                let p = apexPt(kk)
+                let box = CGRect(x: p.x - 2.6, y: p.y - 2.6, width: 5.2, height: 5.2)
+                ctx.fill(Path(ellipseIn: box), with: .color(.orange))
+            }
+
+            // ---- eccentric shaft ----------------------------------------
+            let rc = r.rotorCentre(a.crankDeg, rotor: rotor)
+            let rcPt = P(rc.x, rc.y)
+            var ecc = Path()
+            ecc.move(to: o)
+            ecc.addLine(to: rcPt)
+            ctx.stroke(ecc, with: .color(.orange.opacity(0.85)), lineWidth: 2)
+            let eBox = CGRect(x: rcPt.x - 3, y: rcPt.y - 3, width: 6, height: 6)
+            ctx.fill(Path(ellipseIn: eBox), with: .color(.orange))
+            let sBox = CGRect(x: o.x - 3.5, y: o.y - 3.5, width: 7, height: 7)
+            ctx.fill(Path(ellipseIn: sBox), with: .color(.gray))
+
+            // housing outline last, so it reads on top of the chambers
+            ctx.stroke(shell, with: .color(.gray.opacity(0.75)), lineWidth: 2)
+
+            // ---- ports and plugs ----------------------------------------
+            drawPortMark(ctx, at: housingPt(r.intakePortDeg), colour: .cyan)
+            let exPt = housingPt(r.exhaustPortDeg)
+            drawPortMark(ctx, at: exPt, colour: .red)
+            let plug = housingPt(r.plugDeg)
+            let pBox = CGRect(x: plug.x - 2.5, y: plug.y - 2.5,
+                              width: 5, height: 5)
+            ctx.fill(Path(ellipseIn: pBox), with: .color(.yellow.opacity(0.9)))
+
+            // Every pseudo-cylinder belonging to this rotor exhausts through
+            // this one port, so the pulses land in the right place while their
+            // TIMING still comes from the offsets the audio uses.
+            var g = CylGeo()
+            g.port = exPt
+            g.centre = o
+            for i in stride(from: rotor, to: b.cylinderCount, by: n) {
+                while ports.count <= i { ports.append(CylGeo()) }
+                ports[i] = g
+            }
+        }
+
+        drawHeaders(ctx, size: size, a: a, geo: ports,
+                    pipeIndices: Array(0..<min(n, ports.count)))
+        if b.charger != .na { drawCharger(ctx, size: size, a: a) }
+        drawBoost(ctx, size: size, a: a)
+    }
+
+    /// Control point for a rotor flank: the chord's midpoint pushed outward,
+    /// because a real rotor face bulges towards the housing rather than being
+    /// a straight line between the apexes.
+    private func flankControl(_ r: RotaryGeometry, rotor: Int, kk: Int,
+                              crank: Double,
+                              project P: (Double, Double) -> CGPoint) -> CGPoint {
+        let c = r.rotorCentre(crank, rotor: rotor)
+        let g = (r.rotorAngleDeg(crank, rotor: rotor)
+                 + (Double(kk) + 0.5) * 120.0) * .pi / 180.0
+        // chord midpoint sits at R·cos(60°) = R/2; push it out, but nowhere
+        // near the waist at R-e
+        let d = r.radius * 0.72
+        return P(c.x + d * cos(g), c.y + d * sin(g))
+    }
+
+    private func drawPortMark(_ ctx: GraphicsContext, at p: CGPoint,
+                              colour: Color) {
+        let box = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
+        ctx.fill(Path(ellipseIn: box), with: .color(colour.opacity(0.85)))
+    }
+
     /// A four-sided band from `from` to `to`, `w` either side of the axis.
     private func quad(_ from: CGPoint, _ to: CGPoint, perpX: CGFloat,
                       perpY: CGFloat, w: CGFloat) -> Path {
@@ -358,7 +559,8 @@ struct EngineBayView: View {
     // them arrive staggered by the firing interval, which is the whole reason
     // a header is a shape and not just a pipe.
     private func drawHeaders(_ ctx: GraphicsContext, size: CGSize,
-                             a: BayAnimator, geo: [CylGeo], crankY: CGFloat) {
+                             a: BayAnimator, geo: [CylGeo],
+                             pipeIndices: [Int]) {
         let b = a.bay
         let collY = size.height - 14
         let nBank = max(b.bankAngles.count, 1)
@@ -373,9 +575,12 @@ struct EngineBayView: View {
                     y: port.y + (coll.y - port.y) * 0.18)
         }
 
-        for (i, s) in b.slots.enumerated() where i < geo.count {
+        // Only the listed entries get a PIPE drawn.  A rotary has one exhaust
+        // port per rotor but two pseudo-cylinders feeding it, so drawing one
+        // per pseudo-cylinder would stack two identical pipes on each port.
+        for i in pipeIndices where i < geo.count && i < b.slots.count {
             let port = geo[i].port
-            let coll = collector(s.bank)
+            let coll = collector(b.slots[i].bank)
             var p = Path()
             p.move(to: port)
             p.addQuadCurve(to: coll, control: control(port, coll))

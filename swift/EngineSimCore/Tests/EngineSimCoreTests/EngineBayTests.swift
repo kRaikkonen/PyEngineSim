@@ -206,6 +206,126 @@ final class EngineBayTests: XCTestCase {
         XCTAssertEqual(try bay("aven").chargerSpin(rpm: 6000, boostBar: 0), 0)
     }
 
+    // MARK: - rotary
+
+    /// A rotary must not be drawn as pistons, and the presets do not say how
+    /// many rotors it has -- they carry two pseudo-cylinders per rotor so the
+    /// firing RATE comes out right for the audio.
+    func testRotorCountComesFromThePseudoCylinders() throws {
+        let rx = try bay("rx7")                 // 13B, 4 pseudo -> 2 rotors
+        XCTAssertEqual(rx.layout, .rotary)
+        XCTAssertEqual(rx.cylinderCount, 4)
+        XCTAssertEqual(rx.rotorCount, 2)
+        let r4 = try bay("787b")                // R26B, 8 pseudo -> 4 rotors
+        XCTAssertEqual(r4.rotorCount, 4)
+        XCTAssertNotNil(r4.rotary)
+        // and a piston engine must not claim to be one
+        XCTAssertNil(try bay("a45").rotary)
+    }
+
+    /// The whole trick of a Wankel: all three apexes are on the housing at
+    /// every angle, because the rotor turns at a THIRD of shaft speed while
+    /// its centre orbits.  If that is off, the tips either float or cut
+    /// through the housing, and no amount of drawing hides it.
+    func testApexesLieOnTheHousing() throws {
+        let g = RotaryGeometry(rotors: 2)
+        var worst = 0.0
+        for i in 0..<2160 {
+            let shaft = Double(i) * 0.5
+            for k in 0..<3 {
+                let a = g.apex(shaft, rotor: 0, k)
+                let phi = g.rotorAngleDeg(shaft, rotor: 0) + Double(k) * 120.0
+                let h = g.housing(phi)
+                worst = max(worst, ((a.x - h.x) * (a.x - h.x)
+                                    + (a.y - h.y) * (a.y - h.y)).squareRoot())
+            }
+        }
+        XCTAssertLessThan(worst, 1e-12, "apexes must ride the housing exactly")
+    }
+
+    /// And they must sweep the whole housing -- out to the lobes at R+e and in
+    /// to the waist at R-e -- rather than tracing some smaller circle.
+    func testApexSweepsLobeAndWaist() throws {
+        let g = RotaryGeometry(rotors: 2)
+        var lo = Double.infinity, hi = 0.0
+        for i in 0..<1080 {
+            let a = g.apex(Double(i), rotor: 0, 0)
+            let r = (a.x * a.x + a.y * a.y).squareRoot()
+            lo = min(lo, r); hi = max(hi, r)
+        }
+        XCTAssertEqual(lo, g.radius - g.eccentricity, accuracy: 1e-3)
+        XCTAssertEqual(hi, g.radius + g.eccentricity, accuracy: 1e-3)
+    }
+
+    /// One chamber, four strokes, 1080 deg of shaft -- 270 each.  This is the
+    /// fact that makes a rotary a four-stroke at all, and it is the one a
+    /// piston-shaped model gets wrong.
+    func testChamberTakes1080DegreesForFourStrokes() throws {
+        let g = RotaryGeometry(rotors: 2)
+        var seen: [Stroke: Int] = [:]
+        for i in 0..<2160 {                      // 0.5 deg steps over 1080
+            let s = g.chamberStroke(Double(i) * 0.5, rotor: 0, 0)
+            seen[s, default: 0] += 1
+        }
+        XCTAssertEqual(seen.count, 4, "a chamber must see all four strokes")
+        for (s, n) in seen {
+            XCTAssertEqual(Double(n) * 0.5, 270.0, accuracy: 1e-6,
+                           "\(s) took the wrong share of the cycle")
+        }
+    }
+
+    /// Fill is 0 at the waist and 1 at a lobe, and ignition is at the waist --
+    /// so a chamber lights at minimum volume and expands, which is the whole
+    /// point of the power stroke.
+    func testChamberFillExtremes() throws {
+        let g = RotaryGeometry(rotors: 2)
+        // gamma = shaft/3 + 60 for chamber 0, so shaft = (gamma - 60) * 3
+        func fillAt(_ gamma: Double) -> Double {
+            g.chamberFill((gamma - 60.0) * 3.0, rotor: 0, 0)
+        }
+        XCTAssertEqual(fillAt(270), 0.0, accuracy: 1e-9, "ignition at the waist")
+        XCTAssertEqual(fillAt(0), 1.0, accuracy: 1e-9, "power ends at a lobe")
+        XCTAssertEqual(fillAt(90), 0.0, accuracy: 1e-9, "exhaust ends empty")
+        XCTAssertEqual(fillAt(180), 1.0, accuracy: 1e-9, "intake ends full")
+        XCTAssertEqual(g.chamberStroke((270.0 - 60.0) * 3.0, rotor: 0, 0),
+                       .power)
+    }
+
+    /// The picture has to fire at the rate the SOUND does.  A rotor fires once
+    /// per shaft revolution and the rotors are evenly phased, so the interval
+    /// must land on 720/pseudo-cylinders -- the same number the audio places
+    /// its pulses on.
+    func testFiringRateAgreesWithTheAudio() throws {
+        for key in ["rx7", "rx7fc", "787b"] {
+            let b = try bay(key)
+            guard let g = b.rotary else { return XCTFail("\(key) not rotary") }
+            var fires: [Double] = []
+            // seed first: an empty map reads the first sample as a transition
+            var prev: [String: Stroke] = [:]
+            for r in 0..<g.rotors {
+                for k in 0..<3 { prev["\(r).\(k)"] = g.chamberStroke(0, rotor: r, k) }
+            }
+            for i in 1..<21600 {
+                let shaft = Double(i) * 0.1
+                for r in 0..<g.rotors {
+                    for k in 0..<3 {
+                        let s = g.chamberStroke(shaft, rotor: r, k)
+                        if prev["\(r).\(k)"] != .power && s == .power {
+                            fires.append(shaft)
+                        }
+                        prev["\(r).\(k)"] = s
+                    }
+                }
+            }
+            let want = 720.0 / Double(b.cylinderCount)
+            XCTAssertGreaterThan(fires.count, 4, "\(key) never fired")
+            for i in 1..<fires.count {
+                XCTAssertEqual(fires[i] - fires[i - 1], want, accuracy: 0.15,
+                               "\(key) fires unevenly")
+            }
+        }
+    }
+
     // MARK: - the whole fleet
 
     /// Nothing in the library may throw, divide by zero or produce a NaN --

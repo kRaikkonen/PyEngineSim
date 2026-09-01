@@ -275,6 +275,139 @@ public struct EngineBay {
     }
 }
 
+// MARK: - Wankel
+
+/// A rotary as the mechanism it actually is, rather than as pistons.
+///
+/// The presets model a rotary as PSEUDO-CYLINDERS -- a 2-rotor 13B is four of
+/// them at 0/180/360/540 -- because what the audio needs is the firing RATE,
+/// and a rotor fires once per eccentric-shaft revolution, so twice per 720 deg.
+/// That is right for the sound and completely wrong for the picture, so the
+/// drawing gets the real geometry instead and only the rotor COUNT is taken
+/// from the preset.
+///
+/// The shapes are exact, not suggestive.  The housing is the two-lobe
+/// epitrochoid
+///
+///     x = e·cos(3φ) + R·cos(φ),   y = e·sin(3φ) + R·sin(φ)
+///
+/// and the rotor is an equilateral triangle of circumradius R whose centre
+/// orbits at radius e and which turns at a THIRD of shaft speed.  Those two
+/// facts are what put all three apexes on the housing at once: apex k sits at
+/// rotor angle β + k·120° with β = α/3, and 3(β + k·120°) = α + k·360° ≡ α, so
+/// it lands exactly on the housing point for φ = β + k·120°.  Nothing is
+/// fudged to make the tips touch.
+public struct RotaryGeometry {
+    public let rotors: Int
+    /// R/e.  Mazda's is 7 -- the 13B has R = 105 mm against e = 15 mm -- and
+    /// it is this ratio, not the absolute size, that sets the housing's shape,
+    /// so a drawing only needs the ratio.
+    public let k: Double
+    /// Generating radius in drawing units; the picture is scaled to fit.
+    public let radius: Double = 1.0
+    public var eccentricity: Double { radius / k }
+
+    public init(rotors: Int, k: Double = 7.0) {
+        self.rotors = max(rotors, 1)
+        self.k = max(k, 3.0)
+    }
+
+    /// Housing outline at parameter φ (degrees).  Major axis along x, half
+    /// span R+e; minor axis half span R-e.
+    public func housing(_ phiDeg: Double) -> (x: Double, y: Double) {
+        let p = phiDeg * .pi / 180.0
+        let e = eccentricity
+        return (e * cos(3 * p) + radius * cos(p),
+                e * sin(3 * p) + radius * sin(p))
+    }
+
+    /// Where in the shaft cycle this rotor is.  Rotors are evenly spaced so
+    /// the engine fires at a constant interval -- a 2-rotor 180 deg apart, a
+    /// 4-rotor 90.
+    public func shaftAngle(_ shaftDeg: Double, rotor: Int) -> Double {
+        shaftDeg + Double(rotor) * 360.0 / Double(rotors)
+    }
+
+    public func rotorCentre(_ shaftDeg: Double,
+                            rotor: Int) -> (x: Double, y: Double) {
+        let a = shaftAngle(shaftDeg, rotor: rotor) * .pi / 180.0
+        return (eccentricity * cos(a), eccentricity * sin(a))
+    }
+
+    /// The rotor's own rotation: a third of shaft speed, which is what makes
+    /// one rotor revolution take 1080 deg of shaft.
+    public func rotorAngleDeg(_ shaftDeg: Double, rotor: Int) -> Double {
+        shaftAngle(shaftDeg, rotor: rotor) / 3.0
+    }
+
+    /// Apex k (0..2), which lies exactly on the housing.
+    public func apex(_ shaftDeg: Double, rotor: Int,
+                     _ kk: Int) -> (x: Double, y: Double) {
+        let c = rotorCentre(shaftDeg, rotor: rotor)
+        let b = (rotorAngleDeg(shaftDeg, rotor: rotor)
+                 + Double(kk) * 120.0) * .pi / 180.0
+        return (c.x + radius * cos(b), c.y + radius * sin(b))
+    }
+
+    /// The outward direction of chamber k's flank, in degrees.  Chamber k is
+    /// bounded by apex k and apex k+1, so it faces between them.
+    public func chamberAngleDeg(_ shaftDeg: Double, rotor: Int,
+                                _ kk: Int) -> Double {
+        let g = rotorAngleDeg(shaftDeg, rotor: rotor)
+            + (Double(kk) + 0.5) * 120.0
+        let m = g.truncatingRemainder(dividingBy: 360.0)
+        return m < 0 ? m + 360.0 : m
+    }
+
+    /// Which stroke chamber k is on.
+    ///
+    /// A chamber is biggest when its flank faces a LOBE (the major axis, 0 and
+    /// 180) and smallest at the waist (90 and 270), so one rotor revolution
+    /// gives two volume cycles -- and four strokes, each of them half a volume
+    /// cycle.  Which of the two minima is the firing one is set by where the
+    /// plugs are: they sit at the waist at 270 here, so combustion begins
+    /// there and everything else follows from it.
+    public func chamberStroke(_ shaftDeg: Double, rotor: Int,
+                              _ kk: Int) -> Stroke {
+        switch chamberAngleDeg(shaftDeg, rotor: rotor, kk) {
+        case ..<90: return .exhaust        // full, shrinking, port opening
+        case ..<180: return .intake        // empty, growing
+        case ..<270: return .compression   // full, shrinking to the plugs
+        default: return .power             // lit at 270, expanding
+        }
+    }
+
+    /// Chamber fill, 0 at the waist and 1 at a lobe.
+    ///
+    /// The leading harmonic of the true swept area: exact in period and at
+    /// both extremes, which is everything a diagram needs from it.
+    public func chamberFill(_ shaftDeg: Double, rotor: Int, _ kk: Int) -> Double {
+        let g = chamberAngleDeg(shaftDeg, rotor: rotor, kk) * .pi / 180.0
+        return 0.5 * (1.0 + cos(2.0 * g))
+    }
+
+    /// Housing angle of the ports and the plugs, in degrees.
+    ///
+    /// These follow from the plug position rather than being placed by eye:
+    /// combustion is at the 270 waist, so the chamber that has just fired is
+    /// exhausting through the first quadrant and the next one is drawing
+    /// through the second.
+    public var exhaustPortDeg: Double { 45.0 }
+    public var intakePortDeg: Double { 135.0 }
+    public var plugDeg: Double { 270.0 }
+}
+
+public extension EngineBay {
+    /// Rotors, not pseudo-cylinders.  A rotor fires once per shaft revolution
+    /// and therefore twice per 720 deg, which is why the presets carry two
+    /// entries for each one.
+    var rotorCount: Int { max(cylinderCount / 2, 1) }
+
+    var rotary: RotaryGeometry? {
+        layout == .rotary ? RotaryGeometry(rotors: rotorCount) : nil
+    }
+}
+
 // MARK: - exhaust pulses
 
 /// The blowdown pulses, as things that TRAVEL.
