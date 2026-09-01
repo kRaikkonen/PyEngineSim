@@ -64,6 +64,13 @@ public final class AppModel: ObservableObject {
     /// because the synth is rebuilt on every engine change -- the switches
     /// belong to the listener, not to the car.
     @Published public var hidden = Set<Stage>()
+    /// The engine-bay animation.  Off by default, and off costs nothing: the
+    /// view owns every moving part, so when this is false SwiftUI never builds
+    /// it and no crank is integrated and no pulse is stepped.  Nothing was
+    /// added to `tick()` for it either.
+    @Published public var showBay = false
+    /// 1 = real time; below that the strobe unwinds.
+    @Published public var bayTimeScale = 1.0
     /// The REAL car's rev range that the mapping stretches from.  Published so
     /// the readout moves as the map learns, not only when it is set by hand.
     @Published public var carIdle = 760.0
@@ -73,6 +80,13 @@ public final class AppModel: ObservableObject {
     public var seenMax: Double { car?.rpmMap.seenMax ?? 0 }
     /// Per-cylinder firing lamps, straight off the audio crank.
     public var cylinderLight: [Double] { car?.synth?.cylinderLight ?? [] }
+    /// The preset the bay is drawn FROM -- same object the sound is built from.
+    public var enginePreset: EnginePreset? { car?.engine }
+    /// Hot-gas sound speed, so a pulse crawls down the drawn pipe at the rate
+    /// the acoustics say it does (a cold engine's really are slower).
+    public var exhaustSoundSpeed: Double {
+        car?.synth?.physics.exhaustSoundSpeed() ?? 340.0
+    }
     /// How close to the limiter, 0..1 -- what the shift lights read.
     public var revFraction: Double {
         let r = car?.engine.redlineRpm ?? 1
@@ -130,6 +144,8 @@ public final class AppModel: ObservableObject {
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
+            showBay = saved.showBay
+            bayTimeScale = saved.bayTimeScale
             let lib = try AppModel.loadLibrary()
             library = lib
             if lib.engine(engineKey) == nil { engineKey = "a3" }
@@ -326,6 +342,8 @@ public final class AppModel: ObservableObject {
         s.linkKind = linkKind
         s.bleDeviceID = bleDeviceID
         s.bleDeviceName = bleDeviceName
+        s.showBay = showBay
+        s.bayTimeScale = bayTimeScale
         s.carIdle = carIdle
         s.carRedline = carRedline
         s.learnRange = learnRange
@@ -347,6 +365,8 @@ public final class AppModel: ObservableObject {
         linkKind = s.linkKind
         bleDeviceID = s.bleDeviceID
         bleDeviceName = s.bleDeviceName
+        showBay = s.showBay
+        bayTimeScale = s.bayTimeScale
         carIdle = s.carIdle
         carRedline = s.carRedline
         learnRange = s.learnRange
@@ -454,6 +474,20 @@ public final class AppModel: ObservableObject {
         public let id: UUID
         public let name: String
         public let rssi: Int
+    }
+
+    /// Turn the engine-bay animation on or off.
+    ///
+    /// Off tears the view down, which is what makes off free -- the animator,
+    /// the pulse field and the redraw clock all belong to the view.
+    public func setShowBay(_ on: Bool) {
+        showBay = on
+        persist()
+    }
+
+    public func setBayTimeScale(_ v: Double) {
+        bayTimeScale = v
+        persist()
     }
 
     public func setLinkKind(_ k: String) {

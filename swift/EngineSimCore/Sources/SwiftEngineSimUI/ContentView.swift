@@ -29,6 +29,7 @@ public struct ContentView: View {
                 readouts
                 shiftLights
                 ignition
+                bay
                 if model.source == .demo { pedalControls }
                 engineChooser
                 slots
@@ -299,6 +300,45 @@ public struct ContentView: View {
             Text("neutral revs free · in gear it has to drag the car along")
                 .font(.system(size: 10)).foregroundColor(.secondary)
         }
+    }
+
+    // --------------------------------------------------------- engine bay
+    // A SWITCH, not a mode.  Everything else on this screen stays exactly
+    // where it was and keeps working the way it did; this is one more section.
+    // Off tears the whole view down rather than hiding it, which is what makes
+    // off genuinely free -- the crank, the exhaust pulses and the redraw clock
+    // all belong to EngineBayView, so an app with the switch off does the same
+    // work it did before any of this existed.
+    private var bay: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("ENGINE BAY").font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                Button(model.showBay ? "on" : "off") {
+                    model.setShowBay(!model.showBay)
+                }
+                .font(.caption2)
+                .padding(.horizontal, 14).padding(.vertical, 5)
+                .background(model.showBay ? Color.accentColor.opacity(0.25)
+                                          : Color.secondary.opacity(0.12))
+                .cornerRadius(7)
+            }
+            if model.showBay {
+                EngineBayView(model: model, timeScale: bayScale)
+            } else {
+                Text("Pistons, valves, header pulses and the turbo — drawn "
+                     + "from the same bore, stroke, rod length and firing "
+                     + "offsets the sound is built from.  Off by default "
+                     + "because off costs nothing.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var bayScale: Binding<Double> {
+        Binding(get: { model.bayTimeScale },
+                set: { model.setBayTimeScale($0) })
     }
 
     // ------------------------------------------------------ engine chooser

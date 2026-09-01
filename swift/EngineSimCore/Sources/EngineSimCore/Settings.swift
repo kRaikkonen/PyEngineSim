@@ -50,12 +50,64 @@ public struct Settings: Codable, Equatable {
     /// and it stops: an automatic value that overwrites what you just typed
     /// is worse than no automatic value.
     public var learnRange = true
+    /// The engine-bay animation.  OFF by default and off means OFF: the view
+    /// is not built, so nothing is allocated and nothing is stepped, and the
+    /// app costs exactly what it did before the animation existed.
+    public var showBay = false
+    /// 1 = real time.  At 6000 rpm the crank turns a hundred times a second
+    /// and any screen samples it far too slowly, so the pistons alias into a
+    /// crawl -- slowing the clock is the honest fix.
+    public var bayTimeScale = 1.0
 
     /// A public struct's memberwise init is INTERNAL by default, so from
     /// another module the only visible initialiser was the one Decodable
     /// synthesises -- which is why `Settings()` read as "missing argument
     /// for parameter 'from'".
     public init() {}
+
+    /// Decode field by field, keeping the default for anything absent.
+    ///
+    /// The synthesised decoder throws on the FIRST missing key, and the store
+    /// treats a throw as "no settings" -- so simply adding a property here
+    /// would silently wipe every saved setting and slot the next time the app
+    /// launched.  Doing it by hand costs a few lines once and makes the format
+    /// additive from now on.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func str(_ k: CodingKeys, _ d: String) -> String {
+            (try? c.decodeIfPresent(String.self, forKey: k)).flatMap { $0 } ?? d
+        }
+        func dbl(_ k: CodingKeys, _ d: Double) -> Double {
+            (try? c.decodeIfPresent(Double.self, forKey: k)).flatMap { $0 } ?? d
+        }
+        func bul(_ k: CodingKeys, _ d: Bool) -> Bool {
+            (try? c.decodeIfPresent(Bool.self, forKey: k)).flatMap { $0 } ?? d
+        }
+        engineKey = str(.engineKey, "a3")
+        mapModeRaw = str(.mapModeRaw, RpmMap.Mode.direct.rawValue)
+        hidden = (try? c.decodeIfPresent([Stage].self, forKey: .hidden))
+            .flatMap { $0 } ?? []
+        source = str(.source, "demo")
+        pops = bul(.pops, true)
+        sustainOnLift = dbl(.sustainOnLift, 0.85)
+        host = str(.host, "192.168.0.10")
+        port = (try? c.decodeIfPresent(Int.self, forKey: .port))
+            .flatMap { $0 } ?? 35000
+        bleDeviceID = str(.bleDeviceID, "")
+        bleDeviceName = str(.bleDeviceName, "")
+        linkKind = str(.linkKind, "ble")
+        carIdle = dbl(.carIdle, 760.0)
+        carRedline = dbl(.carRedline, 6500.0)
+        learnRange = bul(.learnRange, true)
+        showBay = bul(.showBay, false)
+        bayTimeScale = dbl(.bayTimeScale, 1.0)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
+        case host, port, bleDeviceID, bleDeviceName, linkKind
+        case carIdle, carRedline, learnRange, showBay, bayTimeScale
+    }
 
     public var mapMode: RpmMap.Mode {
         get { RpmMap.Mode(rawValue: mapModeRaw) ?? .stretch }
