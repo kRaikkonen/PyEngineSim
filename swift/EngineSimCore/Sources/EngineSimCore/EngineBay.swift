@@ -569,7 +569,9 @@ public struct ExhaustPulseField {
             exitFlash = max(exitFlash, p.strength)
         }
         pulses.removeAll { $0.tail >= 1.0 || $0.strength < 0.02 }
-        // a hard ceiling so a stall or a huge dt cannot pile them up forever
-        if pulses.count > 96 { pulses.removeFirst(pulses.count - 96) }
+        // A hard ceiling so a stall or a huge dt cannot pile them up forever.
+        // Kept low because every one of these is a glow drawn every frame:
+        // at 96 the drawing spent more time on pulses than on the engine.
+        if pulses.count > 22 { pulses.removeFirst(pulses.count - 22) }
     }
 }

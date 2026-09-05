@@ -534,15 +534,18 @@ struct BayScene {
         let hw = g.halfBore
         // sleeve, strip-shaded so it reads round
         BayPaint.shaded(ctx, origin: o, axis: ax, from: g.boreBase - 3,
-                        to: g.deck, halfWidth: hw, metal: .sleeve, strips: 16)
+                        to: g.deck, halfWidth: hw, metal: .sleeve, strips: 9)
         // cooling fins across the barrel
         var d = g.boreBase + 4
+        // fins are 10 strokes a cylinder; halve them, and skip them entirely
+        // on a barrel too narrow to show them
+        let finStep: CGFloat = hw < 14 ? .greatestFiniteMagnitude : 13
         while d < g.deck - 6 {
             var f = Path()
             f.move(to: ax.at(o, d, hw))
             f.addLine(to: ax.at(o, d, -hw))
             ctx.stroke(f, with: .color(BayMetal.sleeve.f(0.55)), lineWidth: 1)
-            d += 7
+            d += finStep
         }
         ctx.stroke(BayPaint.band(origin: o, axis: ax, from: g.boreBase - 3,
                                  to: g.deck, halfWidth: hw),
@@ -550,7 +553,7 @@ struct BayScene {
         // head casting on top
         BayPaint.shaded(ctx, origin: o, axis: ax, from: g.deck,
                         to: g.deck + g.pistonLen * 0.85, halfWidth: hw + 4,
-                        metal: .head, strips: 12)
+                        metal: .head, strips: 6)
         ctx.stroke(BayPaint.band(origin: o, axis: ax, from: g.deck,
                                  to: g.deck + g.pistonLen * 0.85,
                                  halfWidth: hw + 4),
@@ -586,7 +589,7 @@ struct BayScene {
         let ph = hw * 0.72
         BayPaint.shaded(ctx, origin: o, axis: ax, from: g.pinDist,
                         to: g.pinDist + g.pistonLen, halfWidth: ph,
-                        metal: .piston, strips: 12)
+                        metal: .piston, strips: 7)
         ctx.stroke(BayPaint.band(origin: o, axis: ax, from: g.pinDist,
                                  to: g.pinDist + g.pistonLen, halfWidth: ph),
                    with: .color(BayMetal.piston.f(0.5)), lineWidth: 1)

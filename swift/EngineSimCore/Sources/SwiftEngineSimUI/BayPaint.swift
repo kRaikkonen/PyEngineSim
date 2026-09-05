@@ -90,9 +90,11 @@ enum BayPaint {
     /// line is off to the lit side, not down the middle.
     static func shaded(_ ctx: GraphicsContext, origin o: CGPoint, axis ax: BayAxis,
                        from d0: CGFloat, to d1: CGFloat, halfWidth hw: CGFloat,
-                       metal m: BayMetal, strips n: Int = 14,
+                       metal m: BayMetal, strips n: Int = 8,
                        alpha: Double = 1.0) {
         guard hw > 0.4, n > 0 else { return }
+        // no point drawing more strips than the band has pixels
+        let n = min(n, max(Int(hw * 1.2), 2))
         for s in 0..<n {
             let e0 = (CGFloat(s) / CGFloat(n) * 2 - 1) * hw
             let e1 = (CGFloat(s + 1) / CGFloat(n) * 2 - 1) * hw
@@ -126,10 +128,9 @@ enum BayPaint {
                      metal m: BayMetal, lit: CGVector = CGVector(dx: -1, dy: -1),
                      specular: Bool = false, alpha: Double = 1.0) {
         guard r >= 1 else { return }
-        let steps: [(CGFloat, Double, CGFloat)] = [
-            (1.00, 0.62, 0.00), (0.80, 0.86, 0.16), (0.60, 1.12, 0.30),
-            (0.40, 1.40, 0.44), (0.22, 1.70, 0.56),
-        ]
+        let steps: [(CGFloat, Double, CGFloat)] = r < 7
+            ? [(1.00, 0.70, 0.00), (0.62, 1.20, 0.30)]
+            : [(1.00, 0.62, 0.00), (0.72, 1.00, 0.22), (0.42, 1.45, 0.42)]
         for (sr, k, off) in steps {
             let rr = r * sr
             guard rr >= 0.6 else { continue }
@@ -175,6 +176,20 @@ enum BayPaint {
     static func fire(_ ctx: GraphicsContext, at c: CGPoint, radius r: CGFloat,
                      intensity g: Double) {
         guard g > 0.02, r > 1 else { return }
+        // A radial gradient is by far the most expensive call in here, and at
+        // this size nobody can tell it from a flat disc with a hot core.  The
+        // big blooms -- combustion, the tailpipe -- still get the real thing.
+        if r < 7 {
+            let hot = Color(red: 1.0, green: 0.46, blue: 0.08)
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 1.5, y: c.y - r * 1.5,
+                                            width: r * 3, height: r * 3)),
+                     with: .color(hot.opacity(0.30 * g)))
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.6, y: c.y - r * 0.6,
+                                            width: r * 1.2, height: r * 1.2)),
+                     with: .color(Color(red: 1.0, green: 0.80, blue: 0.34)
+                        .opacity(0.92 * g)))
+            return
+        }
         let stops = Gradient(stops: [
             .init(color: Color(red: 1.0, green: 1.0, blue: 0.94).opacity(g), location: 0.0),
             .init(color: Color(red: 1.0, green: 0.93, blue: 0.27).opacity(g * 0.95), location: 0.18),
@@ -202,7 +217,7 @@ enum BayPaint {
             let len = ((b.x - a.x) * (b.x - a.x)
                        + (b.y - a.y) * (b.y - a.y)).squareRoot() + 1.2
             shaded(ctx, origin: o, axis: ax, from: 0, to: len,
-                   halfWidth: r, metal: m, strips: 7, alpha: alpha)
+                   halfWidth: r, metal: m, strips: 4, alpha: alpha)
         }
     }
 

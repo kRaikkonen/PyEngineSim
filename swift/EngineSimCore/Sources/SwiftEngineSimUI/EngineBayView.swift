@@ -92,7 +92,10 @@ struct EngineBayView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TimelineView(.animation) { tl in
+            // 30 Hz, not display rate.  At any real rpm the crank is
+            // aliasing regardless, so the second thirty frames a second
+            // buy nothing and cost half the draw budget.
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { tl in
                 Canvas { ctx, size in
                     guard let a = anim else { return }
                     a.step(now: tl.date.timeIntervalSinceReferenceDate,

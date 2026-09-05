@@ -54,6 +54,43 @@ final class BaySnapshotTests: XCTestCase {
                         boostBar: boost, load: 0.9, warmth: 0.7)
     }
 
+    /// What one frame COSTS.  The bay got slow on the phone once it started
+    /// shading every surface, and "it feels slower" is not something you can
+    /// optimise against -- this turns it into milliseconds.
+    @MainActor
+    func testDrawCost() throws {
+        guard ProcessInfo.processInfo.environment["BAY_BENCH"] != nil else {
+            throw XCTSkip("set BAY_BENCH to time the bay")
+        }
+        let lib = try library()
+        let size = CGSize(width: 390, height: 358)
+        for key in ["aven", "a45", "veyron"] {
+            guard let e = lib.engine(key) else { continue }
+            let bay = EngineBay(engine: e)
+            var pulses = ExhaustPulseField(bay: bay)
+            var c = 0.0
+            for _ in 0..<80 {
+                c += 6
+                pulses.update(bay: bay, crankAngleDeg: c, dt: 0.001,
+                              soundSpeed: 480, load: 0.9, rpm: 5000)
+            }
+            let frames = 30
+            let t0 = CFAbsoluteTimeGetCurrent()
+            for i in 0..<frames {
+                let s = BayScene(bay: bay, crankDeg: c + Double(i) * 7,
+                                 pulses: pulses, rpm: 5000, boostBar: 0.8,
+                                 load: 0.9, warmth: 0.7)
+                let v = Canvas { ctx, sz in s.draw(ctx, size: sz) }
+                    .frame(width: size.width, height: size.height)
+                let r = ImageRenderer(content: v)
+                r.scale = 2.0
+                _ = r.cgImage
+            }
+            let ms = (CFAbsoluteTimeGetCurrent() - t0) / Double(frames) * 1000
+            print(String(format: "BAYCOST %@ %.2f ms/frame", key, ms))
+        }
+    }
+
     // ImageRenderer is @MainActor, so the whole render has to run there.
     @MainActor
     func testWriteSnapshots() throws {
