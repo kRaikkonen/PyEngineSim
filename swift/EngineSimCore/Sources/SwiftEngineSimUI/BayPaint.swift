@@ -60,7 +60,7 @@ struct BayMetal {
 }
 
 /// A direction pair: along the part, and across it.
-struct Axis {
+struct BayAxis {
     var ux: CGFloat, uy: CGFloat        // along
     var qx: CGFloat, qy: CGFloat        // across
 
@@ -88,7 +88,7 @@ enum BayPaint {
     /// `t` runs -1..1 across the width and the highlight sits at +0.18, which
     /// is what stops it looking like a flat panel: a real cylinder's brightest
     /// line is off to the lit side, not down the middle.
-    static func shaded(_ ctx: GraphicsContext, origin o: CGPoint, axis ax: Axis,
+    static func shaded(_ ctx: GraphicsContext, origin o: CGPoint, axis ax: BayAxis,
                        from d0: CGFloat, to d1: CGFloat, halfWidth hw: CGFloat,
                        metal m: BayMetal, strips n: Int = 14) {
         guard hw > 0.4, n > 0 else { return }
@@ -108,7 +108,7 @@ enum BayPaint {
     }
 
     /// A flat four-sided band, for outlines and dark interiors.
-    static func band(origin o: CGPoint, axis ax: Axis, from d0: CGFloat,
+    static func band(origin o: CGPoint, axis ax: BayAxis, from d0: CGFloat,
                      to d1: CGFloat, halfWidth hw: CGFloat) -> Path {
         var p = Path()
         p.move(to: ax.at(o, d0, hw))
@@ -153,7 +153,7 @@ enum BayPaint {
     /// bright web down the centre.  A plain line reads as wire.
     static func rod(_ ctx: GraphicsContext, small: CGPoint, big: CGPoint,
                     width w: CGFloat) {
-        let ax = Axis(from: small, to: big)
+        let ax = BayAxis(from: small, to: big)
         let nx = ax.qx * w, ny = ax.qy * w
         var beam = Path()
         beam.move(to: CGPoint(x: small.x + nx * 0.5, y: small.y + ny * 0.5))
@@ -194,7 +194,7 @@ enum BayPaint {
         guard points.count > 1 else { return }
         for i in 0..<(points.count - 1) {
             let a = points[i], b = points[i + 1]
-            let ax = Axis(from: a, to: b)
+            let ax = BayAxis(from: a, to: b)
             // extend slightly so the segments overlap and leave no seam
             let o = CGPoint(x: a.x - ax.ux * 0.6, y: a.y - ax.uy * 0.6)
             let len = ((b.x - a.x) * (b.x - a.x)

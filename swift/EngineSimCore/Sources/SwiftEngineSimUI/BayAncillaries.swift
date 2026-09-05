@@ -14,7 +14,7 @@
 import SwiftUI
 import EngineSimCore
 
-extension EngineBayView {
+extension BayScene {
 
     /// The sump, hanging off the crankcase.
     ///
@@ -23,7 +23,7 @@ extension EngineBayView {
     /// corner.
     func drawSump(_ ctx: GraphicsContext, from p0: CGPoint, to p1: CGPoint,
                   thickness t: CGFloat, vertical: Bool) {
-        let depth = t * 1.5
+        let depth = t * 3.2
         var p = Path()
         if vertical {
             // crank runs down the picture: the sump hangs off its lower end
@@ -93,12 +93,14 @@ extension EngineBayView {
         let altR = r * 0.52
 
         // belt loop around the crank pulley and the alternator
-        let alt = CGPoint(x: c.x - r * 2.6, y: c.y - r * 0.5)
+        // ABOVE, not beside: at the front of the crank an alternator placed
+        // 2.6 radii to the left simply fell off the picture.
+        let alt = CGPoint(x: c.x + r * 0.15, y: c.y - r * 2.5)
         var loop = Path()
-        loop.move(to: CGPoint(x: c.x, y: c.y - r))
-        loop.addLine(to: CGPoint(x: alt.x, y: alt.y - altR))
-        loop.addLine(to: CGPoint(x: alt.x, y: alt.y + altR))
-        loop.addLine(to: CGPoint(x: c.x, y: c.y + r))
+        loop.move(to: CGPoint(x: c.x - r, y: c.y))
+        loop.addLine(to: CGPoint(x: alt.x - altR, y: alt.y))
+        loop.addLine(to: CGPoint(x: alt.x + altR, y: alt.y))
+        loop.addLine(to: CGPoint(x: c.x + r, y: c.y))
         loop.closeSubpath()
         ctx.stroke(loop, with: .color(BayMetal.belt.f(1.0)), lineWidth: 2.4)
         ctx.stroke(loop, with: .color(BayMetal.belt.f(2.2).opacity(0.5)),

@@ -35,7 +35,9 @@ let package = Package(
         ),
         .testTarget(
             name: "EngineSimCoreTests",
-            dependencies: ["EngineSimCore"],
+            // SwiftEngineSimUI too, so the bay drawing can be rendered to a
+            // PNG and looked at -- see BaySnapshotTests.
+            dependencies: ["EngineSimCore", "SwiftEngineSimUI"],
             resources: [.copy("Fixtures")]
         ),
     ]
