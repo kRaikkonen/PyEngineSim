@@ -16,6 +16,10 @@
 import SwiftUI
 import EngineSimCore
 
+/// How solid the hot-side plumbing is drawn.  It runs over the banks, so it
+/// has to let them through.
+private let EXHAUST_ALPHA = 0.62
+
 struct BayScene {
     let bay: EngineBay
     let crankDeg: Double
@@ -444,8 +448,11 @@ struct BayScene {
                 let rail = side < 0 ? lx : rx
                 let spine = idx.map { geo[$0].port }
                     + [CGPoint(x: rail, y: collY)]
+                // SEE-THROUGH: the header is drawn on top of the bank it
+                // is bolted to, so at full opacity it hides the cylinders it
+                // is meant to be attached to.
                 BayPaint.orthoPipe(ctx, points: spine, radius: rad * 1.1,
-                                   metal: .exhaustPipe)
+                                   metal: .exhaustPipe, alpha: EXHAUST_ALPHA)
                 // each cylinder rides its own header from where it joins
                 for (k, i) in idx.enumerated() {
                     routes[i] = Array(spine[k...])
@@ -464,7 +471,7 @@ struct BayScene {
             }
             for r in routes where r.count > 1 {
                 BayPaint.orthoPipe(ctx, points: r, radius: rad,
-                                   metal: .exhaustPipe)
+                                   metal: .exhaustPipe, alpha: EXHAUST_ALPHA)
             }
         }
         // collector along the bottom, then the tailpipe
@@ -472,7 +479,8 @@ struct BayScene {
         let tip = CGPoint(x: size.width - 7, y: collY)
         for cxi in collectors.sorted() {
             BayPaint.orthoPipe(ctx, points: [CGPoint(x: CGFloat(cxi), y: collY), tip],
-                               radius: rad * 1.15, metal: .exhaustPipe)
+                               radius: rad * 1.15, metal: .exhaustPipe,
+                               alpha: EXHAUST_ALPHA)
         }
 
         // ---- the pulses, riding their own route --------------------------

@@ -90,7 +90,8 @@ enum BayPaint {
     /// line is off to the lit side, not down the middle.
     static func shaded(_ ctx: GraphicsContext, origin o: CGPoint, axis ax: BayAxis,
                        from d0: CGFloat, to d1: CGFloat, halfWidth hw: CGFloat,
-                       metal m: BayMetal, strips n: Int = 14) {
+                       metal m: BayMetal, strips n: Int = 14,
+                       alpha: Double = 1.0) {
         guard hw > 0.4, n > 0 else { return }
         for s in 0..<n {
             let e0 = (CGFloat(s) / CGFloat(n) * 2 - 1) * hw
@@ -103,7 +104,7 @@ enum BayPaint {
             p.addLine(to: ax.at(o, d1, e1))
             p.addLine(to: ax.at(o, d0, e1))
             p.closeSubpath()
-            ctx.fill(p, with: .color(m.f(k)))
+            ctx.fill(p, with: .color(m.f(k).opacity(alpha)))
         }
     }
 
@@ -123,7 +124,7 @@ enum BayPaint {
     /// light, which is what turns a circle into a ball.
     static func dome(_ ctx: GraphicsContext, at c: CGPoint, radius r: CGFloat,
                      metal m: BayMetal, lit: CGVector = CGVector(dx: -1, dy: -1),
-                     specular: Bool = false) {
+                     specular: Bool = false, alpha: Double = 1.0) {
         guard r >= 1 else { return }
         let steps: [(CGFloat, Double, CGFloat)] = [
             (1.00, 0.62, 0.00), (0.80, 0.86, 0.16), (0.60, 1.12, 0.30),
@@ -135,11 +136,12 @@ enum BayPaint {
             let cx = c.x + lit.dx * r * off, cy = c.y + lit.dy * r * off
             ctx.fill(Path(ellipseIn: CGRect(x: cx - rr, y: cy - rr,
                                             width: rr * 2, height: rr * 2)),
-                     with: .color(m.f(k)))
+                     with: .color(m.f(k).opacity(alpha)))
         }
         ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r,
                                           width: r * 2, height: r * 2)),
-                   with: .color(BayMetal.outline.color), lineWidth: 1)
+                   with: .color(BayMetal.outline.color.opacity(alpha)),
+                   lineWidth: 1)
         if specular, r >= 4 {
             let sx = c.x + lit.dx * r * 0.5, sy = c.y + lit.dy * r * 0.5
             let sr = max(r / 5, 1)
@@ -190,7 +192,7 @@ enum BayPaint {
     /// A pipe drawn as a shaded tube along a path sample, so headers read as
     /// round steel rather than as a stroked line.
     static func tube(_ ctx: GraphicsContext, points: [CGPoint], radius r: CGFloat,
-                     metal m: BayMetal) {
+                     metal m: BayMetal, alpha: Double = 1.0) {
         guard points.count > 1 else { return }
         for i in 0..<(points.count - 1) {
             let a = points[i], b = points[i + 1]
@@ -200,7 +202,7 @@ enum BayPaint {
             let len = ((b.x - a.x) * (b.x - a.x)
                        + (b.y - a.y) * (b.y - a.y)).squareRoot() + 1.2
             shaded(ctx, origin: o, axis: ax, from: 0, to: len,
-                   halfWidth: r, metal: m, strips: 7)
+                   halfWidth: r, metal: m, strips: 7, alpha: alpha)
         }
     }
 
@@ -209,16 +211,18 @@ enum BayPaint {
     /// engine, which is what made the first version's pipework look like
     /// spaghetti draped over the block.
     static func orthoPipe(_ ctx: GraphicsContext, points: [CGPoint],
-                          radius r: CGFloat, metal m: BayMetal) {
+                          radius r: CGFloat, metal m: BayMetal,
+                          alpha: Double = 1.0) {
         guard points.count > 1 else { return }
         for i in 0..<(points.count - 1) {
-            tube(ctx, points: [points[i], points[i + 1]], radius: r, metal: m)
+            tube(ctx, points: [points[i], points[i + 1]], radius: r, metal: m,
+                 alpha: alpha)
         }
         // a domed elbow at each corner so the runs join instead of butting
         for i in 1..<(points.count - 1) {
-            dome(ctx, at: points[i], radius: r * 1.12, metal: m)
+            dome(ctx, at: points[i], radius: r * 1.12, metal: m, alpha: alpha)
         }
-        dome(ctx, at: points[0], radius: r * 1.05, metal: m)
+        dome(ctx, at: points[0], radius: r * 1.05, metal: m, alpha: alpha)
     }
 
     /// A true Reuleaux flank: an arc centred on the OPPOSITE apex, which is the
