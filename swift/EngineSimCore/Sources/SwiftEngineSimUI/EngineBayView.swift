@@ -73,7 +73,10 @@ private struct CylGeo {
     var halfBore: CGFloat = 0
     var crankRadius: CGFloat = 0
     var pistonLen: CGFloat = 0
-    var port = CGPoint.zero
+    var port = CGPoint.zero          // exhaust, outboard side
+    var intakePort = CGPoint.zero    // inboard side
+    var headTop: CGFloat = 0         // top of the head casting
+    var side: CGFloat = 1            // which way its plumbing leaves
 }
 
 // MARK: - the view
@@ -203,105 +206,364 @@ struct EngineBayView: View {
 
     // MARK: - piston engines
 
+    /// Three layouts, because three engines want the space used differently.
+    ///
+    ///  * inline -- one upright row, crank across the bottom.  The long axis of
+    ///    the frame is the long axis of the engine.
+    ///  * V and flat -- the crank runs DOWN the middle and the banks fan out
+    ///    left and right.  Laying a V out sideways like an inline row and then
+    ///    tilting the banks throws the outer cylinders off the frame and leaves
+    ///    the middle empty; going vertical spends the tall axis on stations and
+    ///    the wide axis on the fan, which is what the PC build does.
+    ///  * W -- not one wide vee but TWO narrow-angle VR units side by side,
+    ///    each with its own crank, which is what a W actually is.
     private func renderPistons(_ ctx: GraphicsContext, size: CGSize,
                                a: BayAnimator) {
-        let b = a.bay
-        let margin: CGFloat = 22
-        let crankY = size.height * 0.70
-        let stations = CGFloat(max(b.stationsPerBank, 1))
-        let spacing = (size.width - margin * 2) / stations
-        let multiBank = b.bankAngles.count > 1
-        // the sleeve has to fit between the crank and the top of the frame
-        let headroom = crankY - margin
-        let strokePx = min(spacing * 0.40, headroom * 0.26)
-        let borePx = min(spacing * 0.58, strokePx * 2.0)
-
-        var geo: [CylGeo] = []
-        geo.reserveCapacity(b.cylinderCount)
-        for s in b.slots {
-            geo.append(makeGeo(s, bay: b, crank: a.crankDeg, crankY: crankY,
-                               margin: margin, spacing: spacing,
-                               strokePx: strokePx, borePx: borePx,
-                               multiBank: multiBank))
+        let top: CGFloat = 18
+        let bottom = size.height - 16
+        switch a.bay.layout {
+        case .w:
+            renderW(ctx, size: size, a: a, top: top, bottom: bottom)
+        case .vee, .flat:
+            renderVee(ctx, size: size, a: a, top: top, bottom: bottom)
+        default:
+            renderInline(ctx, size: size, a: a, top: top, bottom: bottom)
         }
-
-        // crankcase slab behind everything, so the parts sit IN an engine
-        drawCrankcase(ctx, size: size, crankY: crankY, margin: margin)
-        drawHeaders(ctx, size: size, a: a, geo: geo,
-                    pipeIndices: Array(geo.indices))
-        // back to front: sleeves, then what moves inside them
-        for (i, s) in b.slots.enumerated() {
-            drawSleeve(ctx, g: geo[i], slot: s, bay: b)
-            drawMoving(ctx, g: geo[i], slot: s, bay: b, a: a)
-        }
-        drawCrankshaft(ctx, geo: geo, size: size, crankY: crankY, margin: margin)
-        if b.charger != .na { drawCharger(ctx, size: size, a: a) }
-        drawBoost(ctx, size: size, a: a)
     }
 
-    private func makeGeo(_ s: EngineBay.Slot, bay b: EngineBay, crank: Double,
-                         crankY: CGFloat, margin: CGFloat, spacing: CGFloat,
-                         strokePx: CGFloat, borePx: CGFloat,
-                         multiBank: Bool) -> CylGeo {
-        var g = CylGeo()
-        g.axis = Axis(angleDeg: s.bankAngleDeg)
-        // banks nudged apart along the crank the way real ones are offset by
-        // the width of a rod
-        let nudge = multiBank ? (CGFloat(s.bank) - 0.5) * spacing * 0.14 : 0
-        let x = margin + spacing * (CGFloat(s.station) + 0.5) + nudge
-        g.crank = CGPoint(x: x, y: crankY)
-        g.halfBore = borePx / 2
+    /// Per-cylinder size from displacement, ~500 cc as the reference, cube-root
+    /// so an eight-times-bigger cylinder is twice the size each way.
+    private func cylScale(_ b: EngineBay) -> CGFloat {
+        let total = b.engine.cylinders.reduce(0.0) { $0 + $1.displacement }
+        let perCC = total * 1.0e6 / Double(max(b.cylinderCount, 1))
+        return CGFloat(min(max(pow(perCC / 500.0, 1.0 / 3.0), 0.55), 1.30))
+    }
 
+    /// Build one cylinder's drawing geometry for a crank centre and bank angle.
+    ///
+    /// `deckLen` is how far the head sits from the crank centre; the stroke is
+    /// solved back out of it so the REAL slider-crank still places the piston
+    /// and the rod never has to be stretched to reach.
+    private func geoAt(_ s: EngineBay.Slot, bay b: EngineBay, crank: Double,
+                       at c: CGPoint, bankDeg: Double, deckLen: CGFloat,
+                       halfBore: CGFloat) -> CylGeo {
+        var g = CylGeo()
+        g.axis = Axis(angleDeg: bankDeg)
+        g.crank = c
+        g.halfBore = halfBore
+        g.side = bankDeg < 0 ? -1 : 1
+
+        let ratio = CGFloat(max(s.rodLength / max(s.stroke / 2, 1e-6), 1.2))
+        // deck = r + rod + pistonLen + clearance, all multiples of the stroke
+        let strokePx = deckLen / (0.96 + 0.5 * ratio)
         let r = strokePx / 2
         g.crankRadius = r
-        let ratio = max(s.rodLength / max(s.stroke / 2, 1e-6), 1.2)
-        let rodPx = r * CGFloat(ratio)
         g.pistonLen = strokePx * 0.34
+        let rodPx = r * ratio
 
         let frac = CGFloat(b.pistonFraction(s.index, crankAngleDeg: crank))
         let th = b.crankPinDeg(s.index, crankAngleDeg: crank) * Double.pi / 180.0
         let ct = CGFloat(cos(th)), st = CGFloat(sin(th))
-
-        // Straight from the slider-crank, so the rod always measures rodPx and
-        // never has to be faked to reach.
         g.pinDist = (r + rodPx) - frac * strokePx
-        g.crankPin = CGPoint(x: g.crank.x + (g.axis.ux * ct + g.axis.qx * st) * r,
-                             y: g.crank.y + (g.axis.uy * ct + g.axis.qy * st) * r)
+        g.crankPin = CGPoint(x: c.x + (g.axis.ux * ct + g.axis.qx * st) * r,
+                             y: c.y + (g.axis.uy * ct + g.axis.qy * st) * r)
         g.boreBase = r * 1.45
         g.deck = (r + rodPx) + g.pistonLen + strokePx * 0.12
-
-        let outboard: CGFloat = s.bankAngleDeg < 0 ? -1 : 1
-        g.port = g.axis.at(g.crank, g.deck - strokePx * 0.18,
-                           g.halfBore * 1.05 * outboard)
+        g.headTop = g.deck + g.pistonLen * 0.85
+        g.port = g.axis.at(c, g.deck + g.pistonLen * 0.4, halfBore * 1.15 * g.side)
+        g.intakePort = g.axis.at(c, g.deck + g.pistonLen * 0.4,
+                                 -halfBore * 1.15 * g.side)
         return g
     }
 
-    /// The crankcase the whole thing is bolted to.
-    private func drawCrankcase(_ ctx: GraphicsContext, size: CGSize,
-                               crankY: CGFloat, margin: CGFloat) {
-        let top = crankY - 6
-        let h = size.height - top - 4
-        let rect = CGRect(x: margin * 0.4, y: top,
-                          width: size.width - margin * 0.8, height: h)
-        ctx.fill(Path(roundedRect: rect, cornerRadius: 7),
-                 with: .linearGradient(
-                    Gradient(colors: [Metal.block.f(1.25), Metal.block.f(0.55)]),
-                    startPoint: CGPoint(x: rect.minX, y: rect.minY),
-                    endPoint: CGPoint(x: rect.minX, y: rect.maxY)))
-        ctx.stroke(Path(roundedRect: rect, cornerRadius: 7),
-                   with: .color(Metal.outline.color), lineWidth: 1)
-        // sump bolts along the lower flange
-        var x = rect.minX + 12
-        while x < rect.maxX - 6 {
-            let r: CGFloat = 1.6
-            ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: rect.maxY - 7,
-                                            width: r * 2, height: r * 2)),
-                     with: .color(Metal.block.f(1.7)))
-            x += 16
+    // ---------------------------------------------------------------- inline
+    private func renderInline(_ ctx: GraphicsContext, size: CGSize,
+                              a: BayAnimator, top: CGFloat, bottom: CGFloat) {
+        let b = a.bay
+        let n = CGFloat(max(b.cylinderCount, 1))
+        let sc = cylScale(b)
+        let margin: CGFloat = 14
+        // leave a lane down the right for the exhaust rail
+        let usable = size.width - margin * 2 - 34
+        var pitch = usable / n
+        var halfBore = min(pitch * 0.34, 18 * sc)
+        pitch = min(pitch, halfBore * 2.8)
+        let x0 = margin + 6 + pitch * 0.5
+
+        let crankY = bottom - 26
+        var deckLen = min(62 * sc, (crankY - top) * 0.70)
+        deckLen = max(deckLen, 26)
+        halfBore = min(halfBore, deckLen * 0.28)
+
+        var geo: [CylGeo] = []
+        for s in b.slots {
+            geo.append(geoAt(s, bay: b, crank: a.crankDeg,
+                             at: CGPoint(x: x0 + pitch * CGFloat(s.station),
+                                         y: crankY),
+                             bankDeg: 0, deckLen: deckLen, halfBore: halfBore))
         }
+        drawCrankcase(ctx, from: CGPoint(x: margin * 0.5, y: crankY),
+                      to: CGPoint(x: size.width - margin * 0.5, y: crankY),
+                      thickness: halfBore * 1.4)
+        manifolds(ctx, size: size, a: a, geo: geo, vertical: false)
+        for (i, s) in b.slots.enumerated() {
+            drawSleeve(ctx, g: geo[i], slot: s, bay: b)
+            drawMoving(ctx, g: geo[i], slot: s, bay: b, a: a)
+        }
+        drawCrankshaft(ctx, geo: geo)
+        finish(ctx, size: size, a: a)
     }
 
-    /// The static shell: sleeve, cooling fins, head, valves.
+    // ------------------------------------------------------------------ vee
+    private func renderVee(_ ctx: GraphicsContext, size: CGSize,
+                           a: BayAnimator, top: CGFloat, bottom: CGFloat) {
+        let b = a.bay
+        let sc = cylScale(b)
+        let ns = CGFloat(max(b.stationsPerBank, 1))
+        let maxAng = b.slots.map { abs($0.bankAngleDeg) }.max() ?? 0
+        let bankDeg = min(maxAng, 82.0)
+        let bank = bankDeg * Double.pi / 180.0
+
+        var halfBore = 18 * sc
+        var deckLen = 62 * sc
+        // the fan-out has to stay inside the frame, with a lane for the rails
+        let reach = deckLen * CGFloat(sin(bank)) + halfBore
+        let maxReach = size.width * 0.5 - 30
+        if reach > maxReach {
+            let f = maxReach / reach
+            halfBore *= f; deckLen *= f
+        }
+        var dy = max(halfBore * 1.5, deckLen * CGFloat(cos(bank)) * 0.78)
+        var reachUp = deckLen * CGFloat(cos(bank))
+        var blockH = dy * (ns - 1) + reachUp + 18
+        let avail = bottom - top
+        if blockH > avail {
+            let f = avail / blockH
+            dy *= f; halfBore *= f; deckLen *= f; reachUp *= f
+            blockH = dy * (ns - 1) + reachUp + 18
+        }
+        let mtop = (top + bottom) * 0.5 - blockH * 0.5 - dy * 0.5 + reachUp
+        let cx = size.width * 0.5
+
+        var geo: [CylGeo] = []
+        for s in b.slots {
+            let jy = mtop + dy * (CGFloat(s.station) + 0.5)
+            let side: Double = s.bankAngleDeg < 0 ? -1 : 1
+            geo.append(geoAt(s, bay: b, crank: a.crankDeg,
+                             at: CGPoint(x: cx, y: jy),
+                             bankDeg: side * bankDeg, deckLen: deckLen,
+                             halfBore: halfBore))
+        }
+        let cy0 = mtop + dy * 0.5 - 14, cy1 = mtop + dy * (ns - 0.5) + 14
+        drawCrankcase(ctx, from: CGPoint(x: cx, y: cy0),
+                      to: CGPoint(x: cx, y: cy1), thickness: halfBore * 1.05)
+        manifolds(ctx, size: size, a: a, geo: geo, vertical: true)
+        for (i, s) in b.slots.enumerated() {
+            drawSleeve(ctx, g: geo[i], slot: s, bay: b)
+            drawMoving(ctx, g: geo[i], slot: s, bay: b, a: a)
+        }
+        drawCrankshaft(ctx, geo: geo)
+        finish(ctx, size: size, a: a)
+    }
+
+    // -------------------------------------------------------------------- W
+    /// Two narrow-angle VR units side by side, each with its own crank -- which
+    /// is what a W16 is, rather than one enormous vee.
+    private func renderW(_ ctx: GraphicsContext, size: CGSize,
+                         a: BayAnimator, top: CGFloat, bottom: CGFloat) {
+        let b = a.bay
+        let left = b.slots.filter { $0.bankAngleDeg < 0 }
+        let right = b.slots.filter { $0.bankAngleDeg >= 0 }
+        var geo = [CylGeo](repeating: CylGeo(), count: b.cylinderCount)
+        let tiltDeg = 30.0
+        let ct = CGFloat(cos(tiltDeg * .pi / 180))
+
+        for (ui, grp) in [left, right].enumerated() {
+            guard !grp.isEmpty else { continue }
+            let ux = size.width * (ui == 0 ? 0.29 : 0.71)
+            // split the unit into its two sub-banks by their own mean angle
+            let mid = grp.reduce(0.0) { $0 + $1.bankAngleDeg } / Double(grp.count)
+            let subA = grp.filter { $0.bankAngleDeg < mid }
+            let subB = grp.filter { $0.bankAngleDeg >= mid }
+            let nsu = CGFloat(max(max(subA.count, subB.count), 1))
+
+            var halfBore = min(size.width * 0.055, 13)
+            var deckLen: CGFloat = 52
+            var dy = max(halfBore * 1.7, deckLen * ct * 0.58)
+            var reachUp = deckLen * ct
+            var blockH = dy * (nsu - 1) + reachUp + 14
+            let avail = bottom - top
+            if blockH > avail {
+                let f = avail / blockH
+                dy *= f; halfBore *= f; deckLen *= f; reachUp *= f
+                blockH = dy * (nsu - 1) + reachUp + 14
+            }
+            let uTop = (top + bottom) * 0.5 - blockH * 0.5 - dy * 0.5 + reachUp
+            let cy0 = uTop + dy * 0.5 - 10, cy1 = uTop + dy * (nsu - 0.5) + 10
+            drawCrankcase(ctx, from: CGPoint(x: ux, y: cy0),
+                          to: CGPoint(x: ux, y: cy1), thickness: halfBore * 1.05)
+
+            for (sub, sgn) in [(subA, -1.0), (subB, 1.0)] {
+                for (k, s) in sub.enumerated() {
+                    let jy = uTop + dy * (CGFloat(k) + 0.5)
+                    var g = geoAt(s, bay: b, crank: a.crankDeg,
+                                  at: CGPoint(x: ux, y: jy),
+                                  bankDeg: sgn * tiltDeg,
+                                  deckLen: deckLen, halfBore: halfBore)
+                    // plumbing leaves each VR unit on its OWN outboard side,
+                    // not on the side its narrow sub-vee happens to lean
+                    g.side = ui == 0 ? -1 : 1
+                    g.port = g.axis.at(g.crank, g.deck + g.pistonLen * 0.4,
+                                       halfBore * 1.15 * CGFloat(sgn))
+                    geo[s.index] = g
+                }
+            }
+        }
+        manifolds(ctx, size: size, a: a, geo: geo, vertical: true)
+        for (i, s) in b.slots.enumerated() {
+            drawSleeve(ctx, g: geo[i], slot: s, bay: b)
+            drawMoving(ctx, g: geo[i], slot: s, bay: b, a: a)
+        }
+        drawCrankshaft(ctx, geo: geo)
+        finish(ctx, size: size, a: a)
+    }
+
+    private func finish(_ ctx: GraphicsContext, size: CGSize, a: BayAnimator) {
+        if a.bay.charger != .na { drawCharger(ctx, size: size, a: a) }
+        drawBoost(ctx, size: size, a: a)
+    }
+
+    /// The crankcase, as a shaded bar along the crank axis.
+    private func drawCrankcase(_ ctx: GraphicsContext, from p0: CGPoint,
+                               to p1: CGPoint, thickness t: CGFloat) {
+        let ax = Axis(from: p0, to: p1)
+        let len = ((p1.x - p0.x) * (p1.x - p0.x)
+                   + (p1.y - p0.y) * (p1.y - p0.y)).squareRoot()
+        BayPaint.shaded(ctx, origin: p0, axis: ax, from: 0, to: len,
+                        halfWidth: t, metal: .block, strips: 9)
+        ctx.stroke(BayPaint.band(origin: p0, axis: ax, from: 0, to: len,
+                                 halfWidth: t),
+                   with: .color(Metal.outline.color), lineWidth: 1)
+    }
+
+    // MARK: - plumbing
+
+    /// Green intake and red exhaust, routed in straight runs through the space
+    /// the engine is NOT using.
+    ///
+    /// The exhaust leaves each head outboard, goes to a rail clear of the
+    /// cylinders and down that rail to a collector; the intake comes off a
+    /// plenum in the valley (or above the row) with a short runner per head.
+    /// Everything is orthogonal, so the pipes read as bent tube rather than as
+    /// strings thrown over the engine.
+    private func manifolds(_ ctx: GraphicsContext, size: CGSize, a: BayAnimator,
+                           geo: [CylGeo], vertical: Bool) {
+        let b = a.bay
+        guard !geo.isEmpty else { return }
+        let rad = max(min(size.width, size.height) * 0.011, 2.6)
+        let collY = size.height - 9
+        let leftRail = max(geo.map { $0.port.x }.min() ?? 0, 0) - 14
+        let rightRail = min(geo.map { $0.port.x }.max() ?? size.width,
+                            size.width) + 14
+        let lx = max(leftRail, 9), rx = min(rightRail, size.width - 9)
+
+        // ---- intake ------------------------------------------------------
+        let plenum: [CGPoint]
+        if vertical {
+            let cx = size.width * 0.5
+            let ys = geo.map { $0.intakePort.y }
+            plenum = [CGPoint(x: cx, y: (ys.min() ?? 0) - 6),
+                      CGPoint(x: cx, y: (ys.max() ?? 0) + 6)]
+        } else {
+            let topY = (geo.map { $0.intakePort.y }.min() ?? 0) - 16
+            plenum = [CGPoint(x: (geo.map { $0.intakePort.x }.min() ?? 0) - 6,
+                              y: topY),
+                      CGPoint(x: (geo.map { $0.intakePort.x }.max() ?? 0) + 6,
+                              y: topY)]
+        }
+        for g in geo where g.halfBore > 0 {
+            let joint = vertical
+                ? CGPoint(x: plenum[0].x, y: g.intakePort.y)
+                : CGPoint(x: g.intakePort.x, y: plenum[0].y)
+            BayPaint.orthoPipe(ctx, points: [joint, g.intakePort],
+                               radius: rad * 0.78, metal: .intakePipe)
+        }
+        BayPaint.orthoPipe(ctx, points: plenum, radius: rad, metal: .intakePipe)
+
+        // ---- exhaust -----------------------------------------------------
+        var routes: [[CGPoint]] = []
+        for g in geo {
+            guard g.halfBore > 0 else { routes.append([]); continue }
+            let rail = g.side < 0 ? lx : rx
+            if vertical {
+                routes.append([g.port, CGPoint(x: rail, y: g.port.y),
+                               CGPoint(x: rail, y: collY)])
+            } else {
+                // up and OVER: a band above every head, so the run to the rail
+                // never crosses a cylinder
+                let band = (geo.map { $0.port.y }.min() ?? 0) - 12
+                routes.append([g.port, CGPoint(x: g.port.x, y: band),
+                               CGPoint(x: rail, y: band),
+                               CGPoint(x: rail, y: collY)])
+            }
+        }
+        for r in routes where r.count > 1 {
+            BayPaint.orthoPipe(ctx, points: r, radius: rad, metal: .exhaustPipe)
+        }
+
+        // collector along the bottom, then the tailpipe
+        let collectors = Set(routes.compactMap { $0.last.map { Int($0.x) } })
+        let tip = CGPoint(x: size.width - 7, y: collY)
+        for cxi in collectors.sorted() {
+            BayPaint.orthoPipe(ctx, points: [CGPoint(x: CGFloat(cxi), y: collY), tip],
+                               radius: rad * 1.15, metal: .exhaustPipe)
+        }
+
+        // ---- the pulses, riding their own route --------------------------
+        for p in a.pulses.pulses {
+            guard p.cylinder < routes.count, routes[p.cylinder].count > 1 else { continue }
+            let pt: CGPoint
+            if p.primary < 1.0 {
+                pt = along(routes[p.cylinder], CGFloat(p.primary))
+            } else {
+                let from = routes[p.cylinder][routes[p.cylinder].count - 1]
+                let t = CGFloat(max(p.tail, 0))
+                pt = CGPoint(x: from.x + (tip.x - from.x) * t, y: collY)
+            }
+            BayPaint.fire(ctx, at: pt, radius: rad * 1.6,
+                          intensity: 0.3 + 0.7 * p.strength)
+        }
+        if a.pulses.exitFlash > 0.02 {
+            BayPaint.fire(ctx, at: tip, radius: rad * 3.2,
+                          intensity: a.pulses.exitFlash)
+        }
+        _ = b
+    }
+
+    /// A point a fraction of the way along a polyline, by arc length.
+    private func along(_ pts: [CGPoint], _ t: CGFloat) -> CGPoint {
+        guard pts.count > 1 else { return pts.first ?? .zero }
+        var segs: [CGFloat] = []
+        var total: CGFloat = 0
+        for i in 0..<(pts.count - 1) {
+            let dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y
+            let l = (dx * dx + dy * dy).squareRoot()
+            segs.append(l); total += l
+        }
+        guard total > 0 else { return pts[0] }
+        var want = min(max(t, 0), 1) * total
+        for (i, l) in segs.enumerated() {
+            if want <= l || i == segs.count - 1 {
+                let f = l > 0 ? want / l : 0
+                return CGPoint(x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
+                               y: pts[i].y + (pts[i + 1].y - pts[i].y) * f)
+            }
+            want -= l
+        }
+        return pts[pts.count - 1]
+    }
+
+
     private func drawSleeve(_ ctx: GraphicsContext, g: CylGeo,
                             slot s: EngineBay.Slot, bay b: EngineBay) {
         let ax = g.axis, o = g.crank
@@ -340,8 +602,7 @@ struct EngineBayView: View {
                             slot s: EngineBay.Slot, bay b: EngineBay,
                             a: BayAnimator) {
         let ax = g.axis, o = g.crank, hw = g.halfBore
-        let lights = model.cylinderLight
-        let lit = s.index < lights.count ? lights[s.index] : 0
+        let lit = b.combustion(s.index, crankAngleDeg: a.crankDeg)
 
         // combustion, in the volume above the crown
         if lit > 0.02 {
@@ -412,9 +673,8 @@ struct EngineBayView: View {
     }
 
     /// One crankshaft line with counterweights, drawn under the rods.
-    private func drawCrankshaft(_ ctx: GraphicsContext, geo: [CylGeo],
-                                size: CGSize, crankY: CGFloat, margin: CGFloat) {
-        for g in geo {
+    private func drawCrankshaft(_ ctx: GraphicsContext, geo: [CylGeo]) {
+        for g in geo where g.halfBore > 0 {
             // counterweight fan, opposite the rod journal
             let dx = g.crankPin.x - g.crank.x, dy = g.crankPin.y - g.crank.y
             let opp = atan2(-dy, -dx)
@@ -447,71 +707,6 @@ struct EngineBayView: View {
         }
     }
 
-    // MARK: - headers
-
-    // Each bank runs back to its own collector and the pulses crawl down the
-    // primaries at the gas's own speed of sound -- so on a 4-into-1 you watch
-    // them arrive staggered by the firing interval, which is the whole reason
-    // a header is a shape and not just a pipe.
-    private func drawHeaders(_ ctx: GraphicsContext, size: CGSize,
-                             a: BayAnimator, geo: [CylGeo],
-                             pipeIndices: [Int]) {
-        let b = a.bay
-        let collY = size.height - 12
-        let nBank = max(b.bankAngles.count, 1)
-        let tip = CGPoint(x: size.width - 6, y: collY)
-        let rad: CGFloat = 3.4
-
-        func collector(_ bank: Int) -> CGPoint {
-            let f: CGFloat = nBank == 1 ? 0.80 : (bank == 0 ? 0.17 : 0.80)
-            return CGPoint(x: size.width * f, y: collY)
-        }
-        func control(_ p: CGPoint, _ c: CGPoint) -> CGPoint {
-            CGPoint(x: (p.x + c.x) * 0.5, y: p.y + (c.y - p.y) * 0.18)
-        }
-        func curve(_ p: CGPoint, _ c: CGPoint, _ n: Int) -> [CGPoint] {
-            (0...n).map { bezier(p, control(p, c), c, CGFloat($0) / CGFloat(n)) }
-        }
-
-        for i in pipeIndices where i < geo.count && i < b.slots.count {
-            let coll = collector(b.slots[i].bank)
-            BayPaint.tube(ctx, points: curve(geo[i].port, coll, 12),
-                          radius: rad, metal: .pipe)
-        }
-
-        for pulse in a.pulses.pulses {
-            guard pulse.cylinder < geo.count else { continue }
-            let port = geo[pulse.cylinder].port
-            let coll = collector(pulse.bank)
-            var pt: CGPoint
-            if pulse.primary < 1.0 {
-                pt = bezier(port, control(port, coll), coll, CGFloat(pulse.primary))
-            } else {
-                let t = CGFloat(max(pulse.tail, 0.0))
-                pt = CGPoint(x: coll.x + (tip.x - coll.x) * t, y: collY)
-            }
-            BayPaint.fire(ctx, at: pt, radius: rad * 1.5,
-                          intensity: 0.3 + 0.7 * pulse.strength)
-        }
-
-        for bk in 0..<nBank {
-            BayPaint.dome(ctx, at: collector(bk), radius: rad * 1.5, metal: .pipe)
-        }
-        BayPaint.tube(ctx, points: [collector(nBank - 1), tip],
-                      radius: rad * 1.3, metal: .pipe)
-        if a.pulses.exitFlash > 0.02 {
-            BayPaint.fire(ctx, at: tip, radius: rad * 3.0,
-                          intensity: a.pulses.exitFlash)
-        }
-    }
-
-    private func bezier(_ p0: CGPoint, _ c: CGPoint, _ p1: CGPoint,
-                        _ t: CGFloat) -> CGPoint {
-        let u = 1 - t
-        return CGPoint(x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x,
-                       y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y)
-    }
-
     // MARK: - induction
 
     // A turbo is driven by the exhaust and hangs on after a lift; a blower is
@@ -521,31 +716,84 @@ struct EngineBayView: View {
                              a: BayAnimator) {
         let b = a.bay
         let spin = b.chargerSpin(rpm: model.simRPM, boostBar: model.boostBar)
-        let c = CGPoint(x: size.width * 0.10, y: size.height * 0.17)
-        let r: CGFloat = 23
-
-        // volute: a fat shaded ring, not an outline
-        BayPaint.dome(ctx, at: c, radius: r, metal: .head)
-        ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.74, y: c.y - r * 0.74,
-                                        width: r * 1.48, height: r * 1.48)),
-                 with: .color(Metal.bore.f(1.1)))
-
-        let blades = b.charger == .roots ? 3 : 10
-        let phase = a.crankDeg * 0.0175 * (0.4 + 3.0 * spin)
-        for k in 0..<blades {
-            let ang = phase + Double(k) * 2.0 * Double.pi / Double(blades)
-            let tipP = CGPoint(x: c.x + CGFloat(cos(ang)) * r * 0.70,
-                               y: c.y + CGFloat(sin(ang)) * r * 0.70)
-            let ax = Axis(from: c, to: tipP)
-            BayPaint.shaded(ctx, origin: c, axis: ax, from: r * 0.16,
-                            to: r * 0.70, halfWidth: 1.9,
-                            metal: .piston, strips: 5)
+        let heat = min(max(model.boostBar / max(b.engine.boostBar, 0.30),
+                           0.0), 1.0)
+        let r = min(size.height * 0.085, 21)
+        let twin = b.charger == .twinTurbo
+        let xs = size.width * 0.085
+        let centres: [CGPoint] = twin
+            ? [CGPoint(x: xs, y: size.height * 0.22),
+               CGPoint(x: xs, y: size.height * 0.55)]
+            : [CGPoint(x: xs, y: size.height * 0.26)]
+        for c in centres {
+            drawOneCharger(ctx, at: c, radius: r, spin: spin, heat: heat, a: a)
         }
-        BayPaint.dome(ctx, at: c, radius: r * 0.20, metal: .journal,
+        let name = twin ? "turbo ×2" : b.charger.rawValue
+        if let last = centres.last {
+            ctx.draw(Text(name).font(.system(size: 9))
+                .foregroundColor(.secondary),
+                     at: CGPoint(x: last.x, y: last.y + r + 11))
+        }
+    }
+
+    /// One turbo or blower, with the FX that were missing: it runs RED HOT on
+    /// boost, the wheel blurs as it spools, and it breathes hot gas in on the
+    /// exhaust side and charge out on the intake side.
+    private func drawOneCharger(_ ctx: GraphicsContext, at c: CGPoint,
+                                radius r: CGFloat, spin: Double, heat: Double,
+                                a: BayAnimator) {
+        let b = a.bay
+        // turbine housing glowing with the heat going through it
+        if heat > 0.02 {
+            BayPaint.fire(ctx, at: c, radius: r * 1.15,
+                          intensity: 0.20 + 0.55 * heat)
+        }
+        BayPaint.dome(ctx, at: c, radius: r, metal: .head)
+        // the eye of the compressor
+        ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.76, y: c.y - r * 0.76,
+                                        width: r * 1.52, height: r * 1.52)),
+                 with: .color(Metal.bore.f(1.0 + 0.9 * heat)))
+
+        // The wheel BLURS instead of strobing: at speed the individual blades
+        // are not resolvable anyway, so extra ghosted copies are closer to the
+        // truth than a slow-motion propeller.
+        let blades = b.charger == .roots ? 3 : 11
+        let ghosts = spin > 0.55 ? 3 : (spin > 0.2 ? 2 : 1)
+        let phase = a.crankDeg * 0.0175 * (0.4 + 3.0 * spin)
+        for gi in 0..<ghosts {
+            let lag = Double(gi) * 0.10 * (0.3 + spin)
+            let alpha = gi == 0 ? 1.0 : 0.34 / Double(gi)
+            for k in 0..<blades {
+                let ang = phase - lag + Double(k) * 2.0 * .pi / Double(blades)
+                let tip = CGPoint(x: c.x + CGFloat(cos(ang)) * r * 0.68,
+                                  y: c.y + CGFloat(sin(ang)) * r * 0.68)
+                var p = Path()
+                p.move(to: CGPoint(x: c.x + CGFloat(cos(ang)) * r * 0.20,
+                                   y: c.y + CGFloat(sin(ang)) * r * 0.20))
+                p.addLine(to: tip)
+                ctx.stroke(p, with: .color(Metal.piston.f(1.0)
+                    .opacity(alpha * (0.45 + 0.55 * heat))),
+                           lineWidth: max(r * 0.10, 1.6))
+            }
+        }
+        BayPaint.dome(ctx, at: c, radius: r * 0.22, metal: .journal,
                       specular: true)
-        let name = b.charger == .twinTurbo ? "turbo ×2" : b.charger.rawValue
-        ctx.draw(Text(name).font(.system(size: 9)).foregroundColor(.secondary),
-                 at: CGPoint(x: c.x, y: c.y + r + 10))
+        ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r,
+                                          width: r * 2, height: r * 2)),
+                   with: .color(Metal.outline.color), lineWidth: 1)
+
+        // hot gas in from below, charge air out to the right
+        BayPaint.orthoPipe(ctx, points: [CGPoint(x: c.x, y: c.y + r + 10),
+                                         CGPoint(x: c.x, y: c.y + r)],
+                           radius: r * 0.19, metal: .exhaustPipe)
+        BayPaint.orthoPipe(ctx, points: [CGPoint(x: c.x + r, y: c.y),
+                                         CGPoint(x: c.x + r + 11, y: c.y)],
+                           radius: r * 0.19, metal: .intakePipe)
+        // and the charge itself, brightening with boost
+        if heat > 0.05 {
+            BayPaint.fire(ctx, at: CGPoint(x: c.x + r + 11, y: c.y),
+                          radius: r * 0.30, intensity: 0.25 * heat)
+        }
     }
 
     private func drawBoost(_ ctx: GraphicsContext, size: CGSize, a: BayAnimator) {
@@ -689,10 +937,8 @@ struct EngineBayView: View {
             }
         }
 
-        drawHeaders(ctx, size: size, a: a, geo: ports,
-                    pipeIndices: Array(0..<min(n, ports.count)))
-        if b.charger != .na { drawCharger(ctx, size: size, a: a) }
-        drawBoost(ctx, size: size, a: a)
+        manifolds(ctx, size: size, a: a, geo: ports, vertical: true)
+        finish(ctx, size: size, a: a)
     }
 
     /// Append the circular arc from `from` to `to` centred on `centre` -- the

@@ -106,26 +106,53 @@ final class EngineBayTests: XCTestCase {
     func testValveTiming() throws {
         let b = try bay("a45")
         let rpm = 3000.0
-        // mid-power (phi ~ 90): everything shut
+        // mid-intake (phi ~ 90): intake open, exhaust shut
         var l = b.valveLift(0, crankAngleDeg: 90.0, rpm: rpm)
-        XCTAssertLessThan(l.intake, 0.02)
-        XCTAssertLessThan(l.exhaust, 0.02)
-        // mid-exhaust (phi ~ 270): exhaust open, intake shut
-        l = b.valveLift(0, crankAngleDeg: 270.0, rpm: rpm)
-        XCTAssertGreaterThan(l.exhaust, 0.5)
-        XCTAssertLessThan(l.intake, 0.05)
-        // mid-intake (phi ~ 450): intake open, exhaust shut
-        l = b.valveLift(0, crankAngleDeg: 450.0, rpm: rpm)
         XCTAssertGreaterThan(l.intake, 0.5)
         XCTAssertLessThan(l.exhaust, 0.05)
-        // overlap at 360: BOTH cracked open
-        l = b.valveLift(0, crankAngleDeg: 360.0, rpm: rpm)
-        XCTAssertGreaterThan(l.intake, 0.0)
-        XCTAssertGreaterThan(l.exhaust, 0.0)
-        // mid-compression (phi ~ 630): shut again
-        l = b.valveLift(0, crankAngleDeg: 630.0, rpm: rpm)
+        // mid-compression (phi ~ 270): everything shut
+        l = b.valveLift(0, crankAngleDeg: 270.0, rpm: rpm)
         XCTAssertLessThan(l.intake, 0.02)
         XCTAssertLessThan(l.exhaust, 0.02)
+        // mid-power (phi ~ 450): still shut, it is sealed and burning
+        l = b.valveLift(0, crankAngleDeg: 450.0, rpm: rpm)
+        XCTAssertLessThan(l.intake, 0.02)
+        XCTAssertLessThan(l.exhaust, 0.02)
+        // mid-exhaust (phi ~ 630): exhaust open, intake shut
+        l = b.valveLift(0, crankAngleDeg: 630.0, rpm: rpm)
+        XCTAssertGreaterThan(l.exhaust, 0.5)
+        XCTAssertLessThan(l.intake, 0.05)
+        // overlap at TDC (phi 0/720): BOTH cracked open
+        l = b.valveLift(0, crankAngleDeg: 0.0, rpm: rpm)
+        XCTAssertGreaterThan(l.intake, 0.0)
+        XCTAssertGreaterThan(l.exhaust, 0.0)
+    }
+
+    /// The firing TDC is at phi = 360, NOT at 0.
+    ///
+    /// This is the convention the physics uses -- the Python flashes on
+    /// `360 <= phi < 445` because that is where cylinder_pressure peaks -- and
+    /// having it 360 out put the bang on the compression stroke, which is
+    /// visibly wrong and was reported as such.  Pinned so it cannot drift back.
+    func testCombustionLandsOnThePowerStroke() throws {
+        let b = try bay("a45")
+        XCTAssertEqual(b.stroke(0, crankAngleDeg: 90), .intake)
+        XCTAssertEqual(b.stroke(0, crankAngleDeg: 270), .compression)
+        XCTAssertEqual(b.stroke(0, crankAngleDeg: 450), .power)
+        XCTAssertEqual(b.stroke(0, crankAngleDeg: 630), .exhaust)
+
+        // nothing burns outside the power stroke
+        for d in stride(from: 0.0, to: 720.0, by: 3.0) {
+            let g = b.combustion(0, crankAngleDeg: d)
+            if g > 0.01 {
+                XCTAssertEqual(b.stroke(0, crankAngleDeg: d), .power,
+                               "burning at phi \(d), which is not the power stroke")
+            }
+        }
+        // and it does burn, hardest just after the firing TDC
+        XCTAssertGreaterThan(b.combustion(0, crankAngleDeg: 372), 0.8)
+        XCTAssertEqual(b.combustion(0, crankAngleDeg: 200), 0.0)
+        XCTAssertEqual(b.combustion(0, crankAngleDeg: 650), 0.0)
     }
 
     func testRaceCamOpensLongerThanMild() throws {

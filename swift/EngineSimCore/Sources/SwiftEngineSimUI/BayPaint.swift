@@ -46,6 +46,10 @@ struct Metal {
     static let bore = Metal(r: 24 / 255, g: 26 / 255, b: 32 / 255)
     static let block = Metal(r: 58 / 255, g: 63 / 255, b: 74 / 255)
     static let outline = Metal(r: 22 / 255, g: 24 / 255, b: 30 / 255)
+    /// Hot exhaust is red, cool intake is green -- the same coding the PC build
+    /// uses, and the reason its plumbing reads at a glance.
+    static let exhaustPipe = Metal(r: 168 / 255, g: 72 / 255, b: 46 / 255)
+    static let intakePipe = Metal(r: 62 / 255, g: 146 / 255, b: 94 / 255)
 }
 
 /// A direction pair: along the part, and across it.
@@ -191,6 +195,23 @@ enum BayPaint {
             shaded(ctx, origin: o, axis: ax, from: 0, to: len,
                    halfWidth: r, metal: m, strips: 7)
         }
+    }
+
+    /// Plumbing routed in straight runs with rounded corners, the way a real
+    /// manifold is bent -- rather than a single swooping curve across the whole
+    /// engine, which is what made the first version's pipework look like
+    /// spaghetti draped over the block.
+    static func orthoPipe(_ ctx: GraphicsContext, points: [CGPoint],
+                          radius r: CGFloat, metal m: Metal) {
+        guard points.count > 1 else { return }
+        for i in 0..<(points.count - 1) {
+            tube(ctx, points: [points[i], points[i + 1]], radius: r, metal: m)
+        }
+        // a domed elbow at each corner so the runs join instead of butting
+        for i in 1..<(points.count - 1) {
+            dome(ctx, at: points[i], radius: r * 1.12, metal: m)
+        }
+        dome(ctx, at: points[0], radius: r * 1.05, metal: m)
     }
 
     /// A true Reuleaux flank: an arc centred on the OPPOSITE apex, which is the

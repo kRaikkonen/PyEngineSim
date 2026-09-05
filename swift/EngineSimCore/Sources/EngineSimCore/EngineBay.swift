@@ -140,9 +140,15 @@ public struct EngineBay {
 
     /// Where this cylinder is in its own 720 deg cycle.
     ///
-    /// Mirrors `Simulator.cycle_phase_deg`.  Zero is the firing TDC, so
-    /// 0-180 is power, 180-360 exhaust, 360-540 intake, 540-720 compression --
-    /// the same convention the audio places its pulses on.
+    /// Mirrors `Simulator.cycle_phase_deg`.  **The firing TDC is at 360, not
+    /// at 0** -- that is the convention the physics uses, and the Python draws
+    /// its combustion flash on `360 <= phi < 445` because that is where
+    /// `cylinder_pressure` actually peaks.  So the cycle reads:
+    ///
+    ///     0-180 intake, 180-360 compression, 360-540 power, 540-720 exhaust
+    ///
+    /// Getting this 360 out puts the bang on the compression stroke, which is
+    /// exactly what it looked like.
     public func cyclePhaseDeg(_ i: Int, crankAngleDeg: Double) -> Double {
         let p = (crankAngleDeg + slots[i].cycleOffsetDeg)
             .truncatingRemainder(dividingBy: 720.0)
@@ -174,11 +180,27 @@ public struct EngineBay {
 
     public func stroke(_ i: Int, crankAngleDeg: Double) -> Stroke {
         switch cyclePhaseDeg(i, crankAngleDeg: crankAngleDeg) {
-        case ..<180: return .power
-        case ..<360: return .exhaust
-        case ..<540: return .intake
-        default: return .compression
+        case ..<180: return .intake
+        case ..<360: return .compression
+        case ..<540: return .power
+        default: return .exhaust
         }
+    }
+
+    /// How hard this cylinder is burning right now, 0..1.
+    ///
+    /// Driven by the DRAWN crank rather than by the audio's per-cylinder lamp:
+    /// once the speed control is off 1x the two run on different clocks, and
+    /// borrowing the lamp made the flash land wherever it happened to fall --
+    /// including on the compression stroke.  Pressure peaks a little after TDC
+    /// and the burn is over within about a quarter of the stroke, which is the
+    /// same window the Python flashes on (360 <= phi < 445).
+    public func combustion(_ i: Int, crankAngleDeg: Double) -> Double {
+        let t = cyclePhaseDeg(i, crankAngleDeg: crankAngleDeg) - 360.0
+        guard t >= 0, t < 100.0 else { return 0 }
+        let rise = min(t / 12.0, 1.0)
+        let fall = t <= 12.0 ? 1.0 : max(1.0 - (t - 12.0) / 88.0, 0.0)
+        return rise * fall * fall
     }
 
     // MARK: - valve timing
@@ -223,13 +245,18 @@ public struct EngineBay {
         func lobe(open: Double, close: Double) -> Double {
             var t = phi - open
             if t < 0 { t += 720.0 }
+            if t >= 720.0 { t -= 720.0 }
             let span = close - open
             guard span > 0, t <= span else { return 0 }
             return 0.5 * (1.0 - cos(2.0 * .pi * t / span))
         }
-        // exhaust stroke is 180..360, intake is 360..540
-        let ex = lobe(open: 180.0 - half, close: 360.0 + half)
-        let inn = lobe(open: 360.0 - half, close: 540.0 + half)
+        // The exhaust stroke is 540..720 and the intake 720(0)..180, so the
+        // exhaust valve cracks before BDC of the power stroke and shuts after
+        // TDC, and the intake opens before that same TDC -- which is where the
+        // overlap comes from.  These land within a few degrees of the Python's
+        // own windows (exhaust 500 + 230, intake 700 + 240).
+        let ex = lobe(open: 540.0 - half, close: 720.0 + half)
+        let inn = lobe(open: 720.0 - half, close: 900.0 + half)
         return (inn, ex)
     }
 
@@ -464,7 +491,9 @@ public struct ExhaustPulseField {
         // power stroke, not the firing TDC.  That is where the bang leaves the
         // cylinder, so that is where the pulse starts.
         let half = (bay.valveDurationDeg(rpm: rpm) - 180.0) / 2.0
-        let evo = 180.0 - half
+        // the exhaust valve cracks before BDC of the POWER stroke, which ends
+        // at 720 -- see cyclePhaseDeg for why the firing TDC is 360
+        let evo = 540.0 - half
         for i in 0..<bay.cylinderCount {
             let phi = bay.cyclePhaseDeg(i, crankAngleDeg: crankAngleDeg)
             let prev = lastPhase[i]
