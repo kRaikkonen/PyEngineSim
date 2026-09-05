@@ -136,6 +136,43 @@ public struct EngineBay {
         }
     }
 
+    // MARK: - identity
+
+    /// flat-plane or cross-plane, for a V8.
+    ///
+    /// Both fire every 90 deg of CRANK, so the firing interval cannot tell them
+    /// apart and no single number in the preset says which it is.  What differs
+    /// is whether the firing alternates banks cleanly -- a flat-plane goes
+    /// left-right-left-right and sounds like a Ferrari, a cross-plane does not
+    /// and burbles like a Mustang.  So it is read off the firing ORDER.
+    public var crankPlane: String? {
+        guard cylinderCount == 8, bankAngles.count > 1 else { return nil }
+        let signs = firingOrder.map { slots[$0].bankAngleDeg > 0 ? 1 : -1 }
+        let n = signs.count
+        let alternates = (0..<n).allSatisfy { signs[$0] != signs[($0 + 1) % n] }
+        return alternates ? "flat-plane" : "cross-plane"
+    }
+
+    /// The configuration as it would be written down: "V8 90° cross-plane",
+    /// "inline-4", "W16 90°", "flat-6".
+    public var configLabel: String {
+        let n = cylinderCount
+        if layout == .rotary { return "\(rotorCount)-rotor" }
+        let maxAng = slots.map { abs($0.bankAngleDeg) }.max() ?? 0
+        if layout == .w {
+            let mags = Set(slots.map { (abs($0.bankAngleDeg) * 10).rounded() / 10 })
+                .filter { $0 > 0.1 }.sorted()
+            let outer = mags.count >= 2 ? (mags[0] + mags[mags.count - 1])
+                                        : 2 * maxAng
+            return "W\(n) \(Int(outer.rounded()))°"
+        }
+        if maxAng < 0.5 { return "inline-\(n)" }
+        if maxAng > 80.0 { return "flat-\(n)" }
+        var s = "V\(n) \(Int((2 * maxAng).rounded()))°"
+        if let p = crankPlane { s += " " + p }
+        return s
+    }
+
     // MARK: - kinematics
 
     /// Where this cylinder is in its own 720 deg cycle.

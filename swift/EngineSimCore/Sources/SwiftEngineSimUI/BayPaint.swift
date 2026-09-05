@@ -28,7 +28,7 @@
 import SwiftUI
 
 /// A metal colour that can be scaled in brightness the way the Python does.
-struct Metal {
+struct BayMetal {
     var r: Double, g: Double, b: Double
 
     func f(_ k: Double) -> Color {
@@ -36,20 +36,27 @@ struct Metal {
     }
     var color: Color { f(1.0) }
 
-    static let sleeve = Metal(r: 78 / 255, g: 84 / 255, b: 96 / 255)
-    static let piston = Metal(r: 196 / 255, g: 202 / 255, b: 214 / 255)
-    static let rod = Metal(r: 126 / 255, g: 132 / 255, b: 146 / 255)
-    static let journal = Metal(r: 98 / 255, g: 104 / 255, b: 120 / 255)
-    static let brass = Metal(r: 150 / 255, g: 110 / 255, b: 44 / 255)
-    static let head = Metal(r: 70 / 255, g: 76 / 255, b: 90 / 255)
-    static let pipe = Metal(r: 116 / 255, g: 122 / 255, b: 136 / 255)
-    static let bore = Metal(r: 24 / 255, g: 26 / 255, b: 32 / 255)
-    static let block = Metal(r: 58 / 255, g: 63 / 255, b: 74 / 255)
-    static let outline = Metal(r: 22 / 255, g: 24 / 255, b: 30 / 255)
+    static let sleeve = BayMetal(r: 78 / 255, g: 84 / 255, b: 96 / 255)
+    static let piston = BayMetal(r: 196 / 255, g: 202 / 255, b: 214 / 255)
+    static let rod = BayMetal(r: 126 / 255, g: 132 / 255, b: 146 / 255)
+    static let journal = BayMetal(r: 98 / 255, g: 104 / 255, b: 120 / 255)
+    static let brass = BayMetal(r: 150 / 255, g: 110 / 255, b: 44 / 255)
+    static let head = BayMetal(r: 70 / 255, g: 76 / 255, b: 90 / 255)
+    static let pipe = BayMetal(r: 116 / 255, g: 122 / 255, b: 136 / 255)
+    static let bore = BayMetal(r: 24 / 255, g: 26 / 255, b: 32 / 255)
+    static let block = BayMetal(r: 58 / 255, g: 63 / 255, b: 74 / 255)
+    static let outline = BayMetal(r: 22 / 255, g: 24 / 255, b: 30 / 255)
     /// Hot exhaust is red, cool intake is green -- the same coding the PC build
     /// uses, and the reason its plumbing reads at a glance.
-    static let exhaustPipe = Metal(r: 168 / 255, g: 72 / 255, b: 46 / 255)
-    static let intakePipe = Metal(r: 62 / 255, g: 146 / 255, b: 94 / 255)
+    static let exhaustPipe = BayMetal(r: 168 / 255, g: 72 / 255, b: 46 / 255)
+    static let intakePipe = BayMetal(r: 62 / 255, g: 146 / 255, b: 94 / 255)
+    /// Cool air on its way IN, before the compressor has done anything to it --
+    /// blue because it is the only cold thing in the bay, and the reason a
+    /// turbo's plumbing reads as three stages rather than two.
+    static let coolAir = BayMetal(r: 70 / 255, g: 138 / 255, b: 180 / 255)
+    static let coolant = BayMetal(r: 62 / 255, g: 126 / 255, b: 168 / 255)
+    static let chrome = BayMetal(r: 226 / 255, g: 232 / 255, b: 242 / 255)
+    static let belt = BayMetal(r: 34 / 255, g: 36 / 255, b: 42 / 255)
 }
 
 /// A direction pair: along the part, and across it.
@@ -83,7 +90,7 @@ enum BayPaint {
     /// line is off to the lit side, not down the middle.
     static func shaded(_ ctx: GraphicsContext, origin o: CGPoint, axis ax: Axis,
                        from d0: CGFloat, to d1: CGFloat, halfWidth hw: CGFloat,
-                       metal m: Metal, strips n: Int = 14) {
+                       metal m: BayMetal, strips n: Int = 14) {
         guard hw > 0.4, n > 0 else { return }
         for s in 0..<n {
             let e0 = (CGFloat(s) / CGFloat(n) * 2 - 1) * hw
@@ -115,7 +122,7 @@ enum BayPaint {
     /// A domed disc: concentric circles brightening and creeping toward the
     /// light, which is what turns a circle into a ball.
     static func dome(_ ctx: GraphicsContext, at c: CGPoint, radius r: CGFloat,
-                     metal m: Metal, lit: CGVector = CGVector(dx: -1, dy: -1),
+                     metal m: BayMetal, lit: CGVector = CGVector(dx: -1, dy: -1),
                      specular: Bool = false) {
         guard r >= 1 else { return }
         let steps: [(CGFloat, Double, CGFloat)] = [
@@ -132,7 +139,7 @@ enum BayPaint {
         }
         ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r,
                                           width: r * 2, height: r * 2)),
-                   with: .color(Metal.outline.color), lineWidth: 1)
+                   with: .color(BayMetal.outline.color), lineWidth: 1)
         if specular, r >= 4 {
             let sx = c.x + lit.dx * r * 0.5, sy = c.y + lit.dy * r * 0.5
             let sr = max(r / 5, 1)
@@ -154,12 +161,12 @@ enum BayPaint {
         beam.addLine(to: CGPoint(x: big.x - nx, y: big.y - ny))
         beam.addLine(to: CGPoint(x: small.x - nx * 0.5, y: small.y - ny * 0.5))
         beam.closeSubpath()
-        ctx.fill(beam, with: .color(Metal.rod.color))
-        ctx.stroke(beam, with: .color(Metal.rod.f(0.62)), lineWidth: 1)
+        ctx.fill(beam, with: .color(BayMetal.rod.color))
+        ctx.stroke(beam, with: .color(BayMetal.rod.f(0.62)), lineWidth: 1)
         var web = Path()
         web.move(to: small)
         web.addLine(to: big)
-        ctx.stroke(web, with: .color(Metal.rod.f(1.42)), lineWidth: 1)
+        ctx.stroke(web, with: .color(BayMetal.rod.f(1.42)), lineWidth: 1)
     }
 
     /// Combustion: white-hot core, yellow, orange, deep red edge.
@@ -183,7 +190,7 @@ enum BayPaint {
     /// A pipe drawn as a shaded tube along a path sample, so headers read as
     /// round steel rather than as a stroked line.
     static func tube(_ ctx: GraphicsContext, points: [CGPoint], radius r: CGFloat,
-                     metal m: Metal) {
+                     metal m: BayMetal) {
         guard points.count > 1 else { return }
         for i in 0..<(points.count - 1) {
             let a = points[i], b = points[i + 1]
@@ -202,7 +209,7 @@ enum BayPaint {
     /// engine, which is what made the first version's pipework look like
     /// spaghetti draped over the block.
     static func orthoPipe(_ ctx: GraphicsContext, points: [CGPoint],
-                          radius r: CGFloat, metal m: Metal) {
+                          radius r: CGFloat, metal m: BayMetal) {
         guard points.count > 1 else { return }
         for i in 0..<(points.count - 1) {
             tube(ctx, points: [points[i], points[i + 1]], radius: r, metal: m)
