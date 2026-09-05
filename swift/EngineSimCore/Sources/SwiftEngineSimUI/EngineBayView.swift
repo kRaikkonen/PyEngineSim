@@ -77,6 +77,10 @@ struct CylGeo {
     var intakePort = CGPoint.zero    // inboard side
     var headTop: CGFloat = 0         // top of the head casting
     var side: CGFloat = 1            // which way its plumbing leaves
+    /// Which HEADER this cylinder joins.  Not the same as `side`: a W's two
+    /// VR units each contain two sub-banks, and a header follows a sub-bank.
+    /// Grouping by side instead ran one pipe zig-zagging between the two.
+    var group: Int = 0
 }
 
 // MARK: - the view

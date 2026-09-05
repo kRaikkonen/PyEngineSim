@@ -114,6 +114,12 @@ final class BaySnapshotTests: XCTestCase {
             ("veyron", 400, 4000, 1.0),   // W16 quad-turbo
             ("rx7", 400, 5000, 0.8),      // 2-rotor
             ("787b", 400, 8000, 0.0),     // 4-rotor
+            // variable valve gear, below and above the 74% switch point
+            ("e92m3", 400, 4000, 0.0),    // double-VANOS, phasing, cam NOT in
+            ("e92m3", 400, 7600, 0.0),    // double-VANOS, high cam IN
+            ("rx7", 400, 7000, 0.9),      // SEQUENTIAL twins: small + big
+            ("r34", 400, 5000, 0.9),      // parallel twins, equal
+            ("evo7", 400, 5000, 0.9),     // twin-SCROLL: one turbo, divided
         ]
         var wrote = 0
         for (key, crank, rpm, boost) in cases {
@@ -132,7 +138,8 @@ final class BaySnapshotTests: XCTestCase {
                 XCTFail("could not render \(key)")
                 continue
             }
-            let path = (dir as NSString).appendingPathComponent("\(key).png")
+            let path = (dir as NSString)
+                .appendingPathComponent("\(key)_\(Int(rpm)).png")
             try png.write(to: URL(fileURLWithPath: path))
             wrote += 1
         }

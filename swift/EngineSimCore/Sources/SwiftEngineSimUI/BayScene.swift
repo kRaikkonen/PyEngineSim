@@ -93,6 +93,7 @@ struct BayScene {
         g.crank = c
         g.halfBore = halfBore
         g.side = bankDeg < 0 ? -1 : 1
+        g.group = s.bank
 
         // The throw is drawn COMPACT, not to scale.  A cutaway shows a long
         // barrel over a small crank; scaling the throw to a true stroke/2 of a
@@ -296,6 +297,7 @@ struct BayScene {
                     // plumbing leaves each VR unit on its OWN outboard side,
                     // not on the side its narrow sub-vee happens to lean
                     g.side = ui == 0 ? -1 : 1
+                    // group stays the SUB-BANK: side only says which way out
                     g.port = g.axis.at(g.crank, g.deck + g.pistonLen * 0.4,
                                        halfBore * 1.15 * CGFloat(sgn))
                     geo[s.index] = g
@@ -334,8 +336,9 @@ struct BayScene {
             ? CGPoint(x: crankFrom.x, y: min(crankFrom.y, crankTo.y))
             : CGPoint(x: min(crankFrom.x, crankTo.x), y: crankFrom.y)
         let cams = bay.engine.valvesPerCyl >= 4 ? 2 : 1
-        drawFrontDrive(ctx, at: front, radius: max(thickness * 0.42, 5),
-                       crankDeg: crankDeg, cams: cams)
+        drawFrontDrive(ctx, at: front, radius: max(thickness * 1.9, 11),
+                       crankDeg: crankDeg, cams: cams,
+                       phaserAdvance: bay.camPhaseAdvance(rpm: rpm))
         // a core, not a wall: the first one was 280 px tall and dominated the
         // whole picture
         drawRadiator(ctx, rect: CGRect(x: 6, y: 26, width: 13,
@@ -344,6 +347,10 @@ struct BayScene {
         if bay.charger != .na { drawCharger(ctx, size: size) }
         drawBoost(ctx, size: size)
         drawPlaneBadge(ctx, at: CGPoint(x: 21, y: 6), bay: bay)
+        drawValveBadge(ctx, at: CGPoint(x: 26, y: size.height - 9), bay: bay,
+                       rpm: rpm)
+        drawGearboxBadge(ctx, at: CGPoint(x: 26, y: size.height - 23),
+                         bay: bay, rpm: rpm)
     }
 
     /// The crankcase, as a shaded bar along the crank axis.
@@ -439,13 +446,17 @@ struct BayScene {
             // like and the only routing that does not lay a bar across the
             // whole engine once per cylinder.  Grouped by `side`, which the W
             // sets per UNIT so each VR gets its own pair.
-            for side in [CGFloat(-1), CGFloat(1)] {
+            // ONE HEADER PER SUB-BANK.  A vee has two of them; a W has four,
+            // because each of its VR units is itself a narrow vee.  Grouping by
+            // `side` merged each unit's two sub-banks into a single pipe that
+            // zig-zagged from one to the other down the engine.
+            let groups = Set(geo.filter { $0.halfBore > 0 }.map { $0.group })
+            for grp in groups.sorted() {
                 let idx = geo.indices.filter {
-                    geo[$0].halfBore > 0
-                        && (side < 0 ? geo[$0].side < 0 : geo[$0].side >= 0)
+                    geo[$0].halfBore > 0 && geo[$0].group == grp
                 }.sorted { geo[$0].port.y < geo[$1].port.y }
                 guard !idx.isEmpty else { continue }
-                let rail = side < 0 ? lx : rx
+                let rail = (geo[idx[0]].side < 0) ? lx : rx
                 let spine = idx.map { geo[$0].port }
                     + [CGPoint(x: rail, y: collY)]
                 // SEE-THROUGH: the header is drawn on top of the bank it
@@ -580,10 +591,16 @@ struct BayScene {
         }
 
         // valvetrain on the head: two poppets and their cam lobes
-        let lift = b.valveLift(s.index, crankAngleDeg: crankDeg,
-                               rpm: rpm)
-        drawValve(ctx, g: g, side: -1, lift: lift.intake, tint: .cyan)
-        drawValve(ctx, g: g, side: 1, lift: lift.exhaust, tint: .orange)
+        let lift = b.valveLift(s.index, crankAngleDeg: crankDeg, rpm: rpm)
+        // On the high cam the valve opens FURTHER, and goes gold to say so --
+        // the same signal the Python gives on its cam lobe.
+        let hi = b.variableValveEngaged(rpm: rpm)
+        let boost: CGFloat = hi ? 1.4 : 1.0
+        let gold = Color(red: 1.0, green: 0.76, blue: 0.28)
+        drawValve(ctx, g: g, side: -1, lift: lift.intake,
+                  tint: hi ? gold : .cyan, boost: boost)
+        drawValve(ctx, g: g, side: 1, lift: lift.exhaust,
+                  tint: hi ? gold : .orange, boost: boost)
 
         // piston: shaded barrel, ring lands, wrist pin
         let ph = hw * 0.72
@@ -608,11 +625,11 @@ struct BayScene {
     }
 
     func drawValve(_ ctx: GraphicsContext, g: CylGeo, side: CGFloat,
-                           lift: Double, tint: Color) {
+                           lift: Double, tint: Color, boost: CGFloat = 1.0) {
         let ax = g.axis, o = g.crank, hw = g.halfBore
         let e = hw * 0.5 * side
         let seat = g.deck
-        let open = CGFloat(lift) * g.pistonLen * 0.75
+        let open = CGFloat(lift) * g.pistonLen * 0.75 * boost
         let head = seat - open                       // valve head drops INTO the bore
         // stem up through the head casting
         var stem = Path()
@@ -681,32 +698,55 @@ struct BayScene {
     // two the preset actually has.
     func drawCharger(_ ctx: GraphicsContext, size: CGSize) {
         let b = bay
-        let spin = b.chargerSpin(rpm: rpm, boostBar: boostBar)
         let heat = min(max(boostBar / max(b.engine.boostBar, 0.30),
                            0.0), 1.0)
-        let r = min(size.height * 0.085, 21)
-        let twin = b.charger == .twinTurbo
-        let xs = size.width * 0.115
-        let centres: [CGPoint] = twin
-            ? [CGPoint(x: xs, y: size.height * 0.14),
-               CGPoint(x: xs, y: size.height * 0.40)]
-            : [CGPoint(x: xs, y: size.height * 0.17)]
-        for c in centres {
-            drawOneCharger(ctx, at: c, radius: r, spin: spin, heat: heat)
+        let units = max(b.chargerUnits, 1)
+        let base = min(size.height * 0.080, 19)
+        // HOT-V vs COLD-V is a real difference in where the hardware sits, and
+        // it is why a hot-V sounds muffled: the turbos live INSIDE the vee and
+        // swallow the whine, with the intake outboard.  A cold-V hangs them off
+        // the outside of the banks.  The preset already knew; the picture did
+        // not show it.
+        let hotV = b.engine.hotV && (b.layout == .vee || b.layout == .w)
+        let xs = hotV ? size.width * 0.5 : size.width * 0.115
+        let span = hotV ? size.height * 0.34 : size.height * 0.50
+        let y0 = hotV ? size.height * 0.30 : size.height * 0.13
+        for u in 0..<units {
+            let f = units == 1 ? 0.0 : CGFloat(u) / CGFloat(units - 1)
+            let c = CGPoint(x: xs, y: y0 + span * f)
+            // Each unit is its OWN SHAFT: its own spool state and its own
+            // phase.  Driving them from one number drew a twin as one turbo
+            // twice, and a SEQUENTIAL pair is not even the same size -- a small
+            // one lights early and a big one takes over up top.
+            let spin = b.chargerSpin(rpm: rpm, boostBar: boostBar,
+                                     unit: u, units: units)
+            let r = base * CGFloat(b.chargerSizeScale(unit: u, units: units))
+            drawOneCharger(ctx, at: c, radius: r, spin: spin, heat: heat,
+                           phaseSeed: Double(u) * 37.0, divided: b.twinScroll)
+            if units > 1 && b.sequentialTurbos {
+                ctx.draw(Text(u == 0 ? "primary" : "secondary")
+                    .font(.system(size: 8)).foregroundColor(.secondary),
+                         at: CGPoint(x: c.x, y: c.y + r + 9))
+            }
         }
-        let name = twin ? "turbo ×2" : b.charger.rawValue
-        if let last = centres.last {
-            ctx.draw(Text(name).font(.system(size: 9))
-                .foregroundColor(.secondary),
-                     at: CGPoint(x: last.x, y: last.y + r + 11))
+        var name: String
+        if units > 1 {
+            name = b.sequentialTurbos ? "sequential" : "turbo ×\(units)"
+        } else {
+            name = b.twinScroll ? "twin-scroll" : b.charger.rawValue
         }
+        if hotV { name += "  hot-V" }
+        else if b.layout == .vee && b.charger != .na { name += "  cold-V" }
+        ctx.draw(Text(name).font(.system(size: 9)).foregroundColor(.secondary),
+                 at: CGPoint(x: xs, y: y0 + span + base + 13))
     }
 
     /// One turbo or blower, with the FX that were missing: it runs RED HOT on
     /// boost, the wheel blurs as it spools, and it breathes hot gas in on the
     /// exhaust side and charge out on the intake side.
     func drawOneCharger(_ ctx: GraphicsContext, at c: CGPoint,
-                                radius r: CGFloat, spin: Double, heat: Double) {
+                                radius r: CGFloat, spin: Double, heat: Double,
+                                phaseSeed: Double = 0, divided: Bool = false) {
         let b = bay
         // turbine housing glowing with the heat going through it
         if heat > 0.02 {
@@ -726,7 +766,8 @@ struct BayScene {
         // truth than a slow-motion propeller.
         let blades = b.charger == .roots ? 3 : 11
         let ghosts = spin > 0.55 ? 3 : (spin > 0.2 ? 2 : 1)
-        let phase = crankDeg * 0.0175 * (0.4 + 3.0 * spin)
+        // its own shaft, so its own phase as well as its own speed
+        let phase = crankDeg * 0.0175 * (0.4 + 3.0 * spin) + phaseSeed
         for gi in 0..<ghosts {
             let lag = Double(gi) * 0.10 * (0.3 + spin)
             let alpha = gi == 0 ? 1.0 : 0.34 / Double(gi)
@@ -797,6 +838,19 @@ struct BayScene {
             }
         }
         // chrome centre nut, and the blue stator ring an e-turbo has
+        if divided {
+            // A divided TURBINE HOUSING: the rib between the two scrolls and a
+            // second inlet throat.  That is what twin-scroll is -- one turbo
+            // with two exhaust paths -- not a second turbocharger.
+            var rib = Path()
+            rib.move(to: CGPoint(x: c.x - r * 0.96, y: c.y))
+            rib.addLine(to: CGPoint(x: c.x - r * 0.42, y: c.y))
+            ctx.stroke(rib, with: .color(BayMetal.head.f(1.7)), lineWidth: 2)
+            BayPaint.orthoPipe(ctx,
+                               points: [CGPoint(x: c.x - r - 9, y: c.y + r * 0.52),
+                                        CGPoint(x: c.x - r * 0.9, y: c.y + r * 0.52)],
+                               radius: r * 0.15, metal: .exhaustPipe, alpha: 0.75)
+        }
         BayPaint.dome(ctx, at: c, radius: r * 0.20, metal: .chrome,
                       specular: true)
         if b.engine.electricTurbo {
@@ -809,6 +863,9 @@ struct BayScene {
     }
 
     func drawBoost(_ ctx: GraphicsContext, size: CGSize) {
+        // an atmospheric engine has no boost to report, and a gauge reading
+        // 0.00 bar for ever is just clutter over the top of the picture
+        guard bay.charger != .na else { return }
         let maxB = max(bay.engine.boostBar, 0.35)
         let f = CGFloat(min(max(boostBar / maxB, 0.0), 1.1))
         let w = size.width * 0.30

@@ -89,6 +89,12 @@ public struct EnginePreset: Codable {
     public let injection: String
     public let camProfile: String
     public let valveLift: String
+    /// "VTEC" / "VANOS" / "Ti-VCT" / "VVT-i" / ... and "" for none.  It is a
+    /// NAME, not a mechanism: the preset carries what the maker calls it so the
+    /// badge can say so, and 71 of the 131 cars have one.
+    public let variableValve: String
+    /// dohc | sohc | ohv -- an OHV has no overhead cam to phase.
+    public let valvetrain: String
     public let vtecRpm: Double
     public let tipScale: Double
     public let balanceShaft: Bool
@@ -145,6 +151,8 @@ public struct EnginePreset: Codable {
         case injection
         case camProfile = "cam_profile"
         case valveLift = "valve_lift"
+        case variableValve = "variable_valve"
+        case valvetrain
         case vtecRpm = "vtec_rpm"
         case tipScale = "tip_scale"
         case balanceShaft = "balance_shaft"

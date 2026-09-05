@@ -173,6 +173,60 @@ public struct EngineBay {
         return s
     }
 
+    // MARK: - variable valve gear
+
+    /// What the maker calls it -- "VTEC", "double-VANOS", "Ti-VCT", "VVT-i" --
+    /// or nil when the engine has none.  71 of the 131 cars have one.
+    public var variableValveName: String? {
+        let v = engine.variableValve
+        return v.isEmpty ? nil : v
+    }
+
+    /// Is the aggressive cam in?
+    ///
+    /// VTEC and all its cousins switch to the high-lift lobe high in the rev
+    /// range; the Python uses 74% of redline and so does this, so the badge
+    /// lights at the same place the sound changes character.
+    public func variableValveEngaged(rpm: Double) -> Bool {
+        variableValveName != nil && rpm > 0.74 * engine.redlineRpm
+    }
+
+    /// How far the cam phaser has swung, 0..1.
+    ///
+    /// A PHASER is a different device from a lift switch: it rotates the cam
+    /// against the crank continuously with rpm rather than snapping between two
+    /// lobes.  An engine can have either or both, and a pushrod engine has no
+    /// overhead cam to phase at all.
+    public func camPhaseAdvance(rpm: Double) -> Double {
+        guard variableValveName != nil, engine.valvetrain != "ohv" else { return 0 }
+        return min(max(rpm / max(engine.redlineRpm, 1.0), 0.0), 1.0)
+    }
+
+    // MARK: - transmission
+
+    /// What is behind the flywheel, spelled out.
+    ///
+    /// These are genuinely different machines and they sound different: a
+    /// single-plate racing clutch and a straight-cut dog box whine and bang, a
+    /// DCT swaps without lifting, a torque converter smears the shift away.
+    /// The preset knows which it is; nothing was showing it.
+    public var gearboxLabel: String {
+        switch engine.gearboxType {
+        case "dct": return "DCT"
+        case "single": return "single-clutch"
+        case "at": return "torque converter"
+        case "aircraft": return "direct drive"
+        default: return "manual"
+        }
+    }
+
+    /// Straight-cut gears WHINE: the teeth mesh with no helix angle to roll the
+    /// load on, so every tooth strikes at once.  30 of the 131 cars have them,
+    /// and `gearGrain` says how loud it is.
+    public var straightCutWhine: Double {
+        engine.straightCut ? max(engine.gearGrain, 0.12) : 0.0
+    }
+
     // MARK: - kinematics
 
     /// Where this cylinder is in its own 720 deg cycle.
@@ -312,11 +366,40 @@ public struct EngineBay {
         if engine.electricTurbo { return .electric }
         switch engine.induction {
         case "turbo":
-            return engine.inductionSubtype.contains("twin") ? .twinTurbo : .turbo
+            // "twin_scroll" is ONE turbo with a DIVIDED TURBINE HOUSING, not
+            // two turbochargers -- matching on "twin" drew a phantom second
+            // unit on four cars.  Only `twin` and `sequential` are two.
+            let st = engine.inductionSubtype
+            return (st == "twin" || st == "sequential") ? .twinTurbo : .turbo
         case "roots", "screw": return .roots
         case "centrifugal": return .centrifugal
         default: return .na
         }
+    }
+
+    /// How many charger housings there actually are.
+    public var chargerUnits: Int {
+        switch charger {
+        case .na: return 0
+        case .twinTurbo: return cylinderCount >= 16 ? 4 : 2   // W16 is a quad
+        default: return 1
+        }
+    }
+
+    /// A SEQUENTIAL pair is a small turbo that spools early and a big one that
+    /// takes over up top; a parallel pair is two of the same.  They are two
+    /// different mechanisms and they do not move together.
+    public var sequentialTurbos: Bool {
+        engine.inductionSubtype == "sequential"
+    }
+
+    /// A divided turbine housing on a single turbo.
+    public var twinScroll: Bool { engine.inductionSubtype == "twin_scroll" }
+
+    /// Relative size of one unit: sequential pairs are deliberately unequal.
+    public func chargerSizeScale(unit: Int, units: Int) -> Double {
+        guard sequentialTurbos, units > 1 else { return 1.0 }
+        return unit == 0 ? 0.72 : 1.16          // primary small, secondary big
     }
 
     /// Shaft speed as a fraction of flat out, for the spinning wheel.
@@ -324,7 +407,8 @@ public struct EngineBay {
     /// A turbo is driven by the exhaust, so it tracks BOOST and hangs on after
     /// a lift; a belt-driven blower is geared to the crank and can only ever
     /// follow rpm.  Two different mechanisms, so two different needles.
-    public func chargerSpin(rpm: Double, boostBar: Double) -> Double {
+    public func chargerSpin(rpm: Double, boostBar: Double,
+                           unit: Int = 0, units: Int = 1) -> Double {
         let rf = min(max(rpm / max(engine.redlineRpm, 1.0), 0.0), 1.2)
         switch charger {
         case .na: return 0
@@ -334,7 +418,15 @@ public struct EngineBay {
             return min(max(boostBar / max(engine.boostBar, 0.1), 0.0), 1.0)
         case .turbo, .twinTurbo:
             let b = min(max(boostBar / max(engine.boostBar, 0.1), 0.0), 1.0)
-            return min(0.25 * rf + 0.85 * b, 1.2)       // idles on exhaust flow
+            var s = min(0.25 * rf + 0.85 * b, 1.2)      // idles on exhaust flow
+            if sequentialTurbos, units > 1 {
+                // The point of a sequential pair is that they are NOT in step:
+                // the small one is already spinning while the big one is still
+                // waiting for enough exhaust to light it.
+                s = unit == 0 ? min(s * 1.5 + 0.20, 1.2)
+                              : max((s - 0.38) / 0.62, 0.0)
+            }
+            return s
         }
     }
 }

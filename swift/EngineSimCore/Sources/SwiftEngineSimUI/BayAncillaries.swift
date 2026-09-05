@@ -87,7 +87,8 @@ extension BayScene {
     /// alternator is a small pulley, so it spins faster than the crank.  All
     /// three come off the same crank angle as the pistons.
     func drawFrontDrive(_ ctx: GraphicsContext, at c: CGPoint, radius r: CGFloat,
-                        crankDeg: Double, cams: Int) {
+                        crankDeg: Double, cams: Int,
+                        phaserAdvance: Double = 0) {
         guard r > 4 else { return }
         let camR = r * 1.05                       // twice the teeth, half the speed
         let altR = r * 0.52
@@ -113,6 +114,29 @@ extension BayScene {
                              y: c.y - CGFloat(cos(ang)) * (r + camR) * 0.98)
             gear(ctx, at: gc, radius: camR, teeth: 16,
                  phase: -crankDeg * 0.5, metal: .journal)
+            // THE PHASER.  A cam phaser rotates the cam against the crank, so
+            // it is drawn as a vane inside the sprocket that swings round as
+            // the advance comes in -- which is the thing itself, not a lamp
+            // stuck on to represent it.  A lift switch (VTEC) is a different
+            // device and shows up on the valves instead.
+            if phaserAdvance > 0.001 {
+                let pr = camR * 0.56
+                ctx.fill(Path(ellipseIn: CGRect(x: gc.x - pr, y: gc.y - pr,
+                                                width: pr * 2, height: pr * 2)),
+                         with: .color(Color(red: 0.17, green: 0.38, blue: 0.59)))
+                ctx.stroke(Path(ellipseIn: CGRect(x: gc.x - pr, y: gc.y - pr,
+                                                  width: pr * 2, height: pr * 2)),
+                           with: .color(Color(red: 0.47, green: 0.77, blue: 1.0)),
+                           lineWidth: 1)
+                let va = -crankDeg * 0.5 * .pi / 180.0 + phaserAdvance * .pi
+                var vane = Path()
+                vane.move(to: gc)
+                vane.addLine(to: CGPoint(x: gc.x + CGFloat(cos(va)) * pr * 0.92,
+                                         y: gc.y + CGFloat(sin(va)) * pr * 0.92))
+                ctx.stroke(vane, with: .color(Color(red: 0.59, green: 0.82,
+                                                    blue: 1.0)),
+                           lineWidth: max(pr * 0.28, 1.4))
+            }
         }
         gear(ctx, at: c, radius: r, teeth: 12, phase: crankDeg, metal: .brass)
         // alternator body + its pulley
@@ -143,6 +167,62 @@ extension BayScene {
     /// The crank-plane badge.  A V8 fires every 90 deg whichever plane it has,
     /// so the interval cannot tell them apart -- but they sound completely
     /// different, which makes it worth saying out loud.
+    /// The variable-valve badge: what the maker calls it, and whether it is IN.
+    ///
+    /// Worth its own indicator because it is the one thing in the bay that
+    /// changes the engine's character rather than its speed -- and it lights at
+    /// 74% of redline, the same point the sound switches to the aggressive cam.
+    func drawValveBadge(_ ctx: GraphicsContext, at p: CGPoint, bay b: EngineBay,
+                        rpm: Double) {
+        guard let name = b.variableValveName else { return }
+        let on = b.variableValveEngaged(rpm: rpm)
+        let col: Color = on ? Color(red: 0.35, green: 0.86, blue: 0.47)
+                            : Color(white: 0.58)
+        let r: CGFloat = 3.6
+        ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r,
+                                        width: r * 2, height: r * 2)),
+                 with: .color(col))
+        if on {                               // a soft halo when it is in
+            ctx.fill(Path(ellipseIn: CGRect(x: p.x - r * 2.4, y: p.y - r * 2.4,
+                                            width: r * 4.8, height: r * 4.8)),
+                     with: .color(col.opacity(0.22)))
+        }
+        ctx.draw(Text(on ? "\(name)  IN" : name)
+            .font(.system(size: 9, weight: on ? .bold : .regular,
+                          design: .monospaced))
+            .foregroundColor(col),
+                 at: CGPoint(x: p.x + 8, y: p.y), anchor: .leading)
+    }
+
+    /// The transmission badge, with a whine bar for straight-cut gears.
+    ///
+    /// A dog box and a DCT are different machines, not settings of one, and the
+    /// straight-cut whine is a thing you can HEAR -- so the bar rides with rpm
+    /// rather than sitting at a fixed length.
+    func drawGearboxBadge(_ ctx: GraphicsContext, at p: CGPoint,
+                          bay b: EngineBay, rpm: Double) {
+        let whine = b.straightCutWhine
+        let tint: Color = whine > 0 ? Color(red: 0.95, green: 0.78, blue: 0.35)
+                                    : Color(white: 0.58)
+        ctx.draw(Text(b.gearboxLabel)
+            .font(.system(size: 9, design: .monospaced))
+            .foregroundColor(tint), at: p, anchor: .leading)
+        guard whine > 0 else { return }
+        // straight-cut: say so, and show it rising with the revs
+        let rf = min(max(rpm / max(b.engine.redlineRpm, 1), 0), 1)
+        let w: CGFloat = 34
+        let x = p.x + 78, y = p.y - 2
+        ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: 4),
+                      cornerRadius: 2), with: .color(.white.opacity(0.13)))
+        ctx.fill(Path(roundedRect: CGRect(x: x, y: y,
+                                          width: w * CGFloat(rf * whine * 2.0),
+                                          height: 4), cornerRadius: 2),
+                 with: .color(tint))
+        ctx.draw(Text("straight-cut").font(.system(size: 8))
+            .foregroundColor(tint.opacity(0.85)),
+                 at: CGPoint(x: x + w + 4, y: p.y), anchor: .leading)
+    }
+
     func drawPlaneBadge(_ ctx: GraphicsContext, at p: CGPoint, bay b: EngineBay) {
         let text = b.configLabel
         let flat = b.crankPlane == "flat-plane"
