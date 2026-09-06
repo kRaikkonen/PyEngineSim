@@ -49,6 +49,9 @@ public final class Synthesizer {
 
     /// Live controls.
     public var params: [String: Double]
+    /// The listener's tone stack, after the limiter -- see applyToneControls.
+    var tone: [Biquad] = (0..<4).map { _ in Biquad.identity }
+    var toneKeys: [String] = ["", "", "", ""]
     /// The voicing switches, with the Python's own defaults -- note that
         /// `vacuum` is OFF: the deep-vacuum overrun is the physical one, and
         /// the arcade lift-off bark is what ships.
@@ -196,6 +199,56 @@ public final class Synthesizer {
     public var speed = 0.0
 
     // ---------------------------------------------------------------- render
+    /// The listener's TONE CONTROLS, applied after everything else.
+    ///
+    /// Deliberately not the `eq_*` bells inside ListenerStage: those sit ahead
+    /// of the auto-level and the limiter, and the limiter clamps broadband, so
+    /// a bass boost made there is pulled straight back down -- measurably, the
+    /// low band's SHARE of the output falls when you raise it.  A tone control
+    /// has to be the last thing in the chain or it is not a tone control.
+    ///
+    /// At 0 dB every band is skipped, so an untouched EQ leaves the tuned sound
+    /// bit-for-bit as it was.  A boost is trimmed back by a third of itself to
+    /// keep the peaks off the rails, since there is no limiter after this.
+    func applyToneControls(_ out: inout [Float]) {
+        let bands: [(String, Double, Double, Int)] = [
+            ("ueq_low", 120.0, 0.7, 0), ("ueq_mid", 850.0, 0.8, 1),
+            ("ueq_high", 4500.0, 0.7, 2), ("ueq_presence", 3000.0, 0.6, 3),
+        ]
+        var trim = 0.0
+        var any = false
+        for (key, f0, q, idx) in bands {
+            let g = params[key] ?? 0.0
+            guard abs(g) > 0.05 else { continue }
+            any = true
+            trim += max(g, 0.0)
+            let ba = cache.peaking(f0, q, g)
+            let k = "\(ba.b)\(ba.a)"
+            if toneKeys[idx] != k {
+                tone[idx].setCoefficients(b: ba.b, a: ba.a)
+                toneKeys[idx] = k
+            }
+            var d = out.map { Double($0) }
+            tone[idx].process(&d)
+            for i in 0..<out.count { out[i] = Float(d[i]) }
+        }
+        guard any, trim > 0.01 else { return }
+        // A third of the boost, no more: trimming by 0.62 of it cancelled the
+        // boost outright and the band came back level with flat.  A third
+        // leaves the tone audible, and the SOFT KNEE below catches the peaks
+        // that a third does not -- +12 dB of bass still hit 1.23 with trim
+        // alone, and there is no limiter after this stage to save it.
+        let g = pow(10.0, -(trim / 3.0) / 20.0)
+        let knee = 0.85
+        for i in 0..<out.count {
+            let v = Double(out[i]) * g
+            let a = abs(v)
+            if a <= knee { out[i] = Float(v); continue }
+            let over = tanh((a - knee) / (1.0 - knee)) * (1.0 - knee)
+            out[i] = Float(v < 0 ? -(knee + over) : knee + over)
+        }
+    }
+
     public func render(frames: Int) -> [Float] {
         let sr = sampleRate
         let rpm = physics.rpm
@@ -381,7 +434,8 @@ public final class Synthesizer {
         ms.combLoad = combLoad
         ms.camLump = r.camLump + r.balanceRough
         ms.wobW = r.wobW; ms.pov = pov
-        let out = master.process(sig, state: ms, params: params)
+        var out = master.process(sig, state: ms, params: params)
+        applyToneControls(&out)
         lastLevelForBlowout = master.lastLevel
         _ = combustion; _ = voiced           // taps already recorded them
         return out

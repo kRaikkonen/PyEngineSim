@@ -34,6 +34,7 @@ public struct ContentView: View {
                 engineChooser
                 slots
                 layers
+                eqPanel
                 // Only worth showing once a REAL car is talking: in demo
                 // there is nothing to map from, so the controls would be
                 // three ways of saying the same thing.
@@ -300,6 +301,108 @@ public struct ContentView: View {
             Text("neutral revs free · in gear it has to drag the car along")
                 .font(.system(size: 10)).foregroundColor(.secondary)
         }
+    }
+
+    // ------------------------------------------------------------------ EQ
+    // The chain already ran through four peaking filters -- 120 Hz, 850 Hz,
+    // 4.5 kHz and a presence bell at 3 kHz -- but nothing could move them, so
+    // "EQ" in the layer list was only a visibility switch.  These are those
+    // filters.  At 0 dB each one is skipped entirely, so flat is EXACTLY the
+    // tuned sound rather than an approximation of it.
+    private var eqPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("EQ").font(.caption2).foregroundColor(.secondary)
+                Spacer()
+                if model.eqIsFlat {
+                    Text("flat").font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                } else {
+                    Button("reset") { model.resetEQ() }
+                        .font(.caption2)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.15))
+                        .cornerRadius(6)
+                }
+            }
+            eqCurve
+            eqBand("bass", "120 Hz", model.eqLow) { model.setEQ("low", $0) }
+            eqBand("mid", "850 Hz", model.eqMid) { model.setEQ("mid", $0) }
+            eqBand("treble", "4.5 kHz", model.eqHigh) { model.setEQ("high", $0) }
+            eqBand("presence", "3 kHz", model.eqPresence) {
+                model.setEQ("presence", $0)
+            }
+        }
+    }
+
+    /// One band: name, corner frequency, the slider, and the gain in dB.
+    private func eqBand(_ name: String, _ freq: String, _ value: Double,
+                        _ set: @escaping (Double) -> Void) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(name).font(.system(size: 11))
+                Text(freq).font(.system(size: 8)).foregroundColor(.secondary)
+            }
+            .frame(width: 56, alignment: .leading)
+            Slider(value: Binding(get: { value }, set: set), in: -12...12,
+                   step: 0.5)
+            Text(dbText(value))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(abs(value) < 0.05 ? .secondary : .accentColor)
+                .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    /// Signed, one decimal, without String(format:) -- this project has been
+    /// bitten by that once, and interpolating a Double prints 3.000000.
+    private func dbText(_ v: Double) -> String {
+        let t = (v * 10).rounded() / 10
+        let sign = t > 0 ? "+" : (t < 0 ? "-" : " ")
+        let a = abs(t)
+        let whole = Int(a)
+        let frac = Int(((a - Double(whole)) * 10).rounded())
+        return "\(sign)\(whole).\(frac) dB"
+    }
+
+    /// A rough picture of what the four bells add up to, so the sliders are not
+    /// four numbers with no shape.  Drawn from the same centre frequencies and
+    /// Q values the filters use, summed in dB.
+    private var eqCurve: some View {
+        Canvas { ctx, size in
+            let bands: [(Double, Double, Double)] = [
+                (model.eqLow, 120, 0.7), (model.eqMid, 850, 0.8),
+                (model.eqHigh, 4500, 0.7), (model.eqPresence, 3000, 0.6),
+            ]
+            func gain(at f: Double) -> Double {
+                var g = 0.0
+                for (amp, f0, q) in bands where abs(amp) > 0.01 {
+                    // a peaking bell in dB: amp at f0, falling either side by
+                    // the bandwidth Q sets
+                    let x = log2(f / f0) * q * 2.2
+                    g += amp / (1.0 + x * x)
+                }
+                return g
+            }
+            var p = Path()
+            let n = 72
+            for i in 0...n {
+                let t = Double(i) / Double(n)
+                let f = 40.0 * pow(320.0, t)              // 40 Hz .. 12.8 kHz
+                let y = size.height * 0.5
+                    - CGFloat(gain(at: f) / 14.0) * size.height * 0.42
+                let pt = CGPoint(x: size.width * CGFloat(t), y: y)
+                if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+            }
+            var zero = Path()
+            zero.move(to: CGPoint(x: 0, y: size.height * 0.5))
+            zero.addLine(to: CGPoint(x: size.width, y: size.height * 0.5))
+            ctx.stroke(zero, with: .color(.secondary.opacity(0.30)),
+                       lineWidth: 1)
+            ctx.stroke(p, with: .color(.accentColor), lineWidth: 2)
+        }
+        .frame(height: 46)
+        .background(Color.secondary.opacity(0.10))
+        .cornerRadius(7)
     }
 
     // --------------------------------------------------------- engine bay

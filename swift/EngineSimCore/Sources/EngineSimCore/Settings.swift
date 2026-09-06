@@ -58,6 +58,13 @@ public struct Settings: Codable, Equatable {
     /// and any screen samples it far too slowly, so the pistons alias into a
     /// crawl -- slowing the clock is the honest fix.
     public var bayTimeScale = 1.0
+    /// The four EQ bands, in dB.  They ride on the chain's own peaking filters
+    /// (120 Hz, 850 Hz, 4.5 kHz, and presence at 3 kHz), so 0 is exactly the
+    /// tuned sound and nothing is coloured until you move one.
+    public var eqLow = 0.0
+    public var eqMid = 0.0
+    public var eqHigh = 0.0
+    public var eqPresence = 0.0
 
     /// A public struct's memberwise init is INTERNAL by default, so from
     /// another module the only visible initialiser was the one Decodable
@@ -101,12 +108,17 @@ public struct Settings: Codable, Equatable {
         learnRange = bul(.learnRange, true)
         showBay = bul(.showBay, false)
         bayTimeScale = dbl(.bayTimeScale, 1.0)
+        eqLow = dbl(.eqLow, 0.0)
+        eqMid = dbl(.eqMid, 0.0)
+        eqHigh = dbl(.eqHigh, 0.0)
+        eqPresence = dbl(.eqPresence, 0.0)
     }
 
     enum CodingKeys: String, CodingKey {
         case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
         case host, port, bleDeviceID, bleDeviceName, linkKind
         case carIdle, carRedline, learnRange, showBay, bayTimeScale
+        case eqLow, eqMid, eqHigh, eqPresence
     }
 
     public var mapMode: RpmMap.Mode {

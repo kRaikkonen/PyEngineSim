@@ -71,6 +71,11 @@ public final class AppModel: ObservableObject {
     @Published public var showBay = false
     /// 1 = real time; below that the strobe unwinds.
     @Published public var bayTimeScale = 1.0
+    /// EQ, in dB.  Names as they are on a stereo, because that is what they do.
+    @Published public var eqLow = 0.0
+    @Published public var eqMid = 0.0
+    @Published public var eqHigh = 0.0
+    @Published public var eqPresence = 0.0
     /// The REAL car's rev range that the mapping stretches from.  Published so
     /// the readout moves as the map learns, not only when it is set by hand.
     @Published public var carIdle = 760.0
@@ -146,6 +151,8 @@ public final class AppModel: ObservableObject {
             learnRange = saved.learnRange
             showBay = saved.showBay
             bayTimeScale = saved.bayTimeScale
+            eqLow = saved.eqLow; eqMid = saved.eqMid
+            eqHigh = saved.eqHigh; eqPresence = saved.eqPresence
             let lib = try AppModel.loadLibrary()
             library = lib
             if lib.engine(engineKey) == nil { engineKey = "a3" }
@@ -237,6 +244,7 @@ public final class AppModel: ObservableObject {
         try? car?.setEngine(key)
         engineName = car?.engine.name ?? key
         applyLayers()          // the new synth starts with every layer visible
+        applyEQ()              // ...and flat, so push the EQ back in
         if source == .demo {
             makePedal()                       // new car, new ratios and torque
             car?.telemetry = pedalSource
@@ -344,6 +352,8 @@ public final class AppModel: ObservableObject {
         s.bleDeviceName = bleDeviceName
         s.showBay = showBay
         s.bayTimeScale = bayTimeScale
+        s.eqLow = eqLow; s.eqMid = eqMid
+        s.eqHigh = eqHigh; s.eqPresence = eqPresence
         s.carIdle = carIdle
         s.carRedline = carRedline
         s.learnRange = learnRange
@@ -367,6 +377,9 @@ public final class AppModel: ObservableObject {
         bleDeviceName = s.bleDeviceName
         showBay = s.showBay
         bayTimeScale = s.bayTimeScale
+        eqLow = s.eqLow; eqMid = s.eqMid
+        eqHigh = s.eqHigh; eqPresence = s.eqPresence
+        applyEQ()
         carIdle = s.carIdle
         carRedline = s.carRedline
         learnRange = s.learnRange
@@ -480,6 +493,46 @@ public final class AppModel: ObservableObject {
     ///
     /// Off tears the view down, which is what makes off free -- the animator,
     /// the pulse field and the redraw clock all belong to the view.
+    /// Push the EQ into the running chain.
+    ///
+    /// These are the SAME peaking filters the tuned sound already goes through,
+    /// so at 0 dB the filter is skipped entirely and the output is bit-for-bit
+    /// what it was before the panel existed.
+    public func applyEQ() {
+        guard let sy = car?.synth else { return }
+        // ueq_*, not eq_*: the eq_* bells sit ahead of the limiter, which
+        // claws a bass boost straight back.  These are the tone stack after it.
+        sy.params["ueq_low"] = eqLow
+        sy.params["ueq_mid"] = eqMid
+        sy.params["ueq_high"] = eqHigh
+        sy.params["ueq_presence"] = eqPresence
+    }
+
+    public func setEQ(_ band: String, _ dB: Double) {
+        let v = min(max(dB, -12.0), 12.0)
+        switch band {
+        case "low": eqLow = v
+        case "mid": eqMid = v
+        case "high": eqHigh = v
+        default: eqPresence = v
+        }
+        applyEQ()
+        persist()
+    }
+
+    /// Back to the tuned sound.
+    /// True when every band is at 0, i.e. the untouched tuned sound.
+    public var eqIsFlat: Bool {
+        abs(eqLow) < 0.05 && abs(eqMid) < 0.05
+            && abs(eqHigh) < 0.05 && abs(eqPresence) < 0.05
+    }
+
+    public func resetEQ() {
+        eqLow = 0; eqMid = 0; eqHigh = 0; eqPresence = 0
+        applyEQ()
+        persist()
+    }
+
     public func setShowBay(_ on: Bool) {
         showBay = on
         persist()
