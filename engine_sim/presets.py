@@ -30,6 +30,17 @@ def _even_offsets(n: int, firing_order=None):
     return offsets
 
 
+def _offsets_from_intervals(firing_order, intervals):
+    """Cycle offsets (deg) for a firing order with the given intervals between
+    successive firings (they must sum to 720) -- for odd-fire engines."""
+    offsets = [0.0] * len(firing_order)
+    at = 0.0
+    for cyl_number, gap in zip(firing_order, intervals):
+        offsets[cyl_number - 1] = at
+        at += gap
+    return offsets
+
+
 # --------------------------------------------------------------------- engines
 
 def porsche_911_h6() -> Engine:
@@ -301,9 +312,17 @@ def ferrari_f2004_v10() -> Engine:
 
     The screaming 2004 F1 V10: ~3.0 L, ~96 x 41.4 mm (wildly oversquare to rev),
     ~13:1 CR, ~900 PS at ~18000 rpm, redline ~18500.  Almost no flywheel, so it
-    spins up instantly.  Firing every 72 deg -> a 1500 Hz wail at full song.
+    spins up instantly.  Fires 90/54 deg (see below): each bank's 144-deg
+    beat, 730 Hz at 17.5k, is the loudest line of a real onboard recording.
     """
-    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])                      # even 72-deg firing
+    # A 90-deg V10 on COMMON crankpins (0/144/216/288/72 -- F1 teams would
+    # not use offset pins) is ODD-FIRING: each bank fires evenly every 144
+    # deg, bank B 90 deg after bank A -> 90/54/90/54.  Even 72-deg firing
+    # needs a 72-deg V or split pins, which this engine does not have; with it
+    # the banks' 2.5th orders met 180 deg apart and cancelled -- the order a
+    # real onboard recording has as its loudest line.
+    offsets = _offsets_from_intervals([1, 6, 5, 10, 2, 7, 3, 8, 4, 9],
+                                      [90.0, 54.0] * 5)
     cylinders = []
     for i in range(10):
         bank = -45.0 if i < 5 else 45.0              # 90-deg V
@@ -328,7 +347,8 @@ def ferrari_f2004_v10() -> Engine:
         starter_torque=120.0,
         exhaust_tone=185.0,              # very high F1 shriek
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
-        exhaust_channels=1, exhaust_openness=0.98, muffler_volume_m3=0.0008,
+        # two banks, two 5-into-1 systems, two exits -- not one merged pipe
+        exhaust_channels=2, exhaust_openness=0.98, muffler_volume_m3=0.0008,
         wall_material="titanium",
         megaphone=0.7,                           # open upswept race exit -> mid bark
         has_cat=False,                           # open race exhaust, no cat/GPF

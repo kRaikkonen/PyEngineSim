@@ -765,6 +765,14 @@ class _FlybyDelay:
         return out
 
 
+# Flow-noise efficiency of the PHYSICAL voice (jet noise at the exit, the
+# intake roar, the lip tones), the one constant it has: set so the F2004's
+# tone-to-noise ratio under 2 kHz matches a real onboard recording at 17.5k
+# rpm (12.4 / 9.4 dB real vs 18.0 / 9.1 dB here).  Lighthill's U^8 carries it
+# to every other car and speed.
+_PHYS_JET = 0.003
+
+
 class _TrackSide:
     """Where the car is along the track, and which trackside post hears it.
 
@@ -1132,6 +1140,7 @@ class Synthesizer:
         _Vevo = c0.clearance_volume + 0.9 * c0.displacement     # cyl vol at EVO (~BDC)
         _S = _Aev * 550.0 / max(_Vevo, 1e-9)
         self._bd_sharp = min(max(_S / 380.0, 0.40), 2.30)       # 380 = reference
+        self._gp_grid = None      # gas-solver pulse LUT, baked on first use
 
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
@@ -1337,6 +1346,10 @@ class Synthesizer:
                        vacuum=False,   # F10: deep-vacuum overrun — Leo prefers
                                        # the arcade lift-off bark as DEFAULT;
                                        # F10 turns the physical quiet ON
+                       gas_pulse=False,  # the gas solver's own pulse SHAPE
+                                         # (experiment; see _gas_pulse_at)
+                       phys_voice=False, # the PHYSICAL voice: solver pulse, no
+                                         # synthesizer layers (see p_phys_voice)
                        cyl_split=True) # F11: the exhaust merges the cylinders
                                        # (fuel-metering scatter only); the
                                        # block and intake carry each one's own
@@ -2373,6 +2386,15 @@ class Synthesizer:
             # scatter at extreme speed is degrees, not tenths.
             self._tjit += ((self._rng.random(len(self._jit)) - 0.5)
                            * (1.4 * wall) - self._tjit) * 0.45
+            if self.vx.get("phys_voice", False):
+                # PHYSICAL cycle-to-cycle scatter: a race engine at full load
+                # varies a few percent firing to firing (COV of IMEP ~1-3 %),
+                # and the exhaust pulse's TIMING does not vary at all -- the
+                # exhaust valve opens on the cam, not on the burn.  (The "wall"
+                # above -- +-13 % and +-1.5 deg at F1 revs -- was ear-set to
+                # break up a drill sound whose real cause was the pulse.)
+                self._jit = 1.0 + 0.06 * (self._rng.random(len(self._jit)) - 0.5)
+                self._tjit[:] = 0.0
 
             # Cylinder spread ~3x stronger than before, and bigger still at low
             # rpm (valve shut), where the spaced pops make each cylinder's own
@@ -2393,6 +2415,33 @@ class Synthesizer:
             voice = self._cyl_voice
             cv = self.params.get("cyl_voice", 1.0)
             use_voice = voice is not None and cv > 1e-3
+            # THE GAS SOLVER'S PULSE (experiment switch): the exhaust valve's
+            # own mass-flow burst at this rpm, from the closed-loop solver, at
+            # the SAME energy as the parametric pulse -- so only the shape moves.
+            phys = self.vx.get("phys_voice", False)
+            gp = self._gas_pulse_at(sim.rpm) \
+                if (self.vx.get("gas_pulse") or phys) else None
+            if gp is not None:
+                ref = np.arange(0.0, 720.0, 1.0)
+                rd = ref - VALVE_OPEN
+                rdd = np.clip(rd, 0.0, None)
+                rin = (ref >= VALVE_OPEN) & (ref <= VALVE_CLOSE)
+                r_rise = max((2.0 + 4.0 * (1.0 - load)) * dps, 1e-4)
+                r_tb = max(0.30 * base_tau / self._bd_sharp ** 0.85, 2.5)
+                r_blow = (0.7 + load) * np.clip(rd / r_rise, 0.0, 1.0) \
+                    * np.exp(-rdd / r_tb)
+                r_soft = np.clip(rd / self.params["attack_deg"], 0.0, 1.0)
+                r_soft = 0.5 - 0.5 * np.cos(r_soft * math.pi)
+                r_disp = r_soft * (1.0 - np.exp(-rdd / (0.5 * base_tau))) \
+                    * np.exp(-rdd / (1.5 * base_tau))
+                r_cl = np.clip((VALVE_CLOSE - ref) / 18.0, 0.0, 1.0)
+                pk_ = self._bd_sharp
+                r_par = np.where(rin, ((0.78 + 0.22 * pk_) * r_blow
+                                       + 0.7 * (1.22 - 0.22 * pk_) * r_disp)
+                                 * r_cl, 0.0)
+                r_gas = np.interp(ref, self._gp_deg, gp, period=720.0)
+                gp_scale = math.sqrt(float(np.mean(r_par * r_par))
+                                     / max(float(np.mean(r_gas * r_gas)), 1e-18))
             for j, off in enumerate(self._offsets):
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
@@ -2453,6 +2502,9 @@ class Synthesizer:
                                  ((0.78 + 0.22 * pk) * blow
                                   + 0.7 * (1.22 - 0.22 * pk) * disp)
                                  * close * amp_j, 0.0)
+                if gp is not None:
+                    pulse = np.interp(phi, self._gp_deg, gp, period=720.0) \
+                        * (gp_scale * amp_j)
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)
@@ -2541,8 +2593,17 @@ class Synthesizer:
             # here (the fire bang's EARLY reverb).  The waveguide system runs
             # in PASS 2 below, AFTER the bang is voiced — so the per-car voice
             # rides THROUGH the pipe instead of competing with it in a mix.
-            src = self._src_verb[ci].process(
-                chans[ci] + 0.25 * P["turbulence"] * fizz_chans[ci])
+            # (The PHYSICAL voice skips it: a port is centimetres long, its
+            # reflections are sub-millisecond -- not a room's 35 ms combs.)
+            if self.vx.get("phys_voice", False):
+                # ...nor an in-pipe turbulence hiss: turbulence INSIDE a duct
+                # is a weak (dipole) source next to the jet at the exit, which
+                # the tail-pipe stage carries.  Layered here it swamped the
+                # pulsation ripple that is the actual sound.
+                src = chans[ci]
+            else:
+                src = self._src_verb[ci].process(
+                    chans[ci] + 0.25 * P["turbulence"] * fizz_chans[ci])
             srcs.append(src)
             dry += src
         inv = 1.0 / self._nchan
@@ -2553,7 +2614,8 @@ class Synthesizer:
         # symmetric pulse has sparse, clean harmonics — the synthesizer tell
         # ("太对称、太干净").  One-sided quadratic = crest steepening + the
         # even-order richness of the real wave.  (0.45 overshot -> 0.25.)
-        if self.vx.get("asym", True):
+        phys = self.vx.get("phys_voice", False)
+        if self.vx.get("asym", True) and not phys:
             dry = dry + 0.30 * np.maximum(dry, 0.0) * np.tanh(np.abs(dry))
 
         # ================== IN-PIPE REVERB (管内混响) =======================
@@ -2584,7 +2646,7 @@ class Synthesizer:
         #   body  = a pitched CHORD that RINGS (high-Q resonators), the musical note
         snap = np.diff(dry, prepend=dry[:1])             # raw broadband edge
         crack = snap
-        if _HAVE_SCIPY:                                   # bright tick, not a thump
+        if _HAVE_SCIPY and not phys:                      # bright tick, not a thump
             crack, self._crack_lp_zi = lfilter(
                 self._crack_lp[0], self._crack_lp[1], crack, zi=self._crack_lp_zi)
             crack, self._crack_hp_zi = lfilter(
@@ -2596,7 +2658,7 @@ class Synthesizer:
         # weak band-pass of the thump.  Now switching voicings (keys 1-6) clearly
         # changes the timbre, and the chord is its own voice — not 'more ignition'.
         body = np.zeros(frames, dtype=np.float64)
-        if _HAVE_SCIPY and P["body"] > 1e-3:
+        if _HAVE_SCIPY and P["body"] > 1e-3 and not phys:
             # LIVE physical pitch: the firing body rings at the actual firing
             # fundamental (rpm-tracking), NOT a fixed 90 Hz — that was leftover
             # synthesizer DNA (the resonators sat at 90*k Hz at any rev).  The
@@ -2621,13 +2683,15 @@ class Synthesizer:
         fw, fg = P["fire_weight"], P["fire_grit"]
         bang = (P["dry"] * dry + P["crack"] * (1.0 + 1.3 * fg) * crack
                 + (1.6 * P["body"]) * (1.0 + 1.4 * fw) * body)
+        if phys:
+            bang = P["dry"] * dry     # the solver's pulse, nothing layered on
         # choked blowdown adds saturation/harmonics at the SOURCE — only at high
         # load (choke>0), so idle/cruise stay clean; this is the physical origin of
         # the coarse "tear" a turbo/NA engine gets when you bury the throttle.
         drive = P["drive"] + 1.6 * fg + 0.5 * choke
-        if drive > 1e-3:
+        if drive > 1e-3 and not phys:
             bang = np.tanh(bang * (1.0 + 7.0 * drive))
-        if _HAVE_SCIPY and fw > 0.02:                    # low-shelf 'weight'
+        if _HAVE_SCIPY and fw > 0.02 and not phys:       # low-shelf 'weight'
             b, a = self._pk(110.0, 0.6, 10.0 * fw)
             bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
         # the voiced firing event -- pulse train turned into combustion
@@ -2650,6 +2714,8 @@ class Synthesizer:
         # cooled 'clatter').  This is what stops it sounding like combustion out
         # in the open air.
         combustion = bang + P["turbulence"] * (fizz * inv)
+        if phys:
+            combustion = bang
         # BAY bus: the second physical RADIATOR.  What the ENGINE-BAY emits is the
         # structure-borne block voice (the casting ringing behind the mass-law
         # lid) plus, further down, everything mounted in the bay: intake mouth,
@@ -3112,6 +3178,8 @@ class Synthesizer:
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             intake_gain = P["intake"] * sim.throttle * (0.25 + 0.75 * rpm_frac)
+            if self.vx.get("phys_voice", False):
+                intake_gain *= P.get("phys_jet", _PHYS_JET)   # same flow-noise physics
             # BOOST mass-flow: a forced-induction engine pumps FAR more air through
             # the intake (mass flow ~ MAP·rpm), so the induction roar swells with the
             # compressor's boosted charge — the whoosh a turbo/blower car has that an
@@ -3136,7 +3204,10 @@ class Synthesizer:
         # the RB26 / S65 / F1 / 4A-GE signature.  A single-plenum intake (2JZ,
         # 4G63, most road cars) has none of it, only the muffled roar above; so
         # this is exactly what tells those otherwise-similar engines apart.
-        if getattr(sim.engine, "individual_throttle", False) and dps > 1e-12:
+        # (the PHYSICAL voice has no sum-of-sines howl: it is not a model of
+        # an intake, and at 0.38 it put 70 dB on the 5th/10th/15th orders --
+        # the F1 "electric drill")
+        if getattr(sim.engine, "individual_throttle", False) and dps > 1e-12                 and not self.vx.get("phys_voice", False):
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             fire_hz = sim.rpm * len(self._offsets) / 120.0
             thr = min(max(sim.throttle, 0.0), 1.0)
@@ -3263,7 +3334,8 @@ class Synthesizer:
         sig = self._tap("megaphone", sig)     # exit-horn mid bark + top trim
         # displacement THUNDER: the deep low-end roar a big-cylinder engine carries
         # under the note (so a Ferrari V12 thunders, not just screams).
-        if _HAVE_SCIPY and self._thunder is not None:
+        phys = self.vx.get("phys_voice", False)
+        if _HAVE_SCIPY and self._thunder is not None and not phys:
             sig, self._thunder_zi = lfilter(self._thunder[0], self._thunder[1],
                                             sig, zi=self._thunder_zi)
         # BROADBAND PULSATING LOW BAND (the 澎湃): a real system's low end is
@@ -3273,7 +3345,8 @@ class Synthesizer:
         # is the 轰隆隆 / air-push.  Gain from cylinder litres (big slugs
         # thunder), level rides load via mean flow; the modulation envelope is
         # locked to the live crank phase.
-        if _HAVE_SCIPY and dps > 1e-12 and self.vx.get("rumble", True):
+        if _HAVE_SCIPY and dps > 1e-12 and self.vx.get("rumble", True) \
+                and not phys:
             cyl_l2 = (sim.engine.total_displacement * 1000.0) \
                 / max(len(self._offsets), 1)
             # LOUDER x2 (Leo): with the unipolar pedestal gone (F9) this band IS
@@ -3420,6 +3493,13 @@ class Synthesizer:
                         320.0)
             jet_amp = min(max((u_abs / 150.0) ** 2, 0.5), 6.0)
             self._u_abs = u_abs               # Mach input for the flyby crackle
+            if self.vx.get("phys_voice", False):
+                # LIGHTHILL: jet noise POWER ~ rho U^8 D^2 / c^5, so its
+                # amplitude goes as U^4 -- a 320 m/s race exit is 34 dB above
+                # a 120 m/s road car, not the capped (u/150)^2 above.  One
+                # efficiency constant, P["phys_jet"], set against a real
+                # recording's tone-to-noise ratio.
+                jet_amp = P.get("phys_jet", _PHYS_JET) * (u_abs / 150.0) ** 4
             shear_gain = P.get("shear", 0.10) * flow * jet_amp \
                 * (0.30 + 0.70 * getattr(self, "_comb_load", 1.0))
             if not self.vx.get("noise", True):
@@ -3457,6 +3537,8 @@ class Synthesizer:
                 edg, self._edge_zi = lfilter(
                     be, ae, self._rng.standard_normal(frames),
                     zi=getattr(self, "_edge_zi", np.zeros(2)))
+                if self.vx.get("phys_voice", False):
+                    a_fl *= P.get("phys_jet", _PHYS_JET) * (u_abs / 150.0) ** 2
                 sig = sig + a_fl * (0.40 * vex + 0.12 * edg)
         sig = self._tap("tailpipe exit", sig)  # gas tearing out of the tip
 
@@ -4205,6 +4287,36 @@ class Synthesizer:
                 d += 720.0
             if d <= swept:
                 self.cylinder_light[i] = 1.0
+
+    _GP_GRID = (0.12, 0.25, 0.40, 0.55, 0.70, 0.85, 1.0)
+    _GP_N = 360
+
+    def _gas_pulse_at(self, rpm):
+        """The exhaust valve's mass-flow burst over one cycle at this rpm, from
+        the closed-loop gas solver (gas_truth), interpolated across a baked rpm
+        grid.  Baked on first use (~0.8 s, offline physics); None if the solver
+        cannot run for this engine."""
+        if self._gp_grid is None:
+            try:
+                from .gas_truth import exhaust_pulse_lut
+                g, p = exhaust_pulse_lut(self.sim.engine, rpms=self._GP_GRID,
+                                         N=self._GP_N)
+                self._gp_grid = np.asarray(g, dtype=np.float64)
+                self._gp_lut = np.asarray(p, dtype=np.float64)
+                self._gp_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
+            except Exception:
+                self._gp_grid = False
+        if self._gp_grid is False:
+            return None
+        rf = rpm / max(self.sim.engine.redline_rpm, 1.0)
+        g = self._gp_grid
+        if rf <= g[0]:
+            return self._gp_lut[0]
+        if rf >= g[-1]:
+            return self._gp_lut[-1]
+        i = int(np.searchsorted(g, rf))
+        t = (rf - g[i - 1]) / (g[i] - g[i - 1])
+        return (1.0 - t) * self._gp_lut[i - 1] + t * self._gp_lut[i]
 
     def _struct_gain(self, crank, ref_deg):
         """Each cylinder reaches the listener through its OWN path.
