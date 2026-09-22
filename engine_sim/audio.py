@@ -3327,6 +3327,17 @@ class Synthesizer:
             stq = self._pov_lp(self._pov_lp(bay_p, "st1", geo["struct_fc"]),
                                "st2", geo["struct_fc"])
             bay_air = bay_air + geo["struct"] * stq
+        if geo.get("flyby"):
+            # The car has to be moved BEFORE the mix now: directivity belongs
+            # to the TAILPIPE alone.  The bay -- block, airbox, intake -- is a
+            # big, roughly omnidirectional radiator; only the pipe end beams,
+            # and it beams BACKWARDS.
+            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
+            x = getattr(self, "_tk_x", -60.0) + v * (frames / self.sample_rate)
+            if x > 100.0:
+                x -= 200.0
+            self._tk_x = x
+            tail = self._tk_directivity(tail, x)
         sig = geo["g_tail"] * tail + geo["g_bay"] * bay_air
         if geo["ground"]:
             dg, rg = geo["ground"]
@@ -3365,19 +3376,50 @@ class Synthesizer:
                              float(getattr(self, "_tk_x", -60.0)))
         if geo.get("flyby"):
             # TRACKSIDE FLY-BY: the car drives past a fixed mic (posts every
-            # 200 m, 12 m off the line).  The propagation delay follows the live
-            # distance — its per-sample ramp IS the Doppler bend; level 1/r and
-            # air absorption (HF dies with distance) ride the same geometry.
-            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
-            x = getattr(self, "_tk_x", -60.0) + v * (frames / self.sample_rate)
-            if x > 100.0:
-                x -= 200.0
-            self._tk_x = x
-            dist = math.hypot(x, 12.0)
+            # 200 m, 12 m off the line; the car was moved above).  Every path's
+            # propagation delay follows the live distance -- its per-sample ramp
+            # IS the Doppler bend; level 1/r and air absorption ride the same
+            # geometry.
+            #
+            # TWO paths now, not one.  The tarmac is a mirror: the mic hears the
+            # tailpipe directly AND its image under the road, a little later.
+            # The difference between them is tiny (a few cm) and it CHANGES as
+            # the car closes, so the comb it carves SWEEPS -- down through the
+            # mids to a first notch near 1.6 kHz at the pass, and back up as the
+            # car leaves.  That moving notch is the "whoosh" on a TV pass.
+            x = self._tk_x
+            L, hm = 12.0, 1.2                     # mic: 12 m off, 1.2 m up
+            race = (self.straight_cut
+                    or self.sim.engine.exhaust_openness > 0.85)
+            hs = 0.55 if race else 0.33           # pipe exit height
+            r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
+            r2 = math.sqrt(x * x + L * L + (hm + hs) ** 2)   # via the image
             if not hasattr(self, "_tk_dl"):
                 self._tk_dl = _FlybyDelay(12000)
-            sig = self._tk_dl.process(sig, dist / 343.0 * self.sample_rate) \
-                * (12.0 / dist)
+            if not hasattr(self, "_tk_dg"):
+                self._tk_dg = _FlybyDelay(12000)
+            src = sig
+            sig = self._tk_dl.process(src, r1 / 343.0 * self.sample_rate) \
+                * (L / r1)
+            gnd = self._tk_dg.process(src, r2 / 343.0 * self.sample_rate) \
+                * (0.9 * L / r2)                  # asphalt |R| ~ 0.9, hard
+            if _HAVE_SCIPY:
+                # The bounce is only COHERENT up to a point.  At grazing
+                # incidence asphalt is smooth by the Rayleigh criterion right up
+                # through the audio band, but air turbulence and the fact that a
+                # car is not a point source decorrelate the two paths more the
+                # farther they run -- so the comb is sharp as it passes and
+                # washes out at range.  (The chase cam's bounce is low-passed
+                # hard for the opposite reason: there the geometry is FIXED, so
+                # its notches never move and just sit in the presence band.)
+                fcoh = min(max(9000.0 * L / r2, 1500.0),
+                           self.sample_rate * 0.45)
+                bG, aG = self._bw(1, fcoh)
+                if not hasattr(self, "_tk_g_zi"):
+                    self._tk_g_zi = np.zeros(1)
+                gnd, self._tk_g_zi = lfilter(bG, aG, gnd, zi=self._tk_g_zi)
+            sig = sig + gnd
+            dist = r1
             if _HAVE_SCIPY:                       # molecular HF loss over range
                 fca = min(800.0 + 16000.0 / (1.0 + dist / 30.0),
                           self.sample_rate * 0.45)
@@ -3866,6 +3908,57 @@ class Synthesizer:
                 d += 720.0
             if d <= swept:
                 self.cylinder_light[i] = 1.0
+
+    def _tk_directivity(self, tail, x):
+        """How a pipe end radiates depends on which way it points.
+
+        A tailpipe is omnidirectional while its mouth is small against the
+        wavelength and starts to BEAM once the circumference catches up --
+        ka ~ 1, a = the tip radius, so f = c / (2*pi*a).  For the tips in the
+        library that is 1.9-3.0 kHz: exactly the rasp band.  Below it the sound
+        spills out everywhere; above it, it goes where the pipe points, which
+        on a car is straight BACK.
+
+        So the tail is split at ka = 1 and the upper band is given a monopole +
+        dipole pattern, D = (1 - b) + b * (1 + cos t) / 2, with t the angle
+        between the pipe's axis and the mic, normalised so its power averaged
+        over the sphere is unity -- directivity moves energy around, it does not
+        make any.  With b = 0.85 that is +4 dB straight up the pipe, -0.7 dB
+        side-on, and -12 dB from in front.
+
+        Which is the TV pass exactly: coming towards you the pipe points away
+        and the car sounds dull; once it is past you are looking up the pipe
+        and the rasp arrives all at once.  The split is complementary (low +
+        high is the input), so a pattern of 1 gives back the input unchanged.
+        """
+        eng = self.sim.engine
+        sr = self.sample_rate
+        L, hm = 12.0, 1.2
+        race = self.straight_cut or eng.exhaust_openness > 0.85
+        hs = 0.55 if race else 0.33
+        a_tip = eng.exhaust_radius_m * max(getattr(eng, "tip_scale", 1.0), 0.5)
+        fc = min(343.0 / (2.0 * math.pi * max(a_tip, 0.005)), sr * 0.45)
+        r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
+        # pipe axis points BACKWARD (-x); the mic is at (0, L, hm) from a car at
+        # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
+        cos_t = x / r1
+        b = 0.85
+        A, B = 1.0 - 0.5 * b, 0.5 * b
+        norm = 1.0 / math.sqrt(A * A + B * B / 3.0)
+        d_new = norm * (A + B * cos_t)
+        d_old = getattr(self, "_tk_dir", d_new)
+        self._tk_dir = d_new
+        if not _HAVE_SCIPY:
+            return tail
+        bL, aL = self._bw(1, fc)
+        if not hasattr(self, "_tk_dir_zi"):
+            self._tk_dir_zi = np.zeros(1)
+        low, self._tk_dir_zi = lfilter(bL, aL, tail, zi=self._tk_dir_zi)
+        high = tail - low
+        # ramped across the block: the angle swings fast at the pass, and a
+        # step per block would zipper
+        g = np.linspace(d_old, d_new, len(tail))
+        return low + g * high
 
     def _overrun_pops(self, frames):
         """Overrun exhaust pops/bangs ('放炮') — modelled like little combustion

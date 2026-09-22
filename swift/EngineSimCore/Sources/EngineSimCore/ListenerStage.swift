@@ -111,6 +111,11 @@ public final class ListenerStage {
     var stiff = OnePole.identity, stiffKey = ""
     var boom = Biquad.identity, boomKey = ""
     var flybyDL = FlybyDelay(maxDelay: 12000)
+    /// The tailpipe's IMAGE under the road: the ground-bounce path, delayed by
+    /// its own (slightly longer) distance so its Doppler is its own too.
+    var flybyDG = FlybyDelay(maxDelay: 12000)
+    /// Last block's directivity gain, so the next one ramps from it.
+    var tkDir: Double?
     var flybyLP = OnePole.identity, flybyLPKey = ""
     var trackX = -60.0
     /// The mix just before the fly-by, and the car's position -- the two
@@ -312,6 +317,17 @@ public final class ListenerStage {
                                 "st2", geo.strctFc)
             for i in 0..<n { bayAir[i] += geo.strct * st[i] }
         }
+        if geo.flyby {
+            // The car is moved BEFORE the mix now: directivity belongs to the
+            // TAILPIPE alone.  The bay -- block, airbox, intake -- is a big,
+            // roughly omnidirectional radiator; only the pipe end beams, and it
+            // beams BACKWARDS.
+            let v = abs(s.speed)
+            var x = trackX + v * (Double(n) / sr)
+            if x > 100.0 { x -= 200.0 }
+            trackX = x
+            tail = tkDirectivity(tail, x)
+        }
         for i in 0..<n { sig[i] = geo.gTail * tail[i] + geo.gBay * bayAir[i] }
 
         if let (dg, _) = geo.ground, dg > 0 {
@@ -348,16 +364,38 @@ public final class ListenerStage {
         dbgPovSignal = sig
         dbgTrackX = trackX
         if geo.flyby {
-            // the car drives past a fixed mic: posts every 200 m, 12 m off the
-            // line.  Level, air absorption and Doppler all ride one geometry.
-            let v = abs(s.speed)
-            var x = trackX + v * (Double(n) / sr)
-            if x > 100.0 { x -= 200.0 }
-            trackX = x
-            let dist = (x * x + 144.0).squareRoot()
-            sig = flybyDL.process(sig, dist / 343.0 * sr)
-            let g = 12.0 / dist
-            for i in 0..<n { sig[i] *= g }
+            // The car drives past a fixed mic: posts every 200 m, 12 m off the
+            // line (it was moved above).  Every path's delay follows the live
+            // distance -- its per-sample ramp IS the Doppler bend.
+            //
+            // TWO paths now.  The tarmac is a mirror, so the mic hears the pipe
+            // directly AND its image under the road a little later.  The
+            // difference is a few centimetres and it CHANGES as the car closes,
+            // so the comb it carves SWEEPS -- down through the mids to a first
+            // notch near 1.6 kHz at the pass and back up as the car leaves.
+            let x = trackX
+            let L = 12.0, hm = 1.2                    // mic 12 m off, 1.2 m up
+            let race = eng.straightCut || eng.exhaustOpenness > 0.85
+            let hs = race ? 0.55 : 0.33               // pipe exit height
+            let r1 = (x * x + L * L + (hm - hs) * (hm - hs)).squareRoot()
+            let r2 = (x * x + L * L + (hm + hs) * (hm + hs)).squareRoot()
+            let src = sig
+            sig = flybyDL.process(src, r1 / 343.0 * sr)
+            let g1 = L / r1
+            for i in 0..<n { sig[i] *= g1 }
+            var gnd = flybyDG.process(src, r2 / 343.0 * sr)
+            let g2 = 0.9 * L / r2                     // asphalt |R| ~ 0.9
+            for i in 0..<n { gnd[i] *= g2 }
+            // Coherent only up to a point: at grazing incidence asphalt is
+            // smooth through the audio band, but turbulence and a car not
+            // being a point source decorrelate the paths with range -- sharp
+            // at the pass, washed out far away.  (The chase cam low-passes its
+            // bounce hard for the opposite reason: its geometry is FIXED, so
+            // its notches never move and just sit in the presence band.)
+            let fcoh = min(max(9000.0 * L / r2, 1500.0), sr * 0.45)
+            gnd = povLowPass(gnd, "tk_gnd", fcoh)
+            for i in 0..<n { sig[i] += gnd[i] }
+            let dist = r1
             let fca = min(800.0 + 16000.0 / (1.0 + dist / 30.0), sr * 0.45)
             let ba = cache.butter(1, fca)
             let k = "\(ba.b)\(ba.a)"
@@ -387,6 +425,48 @@ public final class ListenerStage {
         let y = buf! + x
         povBuf[key] = Array(y.suffix(d))
         return Array(y.prefix(x.count))
+    }
+
+    /// How a pipe end radiates depends on which way it points.
+    ///
+    /// Omnidirectional while the mouth is small against the wavelength; it
+    /// starts to BEAM once the circumference catches up, ka ~ 1, so above
+    /// f = c / (2*pi*a).  For the tips in the library that is 1.9-3.0 kHz --
+    /// exactly the rasp band -- and on a car the pipe points straight BACK.
+    ///
+    /// The tail is split at ka = 1 and the upper band given a monopole + dipole
+    /// pattern D = (1 - b) + b (1 + cos t) / 2, normalised so its power averaged
+    /// over the sphere is one: directivity moves energy, it does not make it.
+    /// At b = 0.85 that is +4 dB up the pipe, -0.7 dB side-on, -12 dB in front.
+    /// The split is complementary, so a pattern of one returns the input.
+    func tkDirectivity(_ tail: [Double], _ x: Double) -> [Double] {
+        let sr = sampleRate
+        let L = 12.0, hm = 1.2
+        let race = eng.straightCut || eng.exhaustOpenness > 0.85
+        let hs = race ? 0.55 : 0.33
+        let aTip = eng.exhaustRadiusM * max(eng.tipScale, 0.5)
+        let fc = min(343.0 / (2.0 * Double.pi * max(aTip, 0.005)), sr * 0.45)
+        let r1 = (x * x + L * L + (hm - hs) * (hm - hs)).squareRoot()
+        // the pipe points BACKWARD (-x): cos(theta) = x / r1, positive once
+        // the car is past the mic
+        let cosT = x / r1
+        let b = 0.85
+        let A = 1.0 - 0.5 * b, B = 0.5 * b
+        let norm = 1.0 / (A * A + B * B / 3.0).squareRoot()
+        let dNew = norm * (A + B * cosT)
+        let dOld = tkDir ?? dNew
+        tkDir = dNew
+        let low = povLowPass(tail, "tk_dir", fc)
+        let n = tail.count
+        var out = [Double](repeating: 0, count: n)
+        // ramped across the block like numpy.linspace(d_old, d_new, n): the
+        // angle swings fast at the pass and a step per block would zipper
+        for i in 0..<n {
+            let g = n > 1 ? dOld + (dNew - dOld) * Double(i) / Double(n - 1)
+                          : dNew
+            out[i] = low[i] + g * (tail[i] - low[i])
+        }
+        return out
     }
 
     func povLowPass(_ x: [Double], _ key: String, _ fc: Double) -> [Double] {
