@@ -334,6 +334,8 @@ def ferrari_f2004_v10() -> Engine:
     return Engine(
         name="Ferrari F2004 Tipo053 3.0 V10 F1",
         cylinders=cylinders,
+        open_cockpit=True,               # single-seater: onboard camera
+        phys_voice=True,                 # measured against a real onboard
         straight_cut=True,               # F1: sequential dog box
         flywheel_inertia=0.045,          # F1: revs almost instantly
         redline_rpm=18500,
@@ -354,7 +356,10 @@ def ferrari_f2004_v10() -> Engine:
         has_cat=False,                           # open race exhaust, no cat/GPF
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         gear_ratios=[3.04, 2.57, 2.20, 1.89, 1.64, 1.42, 1.24], final_drive=5.35,
-        vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,        gearbox_type="single",
+        vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,
+        # F1 seamless shift, as on the F2007: the real onboard's upshifts dip
+        # ~0.3 dB; the single-clutch slam (declutch, flare, kick) dipped 8-13
+        gearbox_type="dct",
     )
 
 
@@ -1744,6 +1749,8 @@ def ferrari_f2007_v8() -> Engine:
     return Engine(
         name="Ferrari F2007 Tipo056 2.4 V8 F1",
         cylinders=cylinders,
+        open_cockpit=True,               # single-seater: onboard camera
+        phys_voice=True,                 # the F2004's physical voice
         flywheel_inertia=0.05, redline_rpm=19000, idle_rpm=4000,
         heat_release_k=3.6, ve_peak_frac=0.85, ve_width_frac=0.55,
         friction_static=6.0, friction_quad=4.0e-5,
@@ -1778,6 +1785,7 @@ def ferrari_sf25_v6_hybrid() -> Engine:
     return Engine(
         name="Ferrari SF-25 1.6 V6 F1 hybrid",
         cylinders=cylinders,
+        open_cockpit=True,               # single-seater: onboard camera
         flywheel_inertia=0.11, redline_rpm=15000, idle_rpm=4000,
         heat_release_k=2.6, ve_peak_frac=0.8, ve_width_frac=0.6,
         friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3800.0,
@@ -1814,6 +1822,7 @@ def mclaren_mp44_honda_v6() -> Engine:
     return Engine(
         name="McLaren MP4/4 Honda RA168E 1.5 V6 turbo",
         cylinders=cylinders,
+        open_cockpit=True,               # single-seater: onboard camera
         flywheel_inertia=0.11, redline_rpm=12500, idle_rpm=3500,
         heat_release_k=3.5, ve_peak_frac=0.8, ve_width_frac=0.6,
         friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3300.0,

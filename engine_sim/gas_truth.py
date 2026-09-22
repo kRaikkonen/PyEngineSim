@@ -867,6 +867,60 @@ def exhaust_pressure_pulse(eng, rf, throttle=1.0, dphi=1.0, N=128,
     return [v / peak for v in out]
 
 
+def exhaust_pulse_with_amplitude(eng, rf, throttle=1.0, dphi=1.0, N=360,
+                                 spark_advance_fn=None, warmup=6,
+                                 intake=False):
+    """The exhaust-valve FLOW burst over one cycle (peak-normalised, as
+    exhaust_pressure_pulse) AND the exhaust-runner pressure pulse's peak
+    amplitude over its cycle mean, in pascals -- the wave's physical size,
+    which sets how hard it steepens down the pipe.  (The lumped runner's own
+    velocity is no use for that: a 0-D volume averages the density the wave
+    carries, so it reads supersonic; its PRESSURE is sound.)"""
+    rpm = max(rf * eng.redline_rpm, eng.idle_rpm)
+    b_max = getattr(eng, "boost_bar", 0.0)
+    if b_max > 0.0 and throttle > 0.15:
+        spool = (rpm / max(eng.redline_rpm, 1.0)
+                 - getattr(eng, "turbo_spool_frac", 0.12)) \
+            / max(getattr(eng, "turbo_spool_width", 0.5), 1e-3)
+        boost_bar = b_max * min(max(spool, 0.0), 1.0) * min(throttle / 0.6, 1.0)
+    else:
+        boost_bar = 0.0
+    cyl = TruthCylinder(eng, spark_advance_fn, boost_bar=boost_bar, rpm=rpm)
+    for _ in range(warmup):
+        phi = 0.0
+        while phi < 720.0:
+            cyl.step(phi + dphi, dphi, rpm, throttle)
+            phi += dphi
+    flow, pres, iflow = [], [], []
+    phi = 0.0
+    while phi < 720.0:
+        fi, fe = cyl.step(phi + dphi, dphi, rpm, throttle)
+        flow.append(fe)
+        iflow.append(fi)
+        pres.append(cyl.exhaust_runner.pressure())
+        phi += dphi
+    n = len(flow)
+
+    def resample(tr):
+        out = []
+        for i in range(N):
+            x = i * (n - 1) / max(N - 1, 1)
+            i0 = int(x)
+            i1 = min(i0 + 1, n - 1)
+            out.append(tr[i0] + (tr[i1] - tr[i0]) * (x - i0))
+        return out
+
+    out = resample(flow)
+    peak = max(abs(v) for v in out) or 1.0
+    p_mean = sum(pres) / max(len(pres), 1)
+    if intake:
+        # the intake-valve flow, in the SAME units (moles per step, over the
+        # exhaust's peak) -- so intake vs exhaust is the solver's own ratio
+        return ([v / peak for v in out], max(pres) - p_mean, p_mean,
+                [v / peak for v in resample(iflow)])
+    return [v / peak for v in out], max(pres) - p_mean, p_mean
+
+
 def exhaust_pulse_lut(eng, rpms=(0.30, 0.55, 0.85), N=128, spark_advance_fn=None):
     """Bake the Tier-B time-domain excitation LUT: the real exhaust pulse SHAPE at
     a few rpm fractions.  Returns (rpm_frac_grid, pulses[n_rpm][N])."""

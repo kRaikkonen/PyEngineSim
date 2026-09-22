@@ -600,15 +600,34 @@ class App:
             _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
                        if self.synth else None)
+        # the F11 voice choice survives a device / rate change (a car change
+        # opens on the new car's own voice)
+        saved_voice = (self.synth.vx.get("phys_voice")
+                       if (self.synth and keep_engine_flags) else None)
+        # PER-CAR params (Synthesizer.PER_CAR_PARAMS, derived from each engine)
+        # ride along a car change like the mixer sliders do -- except into a
+        # PHYSICAL-voice car, which was measured with its own values and keeps
+        # them.  What it would have inherited is passed on when it is left, so
+        # the classic cars after it sound exactly as they did before.
+        if saved is not None and not keep_engine_flags:
+            if getattr(self, "_carry_pc", None) is not None:
+                saved.update(self._carry_pc)
+            self._carry_pc = None
         if self.synth:
             self.synth.stop()
         device = self.devices[self.device_idx][1]
         rate = SAMPLE_RATES[self.rate_idx]
         self.synth = Synthesizer(self.sim, sample_rate=rate, device=device)
         if saved is not None:
+            if not keep_engine_flags and self.synth.vx.get("phys_voice"):
+                pc = Synthesizer.PER_CAR_PARAMS
+                self._carry_pc = {k: saved[k] for k in pc if k in saved}
+                saved = {k: v for k, v in saved.items() if k not in pc}
             self.synth.params.update(saved)
             for f, v in saved_flags.items():
                 setattr(self.synth, f, v)
+            if saved_voice is not None:
+                self.synth.vx["phys_voice"] = saved_voice
         else:
             self._apply_voice()
             # what the phone app opens on -- pops armed and the note held up
@@ -1313,8 +1332,11 @@ class App:
                     self.synth.vx[nm] = not self.synth.vx.get(nm, True)
                     self._flash(f"{nm} {'ON' if self.synth.vx[nm] else 'OFF'}")
                 elif e.key == pygame.K_F8:     # all new voicing <-> all classic
-                    on = not all(self.synth.vx.values())
-                    for k in self.synth.vx:
+                    # (the bisect flags only -- not the voice itself, F11)
+                    _bis = [k for k in self.synth.vx
+                            if k not in ("phys_voice", "gas_pulse", "cyl_split")]
+                    on = not all(self.synth.vx[k] for k in _bis)
+                    for k in _bis:
                         self.synth.vx[k] = on
                     self._flash("voicing NEW" if on else "voicing CLASSIC")
                 elif e.key == pygame.K_F9:     # bipolar (AC) source pulses
@@ -1328,13 +1350,13 @@ class App:
                     self._flash("deep vacuum "
                                 + ("ON (physical)" if self.synth.vx["vacuum"]
                                    else "OFF (arcade overrun)"))
-                elif e.key == pygame.K_F11:    # physical cylinder split
-                    self.synth.vx["cyl_split"] = not self.synth.vx.get(
-                        "cyl_split", False)
-                    self._flash("cylinders "
-                                + ("SPLIT (exhaust merged, block per-cyl)"
-                                   if self.synth.vx["cyl_split"]
-                                   else "CLASSIC (personality on the exhaust)"))
+                elif e.key == pygame.K_F11:    # the physical voice (A/B)
+                    self.synth.vx["phys_voice"] = not self.synth.vx.get(
+                        "phys_voice", False)
+                    self._flash("voice "
+                                + ("PHYSICAL (gas solver, no synth layers)"
+                                   if self.synth.vx["phys_voice"]
+                                   else "CLASSIC"))
                 elif e.key == pygame.K_F12:    # the LAYERS panel
                     self.flow_dbg = not getattr(self, "flow_dbg", False)
                     self._flash("layers " + ("open" if self.flow_dbg else "closed"))

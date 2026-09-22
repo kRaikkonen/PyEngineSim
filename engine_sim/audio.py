@@ -771,6 +771,23 @@ class _FlybyDelay:
 # rpm (12.4 / 9.4 dB real vs 18.0 / 9.1 dB here).  Lighthill's U^8 carries it
 # to every other car and speed.
 _PHYS_JET = 0.003
+# Gear-mesh radiation of the physical voice (see _induction_audio): one
+# constant, set so a loaded straight-cut box sits under the engine at full
+# throttle as in a real F1 onboard recording (4-8 kHz ~2 % of the energy in a
+# moving-car run, as in the recording; the old whine was levelled against the
+# old voice's spike top end, ~30 dB hotter than a physical engine's).
+_PHYS_GEAR = 0.03
+# The physical voice's output level, in the synth's own units: without the
+# classic voice's drive stages it leaves the chain ~40 dB under it (F2004 at
+# full load: 0.002 against the classic's 0.2), below the reach of the AGC's
+# gain ceiling.  A units constant, not voicing -- one gain on the whole mix,
+# no ratio between any two sources moves.
+_PHYS_MAKEUP = 100.0
+# The airbox of the physical intake (see _induction's AIRBOX): its volume in
+# engine displacements (race airboxes run 2-5x; over that range the firing
+# orders reach the mouth 30-38 dB down either way) and its inlet duct's length.
+_AIRBOX_VOL_X = 3.0
+_AIRBOX_DUCT_M = 0.40
 
 
 class _TrackSide:
@@ -1348,9 +1365,12 @@ class Synthesizer:
                                        # F10 turns the physical quiet ON
                        gas_pulse=False,  # the gas solver's own pulse SHAPE
                                          # (experiment; see _gas_pulse_at)
-                       phys_voice=False, # the PHYSICAL voice: solver pulse, no
-                                         # synthesizer layers (see p_phys_voice)
-                       cyl_split=False) # F11: the exhaust merges the cylinders
+                       phys_voice=bool(getattr(simulator.engine,
+                                               "phys_voice", False)),
+                                         # F11: the PHYSICAL voice -- solver
+                                         # pulse, no synthesizer layers; on by
+                                         # default where the preset asks
+                       cyl_split=False) # the exhaust merges the cylinders
                                         # (fuel-metering scatter only); the
                                         # block and intake carry each one's own
                                         # path.  PART OF THE PHYSICAL VOICE
@@ -2097,6 +2117,12 @@ class Synthesizer:
     #: The source taps (pulses / bang / fizz) and the final `output` are not
     #: here -- the first three ARE the excitation and the last has nothing
     #: after it, so neither has an input to fall back to.
+    # params each car derives from its own engine in __init__ (geometry, bore/
+    # stroke, fuel system) -- not mixer settings; see App._make_synth
+    PER_CAR_PARAMS = ("res1", "res2", "wall_thickness", "muffler", "crack",
+                      "body", "turbulence", "drive", "cyl_spread",
+                      "src_reverb", "intake")
+
     STAGES = ("voiced", "block", "pipes", "header", "head/port", "catalytic",
               "standing-wave", "resonator", "muffler", "valve bypass",
               "induction+gears", "wall de-honk", "metal ring", "megaphone",
@@ -2187,12 +2213,37 @@ class Synthesizer:
         """
         eng = self.sim.engine
         race = self.straight_cut or getattr(eng, "exhaust_openness", 0.6) > 0.85
-        key = (self.pov, race)
+        onboard = self.pov == "cockpit" and getattr(eng, "open_cockpit", False)
+        key = (self.pov, race, onboard)
         if self._pov_cache is not None and self._pov_cache[0] == key:
             return self._pov_cache[1]
         c, sr = 343.0, self.sample_rate
         fc_mass = lambda m: 2238.7 / m           # mass-law TL=20 dB corner
-        if self.pov == "cockpit":
+        if onboard:
+            # ONBOARD CAMERA on a single-seater's roll hoop -- open air, so no
+            # partition, no cabin boom, no shell radiation, no cabin room.
+            # From the geometry: the airbox inlet 0.35 m away (just below and
+            # ahead), the engine 0.8 m (behind the driver's back), the exits
+            # 1.4 m (1.2 m back, 0.5 m down).  Spherical spreading and path
+            # delays relative to the nearest (the intake).  The exits point
+            # back and ~30 deg up, the camera sits ahead of them: cos = -0.6 to
+            # the pipe axis; the inlet faces forward, the camera is above and a
+            # little behind it (near field): cos ~ -0.3.
+            # (the gearbox and any turbo/blower housings sit at the back of
+            # the engine, ~1.3 m -- NOT at the airbox mouth: only the mouth's
+            # share of the intake bus is 0.35 m away)
+            r_int, r_bay, r_tail, r_box = 0.35, 0.8, 1.4, 1.3
+            geo = dict(
+                g_bay=1.0, g_tail=r_bay / r_tail, g_int=r_bay / r_int,
+                g_box=r_bay / r_box,
+                d_int=0, d_bay=int((r_bay - r_int) / c * sr),
+                d_tail=int((r_tail - r_int) / c * sr),
+                bay_alpha=1.0, bay_fc=fc_mass(6.3),
+                tail_alpha=None, tail_fc=None,
+                struct=0.0, struct_fc=800.0, chassis=0.0, chassis_fc=90.0,
+                boom_f=0.0, ground=None, onboard=True,
+                cos_tail=-0.6, cos_int=-0.3)
+        elif self.pov == "cockpit":
             r_bay, r_tail = 1.5, 3.2             # head->engine / head->tail exit
             # ``alpha`` = the measured WHOLE-BODY noise-reduction floor, not the
             # ideal-panel opening area: a real body underperforms the mass law
@@ -2307,6 +2358,10 @@ class Synthesizer:
     def _render_block(self, frames: int) -> np.ndarray:
         sim = self.sim
         omega = sim.omega
+        # layers kept at the classic voice's scale meet the physical engine at
+        # the classic's balance: x 1/_PHYS_MAKEUP (exactly 1.0 in the classic)
+        self._cl = (1.0 / _PHYS_MAKEUP) if self.vx.get("phys_voice", False) \
+            else 1.0
         # time_scale < 1 = slow motion (the whole engine note slows + drops)
         dps = math.degrees(omega) / self.sample_rate * self.time_scale
         # (Step 5) cold-start timbre now reads the REAL coolant temperature from
@@ -2430,7 +2485,7 @@ class Synthesizer:
             # own mass-flow burst at this rpm, from the closed-loop solver, at
             # the SAME energy as the parametric pulse -- so only the shape moves.
             phys = self.vx.get("phys_voice", False)
-            gp = self._gas_pulse_at(sim.rpm) \
+            gp = self._gas_pulse_at(sim.rpm, load) \
                 if (self.vx.get("gas_pulse") or phys) else None
             if gp is not None:
                 ref = np.arange(0.0, 720.0, 1.0)
@@ -2453,6 +2508,11 @@ class Synthesizer:
                 r_gas = np.interp(ref, self._gp_deg, gp, period=720.0)
                 gp_scale = math.sqrt(float(np.mean(r_par * r_par))
                                      / max(float(np.mean(r_gas * r_gas)), 1e-18))
+            inflow = np.zeros(frames) if (gp is not None and phys) else None
+            # (the physical voice weights each cylinder's own pulse on its
+            # structural path: see _struct_gain)
+            blk_dev = np.zeros(frames) if inflow is not None else None
+            w_s = self._struct_w() if inflow is not None else None
             for j, off in enumerate(self._offsets):
                 # this cylinder's own decay (pitch) and loudness
                 tau_j = base_tau * max(1.0 + 0.95 * spread * self._cyl_tau[j], 0.35)
@@ -2516,6 +2576,14 @@ class Synthesizer:
                 if gp is not None:
                     pulse = np.interp(phi, self._gp_deg, gp, period=720.0) \
                         * (gp_scale * amp_j)
+                    if inflow is not None:
+                        # its intake stroke, at its own phase (no header
+                        # delay) -- and the same for every cylinder: the
+                        # burn's scatter (amp_j) is not in the air it draws,
+                        # and the trumpets share one airbox
+                        inflow += np.interp(np.mod(crank + off, 720.0),
+                                            self._gp_deg, self._gp_intake,
+                                            period=720.0) * gp_scale
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)
@@ -2524,10 +2592,19 @@ class Synthesizer:
                 d_samp = self._runner_len[j] / c_runner * self.sample_rate
                 pulse = self._runner_dl[j].process(pulse, d_samp)
                 chans[self._channel_of[j]] += pulse
+                if blk_dev is not None:
+                    blk_dev += (w_s[j] - 1.0) * pulse
             # the raw pulse train, before anything shapes it -- the first
             # thing a reimplementation has to get right, and the tap it is
             # held to (tools/export_pulses.py)
             self._tap("pulses", chans[0])
+            self._phys_inflow = (inflow * strength) if (gp is not None and phys
+                                                       and inflow is not None) \
+                else None
+            # what the block feels beyond the plain train: sum of (w - 1) x
+            # each cylinder's pulse, at the scale the train reaches the bang
+            self._phys_blk_dev = (blk_dev * (0.55 * strength)) \
+                if blk_dev is not None else None
 
             # Separate the clean 'bang' (tonal pulse) from the 'fizz' (gas-rush
             # noise gated by the pulse), so each gets its OWN mixer slider.
@@ -2751,14 +2828,42 @@ class Synthesizer:
             # what the block RADIATES carries each cylinder's own structural
             # path; what goes down the pipe (combustion, above) does not
             if self._split_on() and dps > 1e-12:
-                st = st * self._struct_gain(crank, VALVE_OPEN)
+                dev = getattr(self, "_phys_blk_dev", None)
+                if phys and dev is not None and len(dev) == frames:
+                    # the lid and rings are linear: the weighted train's
+                    # radiation = the plain one's + that of the deviation
+                    if not hasattr(self, "_blkd_zi"):
+                        self._blkd_zi = [np.zeros(max(len(self._blk_lp[0]),
+                                                      len(self._blk_lp[1])) - 1),
+                                         np.zeros(2), np.zeros(2)]
+                    zd = self._blkd_zi
+                    sd = (P["dry"] * inv) * dev
+                    # ...and only above the block's first structural mode:
+                    # below it the block moves as one rigid body, the same
+                    # way whichever cylinder pushed it
+                    if not hasattr(self, "_blkd_hp_zi"):
+                        self._blkd_hp_zi = np.zeros(2)
+                    bh, ah = self._bw(2, self._blk_f1, btype="high")
+                    sd, self._blkd_hp_zi = lfilter(bh, ah, sd,
+                                                   zi=self._blkd_hp_zi)
+                    sd, zd[0] = lfilter(self._blk_lp[0], self._blk_lp[1], sd,
+                                        zi=zd[0])
+                    sd, zd[1] = lfilter(b1, a1, sd, zi=zd[1])
+                    sd, zd[2] = lfilter(b2, a2, sd, zi=zd[2])
+                    st = st + sd
+                else:
+                    st = st * self._struct_gain(crank, VALVE_OPEN)
             bay += self._blk_seal * st          # block radiation -> bay bus
         else:                                   # no-scipy lid: 2-tap mass-law crude
             bl = 0.5 * (combustion + np.concatenate(([self._bay_prev],
                                                      combustion[:-1])))
             self._bay_prev = float(combustion[-1]) if frames else self._bay_prev
             if self._split_on() and dps > 1e-12:
-                bl = bl * self._struct_gain(crank, VALVE_OPEN)
+                dev = getattr(self, "_phys_blk_dev", None)
+                if phys and dev is not None and len(dev) == frames:
+                    bl = bl + (P["dry"] * inv) * dev
+                else:
+                    bl = bl * self._struct_gain(crank, VALVE_OPEN)
             bay += 0.5 * bl
         combustion = self._tap("block", combustion, "block")  # sealed in-cylinder event
         # keep a decimated copy of the REAL combustion voice for the analyzer's
@@ -2842,7 +2947,8 @@ class Synthesizer:
         ov = (max(0.0, 1.0 - min(max(sim.throttle, 0.0), 1.0) * 6.0)   # foot off
               * min(getattr(self, "_flow", 0.0) * 4.0, 1.0)           # revs up
               * min(sim.rpm / max(sim.engine.idle_rpm * 1.5, 1.0), 1.0))  # not idling
-        if ov > 0.03 and dps > 1e-12:
+        if ov > 0.03 and dps > 1e-12 \
+                and not self.vx.get("phys_voice", False):
             nz_b = self._rng.standard_normal(frames)
             # DARK chuff, not bright hiss: real overrun backflow is low-frequency
             # air pumping.  A cheap 1-pole low-pass (running mean of the noise)
@@ -2875,7 +2981,7 @@ class Synthesizer:
         # enter HERE (at the header) and travel the whole pipe — cat, muffler,
         # wall, tail — instead of being bolted on at the tailpipe.  A stock car's
         # pops get muffled by the cat/box; an open race system keeps them sharp.
-        sig = sig + self._overrun_pops(frames)
+        sig = sig + self._cl * self._overrun_pops(frames)
 
         # ================== EXHAUST PATH, IN PHYSICAL ORDER ==================
         # Head -> tail, the way the gas actually travels (so the chain matches a
@@ -2899,7 +3005,7 @@ class Synthesizer:
         # strength driven by mean flow + choked blowdown, so idle stays clean and
         # a hard pull turns raspy from the physics up.  One vector op.
         kst = 0.26 * getattr(self, "_flow", 0.0) + 0.34 * choke
-        if kst > 0.01:
+        if kst > 0.01 and not self.vx.get("phys_voice", False):
             sig = sig + kst * sig * np.abs(sig)
         # --- (3a) cylinder-head / exhaust-port cavity low-pass: round the raw
         # pulse so it reads as a metal port, not an electronic click.  A touch
@@ -2965,7 +3071,7 @@ class Synthesizer:
                           6)
                 wn = wn + 0.55 * (self._wg_gate.process(wn, d_g, 0.82, -1.0,
                                                         self._rv_lp) - wn)
-                sig = sig + (0.16 * wg) * np.tanh(wn * 3.0)
+                sig = sig + (0.16 * wg * self._cl) * np.tanh(wn * 3.0)
         sig = self._tap("head/port", sig)
 
         # --- (4) catalytic converter: the ceramic honeycomb soaks up the raw
@@ -2987,7 +3093,9 @@ class Synthesizer:
         # a real small chamber, so it RINGS as well as absorbs (RT60-derived
         # feedback, in-loop pole keeps the HF tail short).
         rvD, rvG = getattr(self, "_rvD", None), getattr(self, "_rvG", None)
-        if rvD is not None:
+        # (the physical voice: the pipe's reflections are already in the
+        # waveguides; this comb rang on every car, catalyst or not)
+        if rvD is not None and not self.vx.get("phys_voice", False):
             sig = sig + 0.30 * (self._xc[0].process(sig, rvD[0], rvG[0], 1.0,
                                                     self._rv_lp) - sig)
         sig = self._tap("catalytic", sig)
@@ -2997,7 +3105,10 @@ class Synthesizer:
         # Q scales with the pipe's length/diameter (thin small bore = sharp soprano
         # scream, fat bore = broad roar / none).  Grows with the valve opening, so
         # the whine climbs in with revs.  Centre freqs follow the live sound speed.
-        if _HAVE_SCIPY and self._whine_amt > 0.02:
+        # (synthetic formants: peaking filters stacked on the pipe waveguides,
+        # which already carry the real modes -- not in the physical voice)
+        if _HAVE_SCIPY and self._whine_amt > 0.02 \
+                and not self.vx.get("phys_voice", False):
             f_qw = c_runner / (4.0 * max(sim.engine.exhaust_total_m, 0.5))
             wamt = self._whine_amt * (0.25 + 0.75 * self._valve)
             # Q from the UNIFIED system damping + the header SIGNATURE:
@@ -3123,7 +3234,10 @@ class Synthesizer:
                 self._cham_zi = [np.zeros(2), np.zeros(2)]
             for kk, (cfr, cdb) in enumerate(((0.42, 2.6), (0.58, 2.0))):
                 f_ch = c_runner / (4.0 * max(l_box * cfr, 0.05))
-                if 60.0 < f_ch < 4500.0:
+                # (peaking filters, applied to every car whether it has a box
+                # or not -- not in the physical voice)
+                if 60.0 < f_ch < 4500.0 \
+                        and not self.vx.get("phys_voice", False):
                     bC, aC = self._pk(f_ch, 0.8 + 2.4 * _sq,
                                       cdb * (0.5 + 0.8 * _sq))
                     sig, self._cham_zi[kk] = lfilter(bC, aC, sig,
@@ -3159,6 +3273,8 @@ class Synthesizer:
             # gets louder and opens up at the top end, exactly like a valved system.
             vo = min(max((self._valve - 0.40) / 0.5, 0.0), 1.0) * 0.5 * P.get("valve_open", 1.0)
             vo = min(vo, 0.85)
+            if self.vx.get("phys_voice", False):
+                vo = 0.0      # a generic valve model, not this car's hardware
             if vo > 1e-3:
                 sig = (1.0 - vo) * sig + vo * bypass
             # SPL-controlled "blow-out": when the engine is LOUD (hard on it) the box
@@ -3168,13 +3284,16 @@ class Synthesizer:
             # (1-vo) guard avoids double-counting an already-open valve.
             spl = min(getattr(self, "last_level", 0.0) * 3.0, 1.0)
             bl = 0.16 * spl * (1.0 - vo)
+            if self.vx.get("phys_voice", False):
+                bl = 0.0
             if bl > 1e-3:
                 sig = (1.0 - bl) * sig + bl * bypass
         else:
             sig = np.diff(sig, prepend=sig[:1])
         # MUFFLER CHAMBER reverbs, inline: the box's front/rear cavities ring
         # their stored energy right where the box sits in the chain.
-        if getattr(self, "_rvD", None) is not None:
+        if getattr(self, "_rvD", None) is not None \
+                and not self.vx.get("phys_voice", False):   # (see the cat can)
             rvD, rvG = self._rvD, self._rvG
             sig = (sig
                    + 0.24 * (self._xc[1].process(sig, rvD[1], rvG[1], 1.0,
@@ -3218,7 +3337,8 @@ class Synthesizer:
         # (the PHYSICAL voice has no sum-of-sines howl: it is not a model of
         # an intake, and at 0.38 it put 70 dB on the 5th/10th/15th orders --
         # the F1 "electric drill")
-        if getattr(sim.engine, "individual_throttle", False) and dps > 1e-12                 and not self.vx.get("phys_voice", False):
+        if getattr(sim.engine, "individual_throttle", False) and dps > 1e-12 \
+                and not self.vx.get("phys_voice", False):
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             fire_hz = sim.rpm * len(self._offsets) / 120.0
             thr = min(max(sim.throttle, 0.0), 1.0)
@@ -3239,13 +3359,87 @@ class Synthesizer:
                                    phase_attr="_itb_phase")
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
 
+        # THE PHYSICAL INTAKE: the summed intake-valve flow into the airbox,
+        # radiated from the mouth.  Per mole the hot exhaust carries T_exh/T_air
+        # more volume, so the intake source sits that much under the exhaust
+        # (same 0.55 source scale).  Radiation: the SAME piston model as the
+        # exhaust's tip -- a volume-velocity source radiates as its derivative
+        # while the mouth is small (ka < 1) and saturates above f_a = c/2pi a,
+        # i.e. a first-order high-pass at f_a (~870 Hz for an F1 airbox mouth;
+        # a pure derivative kept rising and put the 15th order 18 dB high).
+        q_in = getattr(self, "_phys_inflow", None)
+        if q_in is not None and self.vx.get("phys_voice", False) \
+                and dps > 1e-12 and len(q_in) == frames:
+            t_ratio = 300.0 / max(sim.exhaust_gas_temp(), 300.0)
+            f_a = min(343.0 / (2.0 * math.pi
+                               * max(self._intake_mouth_radius(), 0.01)),
+                      self.sample_rate * 0.45)
+            src_in = (0.55 * t_ratio) * q_in
+            # THE AIRBOX: the trumpets draw from a plenum (volume V) fed
+            # through the inlet duct (the mouth's area A, length L), so the
+            # mouth's volume flow is theirs through a Helmholtz resonator --
+            # a second-order low-pass at f_H = c/2pi sqrt(A / V L'), L' = L +
+            # the end corrections (0.61a outside, 0.85a into the box).  Its
+            # damping is the duct's mean-flow resistance rho U / A, so
+            # Q = w_H L' / U.  An F1 box puts f_H near 100 Hz and the firing
+            # orders 30+ dB down: the real onboard's spectrum is its exhaust's.
+            eng_ = sim.engine
+            a_m = max(self._intake_mouth_radius(), 0.01)
+            A_m = math.pi * a_m * a_m
+            L_eff = _AIRBOX_DUCT_M + (0.61 + 0.85) * a_m
+            w_H = 343.0 * math.sqrt(
+                A_m / (_AIRBOX_VOL_X * max(eng_.total_displacement, 1e-4)
+                       * L_eff))
+            map_f = sim._manifold_pressure() / P_ATM
+            q_air = (eng_.total_displacement * max(sim.rpm, 1.0) / 120.0
+                     * sim._volumetric_efficiency(map_f) * map_f)
+            Q_H = min(max(w_H * L_eff / max(q_air / A_m, 0.5), 0.5), 20.0)
+            w0 = min(w_H / self.sample_rate, 0.45 * math.pi)
+            cw, al = math.cos(w0), math.sin(w0) / (2.0 * Q_H)
+            b_h = np.array([0.5 * (1.0 - cw), 1.0 - cw, 0.5 * (1.0 - cw)])
+            a_h = np.array([1.0 + al, -2.0 * cw, 1.0 - al])
+            b_h, a_h = b_h / a_h[0], a_h / a_h[0]
+            if _HAVE_SCIPY:
+                if not hasattr(self, "_airbox_zi"):
+                    self._airbox_zi = np.zeros(2)
+                src_in, self._airbox_zi = lfilter(b_h, a_h, src_in,
+                                                  zi=self._airbox_zi)
+            else:                   # no scipy: the same biquad, direct form I
+                x1, x2, y1, y2 = getattr(self, "_airbox_s", (0.0,) * 4)
+                out_ = np.empty_like(src_in)
+                for i_ in range(len(src_in)):
+                    x0 = src_in[i_]
+                    y0 = (b_h[0] * x0 + b_h[1] * x1 + b_h[2] * x2
+                          - a_h[1] * y1 - a_h[2] * y2)
+                    x2, x1, y2, y1 = x1, x0, y1, y0
+                    out_[i_] = y0
+                self._airbox_s = (x1, x2, y1, y2)
+                src_in = out_
+            if _HAVE_SCIPY:
+                b_i, a_i = self._bw(1, f_a, btype="high")
+                if not hasattr(self, "_q_in_zi"):
+                    self._q_in_zi = np.zeros(1)
+                rad_in, self._q_in_zi = lfilter(b_i, a_i, src_in,
+                                                zi=self._q_in_zi)
+            else:                   # no scipy: one-pole high-pass at f_a
+                k_ = math.exp(-2.0 * math.pi * f_a / self.sample_rate)
+                rad_in = np.empty_like(src_in)
+                xp = getattr(self, "_q_in_xp", 0.0)
+                yp = getattr(self, "_q_in_yp", 0.0)
+                for i_ in range(len(src_in)):
+                    yp = k_ * (yp + src_in[i_] - xp)
+                    xp = src_in[i_]
+                    rad_in[i_] = yp
+                self._q_in_xp, self._q_in_yp = xp, yp
+            bayi = bayi + rad_in
         # What has gone in so far leaves through the intake MOUTH: the roar and
         # the trumpet howl.  Everything added below -- spool, valve dump,
         # gearbox -- radiates from a housing instead, so only this part of the
         # bus is given the mouth's radiation pattern.  Each cylinder's intake
         # event reaches the mouth down its own runner, so the mouth carries the
         # per-cylinder spread (events at the start of each intake stroke).
-        if self._split_on() and dps > 1e-12:
+        if self._split_on() and dps > 1e-12 \
+                and getattr(self, "_phys_inflow", None) is None:
             bayi = bayi * self._struct_gain(crank, 0.0)
         bayi_mouth = bayi
         if self.capture_stages:
@@ -3273,7 +3467,7 @@ class Synthesizer:
             if self.capture_stages:
                 self._dbg_gw = (np.asarray(ind, dtype=np.float64).copy(),
                                 np.asarray(gw, dtype=np.float64).copy())
-            bayi = bayi + ind + gw            # whine/BOV: intake tract + dump
+            bayi = bayi + self._cl * ind + gw  # whine/BOV: intake tract + dump
                                               # vent to open air, not the pipe
         if not self.stage_on.get("induction+gears", True):
             bayi = np.zeros(frames, dtype=np.float64)   # layer hidden
@@ -3294,7 +3488,8 @@ class Synthesizer:
         # WITHOUT losing low end.  The brass honk lives in a ~1.8 kHz formant —
         # scoop THAT band and add a touch of low-shelf body (thicker, not thinner).
         wt = P["wall_thickness"]
-        if _HAVE_SCIPY and wt > 1e-3:
+        phys = self.vx.get("phys_voice", False)
+        if _HAVE_SCIPY and wt > 1e-3 and not phys:    # a voicing EQ
             b, a = self._pk(1850.0, 1.1, -16.0 * wt)   # de-honk
             sig, self._wall_sig_zi = lfilter(b, a, sig, zi=self._wall_sig_zi)
             b2, a2 = self._pk(150.0, 0.7, 4.0 * wt)    # add body
@@ -3304,7 +3499,9 @@ class Synthesizer:
         # note its METAL ring.  A thicker wall (wt up) drops the peaks lower and
         # tightens them (fat & solid); a thin wall keeps them high & open (bright,
         # 'tinny').  Always on — it's the pipe material itself, not an effect.
-        if _HAVE_SCIPY:
+        # (The physical voice leaves it out: wall vibration is a separate, weak
+        # radiator -- it cannot put peaks INTO the orifice sound.)
+        if _HAVE_SCIPY and not phys:
             f1 = self._wall_f1 * (1.0 - 0.18 * wt)
             f2 = self._wall_f2 * (1.0 - 0.22 * wt)
             ring = getattr(self, "_wall_ring", 1.0)      # material ping strength
@@ -3325,13 +3522,16 @@ class Synthesizer:
         # trim of the extreme top (the horn's far field concentrates power in its
         # passband, not the thin >5 kHz hash) keeps it high AND full — the fix for
         # an F1 sounding like a thin 'broken trumpet'.
-        if _HAVE_SCIPY and getattr(self, "_mega_f", 0.0) > 0.0:
+        # (the physical voice: a diverging cone RADIATES, it does not ring like a
+        # closed column -- its physics is the bigger exit the radiation stage
+        # already takes from the tip size; no formant, no horn comb)
+        if _HAVE_SCIPY and getattr(self, "_mega_f", 0.0) > 0.0 and not phys:
             bM, aM = self._pk(self._mega_f, 0.8, 7.5 * self._mega_amt)
             sig, self._mega_zi = lfilter(bM, aM, sig, zi=self._mega_zi)
             bH, aH = self._pk(min(self._mega_f * 2.4, self.sample_rate * 0.44),
                               0.7, -3.5 * self._mega_amt)
             sig, self._mega_hi_zi = lfilter(bH, aH, sig, zi=self._mega_hi_zi)
-        if getattr(self, "_mega_f", 0.0) > 0.0:
+        if getattr(self, "_mega_f", 0.0) > 0.0 and not phys:
             # HORN BODY: the diverging cone is a real air column (~0.6 m) — it
             # rings a short bright tail of its own on top of the formant.
             if not hasattr(self, "_wg_horn"):
@@ -3390,7 +3590,8 @@ class Synthesizer:
         # (but not actual grinding) grain riding ON the smooth note.  Rises with
         # rpm; per-engine amount = eng.gear_grain (Ferrari V12s etc.).
         gg = getattr(sim.engine, "gear_grain", 0.0) * P.get("gear_grain", 1.0)
-        if _HAVE_SCIPY and gg > 1e-3 and dps > 1e-12:
+        if _HAVE_SCIPY and gg > 1e-3 and dps > 1e-12 \
+                and not self.vx.get("phys_voice", False):
             rf = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             f_mesh = max(sim.rpm / 60.0 * 8.5, 50.0)        # ~8.5x rev = a fine whir
             inc = 2.0 * math.pi * f_mesh / self.sample_rate
@@ -3628,13 +3829,14 @@ class Synthesizer:
             tick = np.diff(nzm, prepend=nzm[:1]) * tick_env   # HF 'click' spectrum
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             n_sc = (4.0 / max(len(self._offsets), 1)) ** 0.5
-            bay = bay + (mech * 0.050 * n_sc * (1.0 - 0.85 * rpm_frac)) * tick
+            bay = bay + (mech * 0.050 * n_sc * (1.0 - 0.85 * rpm_frac)
+                         * self._cl) * tick
         ia = getattr(self, "_inj_amt", 0.0)
         if ia > 1e-3 and self._inj_bp is not None:
             nz, self._inj_zi = lfilter(self._inj_bp[0], self._inj_bp[1],
                                        self._rng.standard_normal(frames),
                                        zi=self._inj_zi)
-            bay = bay + ia * nz
+            bay = bay + (ia * self._cl) * nz
 
         # ================ LISTENER PERSPECTIVE (white-box) ===================
         # Two radiators, one listener.  TAIL = the tailpipe exit (everything
@@ -3674,10 +3876,25 @@ class Synthesizer:
         # intake-side BRIGHT path: the tract mouth / atmospheric dump is an
         # OPENING — high leak, gentle 2.4 kHz shading (arch/ducting), never the
         # body-panel mass law that was muddying the compressor whistle.
-        bayi_p = self._pov_delay(bayi, "bayi_d", geo["d_bay"]) \
-            if geo["d_bay"] else bayi
+        d_int = geo.get("d_int", geo["d_bay"])
+        bayi_p = self._pov_delay(bayi, "bayi_d", d_int) if d_int else bayi
         a_hi = min(geo["bay_alpha"] * 2.2 + 0.15, 0.80)
-        bay_air = bay_air + self._pov_partition(bayi_p, "bayi_p", a_hi, 2400.0)
+        g_int = geo.get("g_int", geo["g_bay"]) / geo["g_bay"]
+        if geo.get("onboard"):
+            a_hi = 1.0                    # the inlet is IN the camera's air
+            # fixed geometry, fixed patterns: the intake seen from above and
+            # behind its inlet (the change it makes, as on trackside)
+            dbi = self._tk_beam(bayi_mouth, geo["cos_int"],
+                                self._intake_mouth_radius(), "ob_int") \
+                - bayi_mouth
+        if geo.get("onboard"):
+            # open air (a_hi = 1 passes it flat): the mouth at the airbox,
+            # the housings (spool, dump, gearbox) at the back of the engine
+            bay_air = bay_air + g_int * bayi_mouth \
+                + (geo["g_box"] / geo["g_bay"]) * (bayi - bayi_mouth)
+        else:
+            bay_air = bay_air + g_int * self._pov_partition(bayi_p, "bayi_p",
+                                                            a_hi, 2400.0)
         if geo["struct"] > 0.0:
             # structure-borne mount path: shell re-radiation of the engine's
             # low-mid band inside the cabin (2nd-order above the panel response)
@@ -3694,6 +3911,14 @@ class Synthesizer:
             tail = self._tk_directivity(tail, self._tk_x)
             bay_air = bay_air + self._pov_partition(dbi, "bayi_dp", a_hi,
                                                     2400.0)
+        if geo.get("onboard"):
+            # the pipes from in front of their exits: their top end beams away
+            a_tip = sim.engine.exhaust_radius_m \
+                * max(getattr(sim.engine, "tip_scale", 1.0), 0.5)
+            tail = self._tk_beam(tail, geo["cos_tail"], a_tip, "ob_tail")
+            dbi_d = self._pov_delay(dbi, "bayi_dd", d_int) if d_int else dbi
+            bay_air = bay_air + g_int * self._pov_partition(
+                dbi_d, "bayi_dp", a_hi, 2400.0)
         sig = geo["g_tail"] * tail + geo["g_bay"] * bay_air
         if geo["ground"]:
             dg, rg = geo["ground"]
@@ -3815,7 +4040,9 @@ class Synthesizer:
         # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
         # the per-component reverbs above are source-local (port/spool), this
         # is where the LISTENER is.
-        if self.pov == "cockpit":
+        if self._pov_geo().get("onboard"):
+            pass                          # onboard camera: open air, moving car
+        elif self.pov == "cockpit":
             # heavily-absorbent trimmed cavity: little reverberant energy (a wet
             # short room was part of the '闷' feel)
             self._cab_verb.mix = 0.6 * P["reverb"]
@@ -3834,6 +4061,9 @@ class Synthesizer:
                                 (int(_r.s0), int(_r.s1), int(_r.s2),
                                  int(_r.s3)), _r._spare)
         # --- auto-level (or fixed gain) + soft saturation + master volume ----
+        phys = self.vx.get("phys_voice", False)
+        if phys:
+            sig = sig * _PHYS_MAKEUP
         if self.agc_enabled:
             # LOUDNESS-weighted level estimate: the ear barely counts deep LF
             # (equal-loudness contours), but a raw-RMS AGC counts it in full —
@@ -3848,8 +4078,9 @@ class Synthesizer:
             # six-second getaway back up to full level.
             lvl_src = sig
             ref = getattr(self, "_tk_level_src", None)
-            if self.pov == "trackside" and ref is not None                     and len(ref) == len(sig):
-                lvl_src = ref
+            if self.pov == "trackside" and ref is not None \
+                    and len(ref) == len(sig):
+                lvl_src = ref * _PHYS_MAKEUP if phys else ref
             if _HAVE_SCIPY:
                 bwg, awg = self._bw(1, 300.0, btype="high")
                 if not hasattr(self, "_agc_hp_zi"):
@@ -3859,7 +4090,13 @@ class Synthesizer:
             else:
                 est = np.diff(lvl_src, prepend=lvl_src[:1]) * 8.0  # crude HF
             rms = float(np.sqrt(np.mean(est * est))) + 1e-9
-            self._level += (rms - self._level) * 0.04
+            # the physical voice keeps its own lift: its level follows the
+            # engine while it FIRES and holds when it stops (as trackside levels
+            # the car, not the mic) -- otherwise the AGC fills the physical
+            # overrun drop back in.  sustain_on_lift still holds it up.
+            self._level += (rms - self._level) * 0.04 * (
+                min(max(getattr(self, "_comb_load", 1.0), 0.0), 1.0)
+                if phys else 1.0)
             # gain ceiling FOLLOWS COMBUSTION: on the overrun a real car gets
             # QUIETER — the old fixed x6 ceiling let the AGC pump the residual
             # noise floors (fizz/ticks/injector band) up to fill the hole,
@@ -3902,16 +4139,19 @@ class Synthesizer:
         # rides heavy programme compression — the wall is DENSE, the dynamic
         # range small.  Soft block compressor, screamers only: fast attack,
         # slow release, 3:1 above threshold, makeup gain.
-        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0                 and self.pov != "trackside":
+        if dps > 1e-12 and sim.engine.redline_rpm >= 11000.0 \
+                and self.pov != "trackside":
             # (broadcast compression is the TV/onboard character — the
             # TRACKSIDE ear hears the raw 20 dB fly-by sweep uncompressed)
             if not hasattr(self, "_f1c_env"):
                 self._f1c_env, self._f1c_g = 0.0, 1.0
             _r = float(np.sqrt(np.mean(sig * sig)))
-            self._f1c_env += (_r - self._f1c_env)                 * (0.45 if _r > self._f1c_env else 0.10)
+            self._f1c_env += (_r - self._f1c_env) \
+                * (0.45 if _r > self._f1c_env else 0.10)
             _th, _ratio = 0.22, 2.0          # gentled (F50 control: the 3:1
                                              # pump was part of the fake feel)
-            _gt = 1.0 if self._f1c_env <= _th                 else (_th / self._f1c_env) ** (1.0 - 1.0 / _ratio)
+            _gt = 1.0 if self._f1c_env <= _th \
+                else (_th / self._f1c_env) ** (1.0 - 1.0 / _ratio)
             _gp = self._f1c_g
             self._f1c_g += (_gt - _gp) * 0.5
             sig = sig * np.linspace(_gp, self._f1c_g, frames) * 1.15
@@ -3996,6 +4236,8 @@ class Synthesizer:
         # amplitude follows TRANSMITTED TORQUE — silent coasting, a fine rising
         # whine under load, exactly how a helical box behaves.
         gm = P.get("gear_mesh", 0.10)
+        if self.vx.get("phys_voice", False):
+            gm *= P.get("phys_gear", _PHYS_GEAR)   # same mesh-force physics
         dt_ = getattr(sim, "drivetrain", None)
         if (gm > 1e-3 and dt_ is not None and dt_.gear > 0
                 and dt_.clutch > 0.6 and rpm > 400.0):
@@ -4190,6 +4432,14 @@ class Synthesizer:
 
         gv = P["gearbox_vol"]
         dt = sim.drivetrain
+        if self.vx.get("phys_voice", False):
+            # MESH WHINE is the teeth's dynamic mesh force -- transmission error
+            # times mesh stiffness -- so it scales with the TORQUE they carry:
+            # loud under load and on hard engine braking, gone when unloaded.
+            # One radiation constant, P["phys_gear"] (_PHYS_GEAR), set against
+            # a real F1 onboard, where a loaded dog box sits under the engine.
+            gv *= P.get("phys_gear", _PHYS_GEAR) \
+                * min(abs(sim.gas_torque) / 600.0, 1.0)
         # Straight-cut (spur) sequential / dog box: the gears are CONSTANT-MESH and
         # the input/layshaft pair runs at ENGINE speed and is always loaded, so the
         # dominant gearbox whine TRACKS ENGINE RPM — it rises through a gear and
@@ -4300,37 +4550,90 @@ class Synthesizer:
                 self.cylinder_light[i] = 1.0
 
     _GP_GRID = (0.12, 0.25, 0.40, 0.55, 0.70, 0.85, 1.0)
+    _GP_LOAD = (0.1, 0.4, 0.7, 1.0)
     _GP_N = 360
 
-    def _gas_pulse_at(self, rpm):
+    def _gas_pulse_at(self, rpm, load=1.0):
         """The exhaust valve's mass-flow burst over one cycle at this rpm, from
         the closed-loop gas solver (gas_truth), interpolated across a baked rpm
         grid.  Baked on first use (~0.8 s, offline physics); None if the solver
         cannot run for this engine."""
         if self._gp_grid is None:
             try:
-                from .gas_truth import exhaust_pulse_lut
-                g, p = exhaust_pulse_lut(self.sim.engine, rpms=self._GP_GRID,
-                                         N=self._GP_N)
-                self._gp_grid = np.asarray(g, dtype=np.float64)
-                self._gp_lut = np.asarray(p, dtype=np.float64)
+                from .gas_truth import exhaust_pulse_with_amplitude
+                eng = self.sim.engine
                 self._gp_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
+                lut, ilut = [], []
+                for rf in self._GP_GRID:
+                    shape, dp, pm, ishape = exhaust_pulse_with_amplitude(
+                        eng, rf, N=self._GP_N, intake=True)
+                    shape = np.asarray(shape, dtype=np.float64)
+                    ilut.append(np.asarray(ishape, dtype=np.float64))
+                    r_ = max(rf * eng.redline_rpm, eng.idle_rpm)
+                    row = []
+                    for ld in self._GP_LOAD:
+                        c_ = self.sim.exhaust_sound_speed(rpm=r_, load=ld)
+                        row.append(self._steepen(shape, ld * dp, pm, r_, c_)
+                                   if self.vx.get("steepen", True) else shape)
+                    lut.append(row)
+                self._gp_lut = np.asarray(lut, dtype=np.float64)
+                self._gp_ilut = np.asarray(ilut, dtype=np.float64)
+                self._gp_grid = np.asarray(self._GP_GRID, dtype=np.float64)
             except Exception:
                 self._gp_grid = False
         if self._gp_grid is False:
             return None
-        rf = rpm / max(self.sim.engine.redline_rpm, 1.0)
-        g = self._gp_grid
-        if rf <= g[0]:
-            return self._gp_lut[0]
-        if rf >= g[-1]:
-            return self._gp_lut[-1]
-        i = int(np.searchsorted(g, rf))
-        t = (rf - g[i - 1]) / (g[i] - g[i - 1])
-        return (1.0 - t) * self._gp_lut[i - 1] + t * self._gp_lut[i]
+
+        def _w(grid, v):
+            if v <= grid[0]:
+                return 0, 0, 0.0
+            if v >= grid[-1]:
+                return len(grid) - 1, len(grid) - 1, 0.0
+            i = int(np.searchsorted(grid, v))
+            return i - 1, i, (v - grid[i - 1]) / (grid[i] - grid[i - 1])
+
+        i0, i1, t = _w(self._gp_grid, rpm / max(self.sim.engine.redline_rpm, 1.0))
+        a0, a1, u = _w(self._GP_LOAD, min(max(load, 0.0), 1.0))
+        # the intake flow at this rpm (no steepening: a smooth suction hump)
+        self._gp_intake = (1 - t) * self._gp_ilut[i0] + t * self._gp_ilut[i1]
+        L_ = self._gp_lut
+        return ((1 - t) * ((1 - u) * L_[i0, a0] + u * L_[i0, a1])
+                + t * ((1 - u) * L_[i1, a0] + u * L_[i1, a1]))
+
+    def _steepen(self, shape, dp, p_mean, rpm, c):
+        """One blowdown pulse, steepened down its own pipe (see above).
+
+        The pulse's acoustic velocity from its pressure by the simple-wave
+        relation u = 2c/(g-1) * ((p/p0)^((g-1)/2g) - 1); each point arrives
+        earlier by L*beta*u/c^2.  In the reversed crank angle s = -phi that is
+        Burgers' equation w_x + w w_s = 0 with w = beta*u*6*rpm/c^2 (deg per
+        metre), solved at x = L by Hopf-Lax: w = (s - y*)/L, y* minimising
+        W0(y) + (s - y)^2 / 2L.  Hot exhaust gamma 1.33."""
+        g_ = 1.33
+        beta = 0.5 * (g_ + 1.0)
+        eng = self.sim.engine
+        L = eng.exhaust_primary_m + 0.5 * max(eng.exhaust_total_m
+                                              - eng.exhaust_primary_m, 0.0)
+        pr = 1.0 + max(dp, 0.0) / max(p_mean, 1e3)
+        u_pk = 2.0 * c / (g_ - 1.0) * (pr ** ((g_ - 1.0) / (2.0 * g_)) - 1.0)
+        pos = np.clip(shape, 0.0, None)
+        if u_pk < 1e-3 or pos.max() <= 0.0:
+            return shape
+        dphi = 720.0 / len(shape)
+        s = -self._gp_deg[::-1]                       # ascending s = -phi
+        w0 = (beta * u_pk * 6.0 * rpm / (c * c)) * pos[::-1]
+        W0 = np.concatenate(([0.0], np.cumsum(0.5 * (w0[1:] + w0[:-1]) * dphi)))
+        G = W0[None, :] + (s[:, None] - s[None, :]) ** 2 / (2.0 * L)
+        w = (s - s[np.argmin(G, axis=1)]) / L
+        out = shape.copy()
+        # carry the steepened positive burst; keep any negative (reverse-flow)
+        # part as it was -- it is small and not what steepens
+        neg = np.clip(shape, None, 0.0)
+        out = neg + (w * (c * c) / (beta * 6.0 * rpm * u_pk))[::-1]
+        return out
 
     def _split_on(self):
-        """The physical cylinder split (F11) is part of the physical voice."""
+        """The physical cylinder split is part of the physical voice (F11)."""
         return bool(self.vx.get("cyl_split", False)
                     or self.vx.get("phys_voice", False))
 
@@ -4339,6 +4642,13 @@ class Synthesizer:
         voice, the preset's (possibly voiced) value in the classic one."""
         return (self._header_offset_phys if self.vx.get("phys_voice", False)
                 else self._header_offset)
+
+    def _struct_w(self):
+        """Each cylinder's structural-path weight (see _struct_gain), by
+        cylinder, power-normalised (mean w^2 = 1)."""
+        s = self.params["cyl_spread"]
+        w = np.maximum(1.0 + 0.55 * s * self._cyl_amp, 0.1)
+        return w / math.sqrt(float(np.mean(w * w)))
 
     def _struct_gain(self, crank, ref_deg):
         """Each cylinder reaches the listener through its OWN path.
@@ -4356,9 +4666,7 @@ class Synthesizer:
         change with the exhaust valve.  Their spread is the "cylinder spread"
         slider, the old per-cylinder personality, which is what it physically
         is."""
-        s = self.params["cyl_spread"]
-        w = np.maximum(1.0 + 0.55 * s * self._cyl_amp, 0.1)
-        w = w / math.sqrt(float(np.mean(w * w)))
+        w = self._struct_w()
         ev = np.mod(ref_deg - np.asarray(self._offsets, dtype=np.float64)
                     - np.asarray(self._hdr_off(), dtype=np.float64), 720.0)
         order = np.argsort(ev, kind="stable")
@@ -4429,6 +4737,15 @@ class Synthesizer:
         # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
         return self._tk_beam(tail, x / r1, a_tip, "tail")
 
+    def _intake_mouth_radius(self):
+        """The intake mouth, sized to pass peak airflow at ~35 m/s:
+        a = sqrt(Q / (pi * 35)), Q = displacement * redline / 120 * VE *
+        (1 + boost)."""
+        eng = self.sim.engine
+        q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
+             * (1.0 + max(eng.boost_bar, 0.0)))
+        return math.sqrt(q / (math.pi * 35.0))
+
     def _tk_intake(self, mouth, x):
         """The intake mouth beams too -- the OTHER way.
 
@@ -4453,9 +4770,7 @@ class Synthesizer:
         L, hm = 12.0, 1.2
         race = self.straight_cut or eng.exhaust_openness > 0.85
         hi = 0.90 if race else 0.60          # roll-hoop airbox / grille snorkel
-        q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
-             * (1.0 + max(eng.boost_bar, 0.0)))
-        a_in = math.sqrt(q / (math.pi * 35.0))
+        a_in = self._intake_mouth_radius()
         r = math.sqrt(x * x + L * L + (hm - hi) ** 2)
         # the mouth faces FORWARD (+x): cos(theta) = -x / r, positive while the
         # car is still coming

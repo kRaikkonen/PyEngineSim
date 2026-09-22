@@ -226,6 +226,10 @@ class Engine:
     # Unequal-length exhaust headers delay one bank's pulses, creating the
     # classic Subaru boxer rumble (even firing, uneven *sound*).
     header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
+    open_cockpit: bool = False       # single-seater: the cockpit view is an
+                                     # onboard camera in open air
+    phys_voice: bool = False         # open on the PHYSICAL voice (solver pulse,
+                                     # no synthesizer layers); F11 flips it
     header_unequal_phys_deg: float = -1.0  # measured value for the physical
                                            # voice (-1 = same as above)
     # Exhaust merge topology — which cylinders share a (secondary) collector:

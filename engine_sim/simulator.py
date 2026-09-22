@@ -907,7 +907,7 @@ class Simulator:
         v_open = cyl.volume(theta)
         return p_peak * (v_tdc / v_open) ** GAMMA
 
-    def exhaust_gas_temp(self) -> float:
+    def exhaust_gas_temp(self, rpm=None, load=None) -> float:
         """WHITE-BOX exhaust-gas temperature (K) at the exhaust valve — from the
         REAL cycle thermodynamics, not a fitted line: charge temp -> adiabatic
         COMPRESSION -> combustion heat release -> EXPANSION to the exhaust valve ->
@@ -916,8 +916,12 @@ class Simulator:
         """
         eng = self.engine
         cr = min(max(eng.cylinders[0].compression_ratio, 6.0), 24.0)
-        load = self._effective_throttle()
-        rpm_frac = min(self.rpm / max(eng.redline_rpm, 1.0), 1.0)
+        # (rpm / load may be given to ask "what would it be there" -- the
+        # physical voice bakes its pulses over an rpm x load grid)
+        load_q = load
+        load = self._effective_throttle() if load is None else load
+        rpm_frac = min((self.rpm if rpm is None else rpm)
+                       / max(eng.redline_rpm, 1.0), 1.0)
         # 1) charge temp entering compression — the SHARED white-box charge_temp
         #    (compressor heat + intercooler + flow + heat-soak), so this MATCHES the
         #    torque/knock models exactly.  A heat-soaked charge is hotter -> hotter
@@ -931,11 +935,13 @@ class Simulator:
         t_comp = t_charge * cr ** (GAMMA - 1.0)
         # 3) combustion heat release (q/cv rise), scaled by fuelling completeness —
         #    more complete + less residual-diluted at higher load.  This IS the peak.
-        self._t_peak = t_comp + _COMB_DT * (0.42 + 0.58 * load)
+        t_peak = t_comp + _COMB_DT * (0.42 + 0.58 * load)
+        if rpm is None and load_q is None:
+            self._t_peak = t_peak          # live state only, not a "what if"
         # 4) expansion TDC -> exhaust valve extracts work and cools; a HIGH
         #    compression(=expansion) ratio pulls MORE heat out -> a cooler exhaust
         #    (why a high-CR NA engine runs cooler EGT than a low-CR turbo).
-        t_evo = self._t_peak / (0.85 * cr) ** (GAMMA - 1.0)
+        t_evo = t_peak / (0.85 * cr) ** (GAMMA - 1.0)
         # 5) wall heat loss toward the ~90 C coolant: a bigger fraction at LOW rpm
         #    (more residence time) -> cooler at idle, hotter as the revs climb.
         tc = self.coolant_c + 273.15
@@ -946,12 +952,12 @@ class Simulator:
         exhaust_gas_temp chain (call it first each frame).  Telemetry / knock ref."""
         return getattr(self, "_t_peak", 2200.0)
 
-    def exhaust_sound_speed(self) -> float:
+    def exhaust_sound_speed(self, rpm=None, load=None) -> float:
         """Speed of sound sqrt(gamma R T) in the exhaust gas.  The note's pitch now
         slides with the WHITE-BOX cycle temperature (exhaust_gas_temp), per car —
         a high-CR NA screamer runs a cooler, lower-c exhaust than a low-CR turbo.
         """
-        return math.sqrt(GAMMA * 287.0 * self.exhaust_gas_temp())
+        return math.sqrt(GAMMA * 287.0 * self.exhaust_gas_temp(rpm, load))
 
     def forced_induction_rpm(self) -> float:
         """Estimated compressor/turbine SHAFT speed (rpm) for the boost gauge.

@@ -202,6 +202,9 @@ def run_layer_switches():
         sim.ignition_on = True
         syn = Synthesizer(sim, sample_rate=32000, seed=1)
         syn.enabled = False
+        # the switches are the CLASSIC chain's: the physical voice (the F1s'
+        # default) leaves some of its layers out by design
+        syn.vx["phys_voice"] = False
         if hide:
             syn.stage_on[hide] = False
         out = []
