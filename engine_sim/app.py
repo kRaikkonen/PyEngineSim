@@ -1328,6 +1328,13 @@ class App:
                     self._flash("deep vacuum "
                                 + ("ON (physical)" if self.synth.vx["vacuum"]
                                    else "OFF (arcade overrun)"))
+                elif e.key == pygame.K_F11:    # physical cylinder split
+                    self.synth.vx["cyl_split"] = not self.synth.vx.get(
+                        "cyl_split", True)
+                    self._flash("cylinders "
+                                + ("SPLIT (exhaust merged, block per-cyl)"
+                                   if self.synth.vx["cyl_split"]
+                                   else "CLASSIC (personality on the exhaust)"))
                 elif e.key == pygame.K_F12:    # the LAYERS panel
                     self.flow_dbg = not getattr(self, "flow_dbg", False)
                     self._flash("layers " + ("open" if self.flow_dbg else "closed"))

@@ -96,6 +96,9 @@ def capture(car, pov):
             "sig": [float(v) for v in sig0],
             "bay": [float(v) for v in bay0],
             "bayi": [float(v) for v in bayi0],
+            # the share of bayi that leaves through the intake MOUTH, which
+            # trackside beams forward
+            "mouth": [float(v) for v in syn._dbg_mouth],
             "rng": {"state": [str(v) for v in rng0],
                     "spare": None if spare0 is None else float(spare0)},
             "cache": cache_before,

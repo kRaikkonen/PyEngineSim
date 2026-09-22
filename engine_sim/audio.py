@@ -742,7 +742,7 @@ class _FlybyDelay:
     propagation delay.  Changing path length IS the Doppler effect (physically
     exact: d(delay)/dt = radial velocity / c gives the pitch bend), so a car
     passing the trackside mic sweeps +30 %/-19 % at 290 km/h with zero explicit
-    pitch-shifter — the classic F1 'neeeoowm'."""
+    pitch-shifter (given the RETARDED delay -- see _TrackSide) — the classic F1 'neeeoowm'."""
 
     def __init__(self, max_delay):
         self.buf = np.zeros(int(max_delay) + 4, dtype=np.float64)
@@ -763,6 +763,225 @@ class _FlybyDelay:
         out = self.buf[i0 % N] * (1.0 - fr) + self.buf[(i0 + 1) % N] * fr
         self.wp = (self.wp + n) % N
         return out
+
+
+class _TrackSide:
+    """Where the car is along the track, and which trackside post hears it.
+
+    A fixed mic 12 m off the line, one every SPACING metres; the car drives
+    past them.  The spacing is the distance it covers in ~10 s (never under
+    200 m), so every pass has ~5 s of approach and ~5 s of getaway -- a real
+    fly-by, not a quick 'neeow' every two seconds.  Posts are placed ahead of
+    the car as it goes, from its speed at the time.
+
+    Two positions matter and they are not the same:
+      * EMISSION -- where the car is now.  Its radiation pattern is aimed at the
+        post nearest to it (``advance`` returns the car's position relative to
+        that post).
+      * RECEPTION -- the sound arriving now left the car tau seconds ago, from
+        further back.  tau solves c*tau = distance(X - v*tau, post), the
+        RETARDED time, and its rate of change is exactly a moving source's
+        Doppler, c/(c -/+ v).  The post hearing it is the one nearest to where
+        it LEFT the car -- so at a post change both are equally far from the
+        emission point and the delay is continuous.
+    """
+
+    C = 343.0
+    T_CYCLE = 10.0                 # s per post: ~5 coming, ~5 going
+    S_MIN, S_MAX = 200.0, 1000.0
+    TAU_MAX = 2.5                  # s; the fly-by delay lines hold 3 s
+
+    def __init__(self, x0=-60.0):
+        self.X = x0                            # along the track (m)
+        self.m_prev, self.m_cur, self.m_next = -self.S_MIN, 0.0, self.S_MIN
+
+    def spacing(self, v):
+        v = min(v, 0.8 * self.C)
+        s = min(max(v * self.T_CYCLE, self.S_MIN), self.S_MAX)
+        # the farthest delay is the approach from half a spacing out,
+        # (S/2) / (c - v): keep it inside the delay line
+        return min(s, 2.0 * self.TAU_MAX * (self.C - v))
+
+    def advance(self, v, dt):
+        """Move the car; return its position relative to its nearest post."""
+        self.X += v * dt
+        while self.X >= 0.5 * (self.m_cur + self.m_next):
+            self.m_prev, self.m_cur = self.m_cur, self.m_next
+            self.m_next = self.m_cur + self.spacing(v)
+        return self.X - self.m_cur
+
+    def retarded(self, v, h2):
+        """(tau, x_e) of the sound arriving NOW at the post that hears it:
+        its delay in seconds, and where it LEFT the car along the track,
+        relative to that post.  ``h2`` = the squared off-line distance
+        (lateral^2 + height^2)."""
+        v = min(v, 0.8 * self.C)
+        a = self.C * self.C - v * v
+
+        def tau(m):
+            x = self.X - m
+            return (-x * v + math.sqrt((x * v) ** 2 + a * (x * x + h2))) / a
+
+        m = self.m_cur
+        t = tau(m)
+        if self.X - v * t < 0.5 * (self.m_prev + self.m_cur):
+            m = self.m_prev          # it left while the previous post was nearer
+            t = tau(m)
+        return t, self.X - v * t - m
+
+
+# --- the track itself -----------------------------------------------------------
+# A trackside mic hears more than the car: the air in between (ISO 9613-1), the
+# tarmac (the ground bounce), a barrier across the track, and the diffuse field
+# of the whole place.  The place is a design choice, like the 12 m post; every
+# effect of it is physics.
+_TK_T_K, _TK_RH = 293.15, 60.0     # a 20 C, 60 % RH race day
+_TK_WALL_M = 15.0                  # far-side barrier, this far beyond the line
+_TK_WALL_R = 0.7                   # concrete, but only ~1 m of it faces the car
+_TK_RC_M = 100.0                   # direct = diffuse here, for a car in the
+                                   #   middle of the scatterers (r << R_s)
+_TK_RS_M = 50.0                    # the scatterers: grandstand, pit wall, marshal
+                                   #   post, trees within ~50 m of the post
+_TK_RT60 = 1.5                     # s: grandstands, pit buildings, tree lines
+
+
+def _iso9613_db_per_m(f, T=_TK_T_K, rh=_TK_RH, pa=101.325):
+    """ISO 9613-1 pure-tone atmospheric absorption in dB per metre.  Checked
+    against ISO 9613-2 Table 2 (20 C / 70 %: 1 kHz 5.0, 4 kHz 22.9, 8 kHz 76.6
+    dB/km; this gives 4.98, 23.1, 77.6 at the exact frequencies)."""
+    pr, T0, T01 = 101.325, 293.15, 273.16
+    C = -6.8346 * (T01 / T) ** 1.261 + 4.6151
+    h = rh * (10.0 ** C) * pr / pa            # molar conc. of water vapour, %
+    frO = pa / pr * (24.0 + 4.04e4 * h * (0.02 + h) / (0.391 + h))
+    frN = pa / pr * (T / T0) ** -0.5 * (9.0 + 280.0 * h * math.exp(
+        -4.170 * ((T / T0) ** (-1.0 / 3.0) - 1.0)))
+    f2 = np.asarray(f, dtype=np.float64) ** 2
+    return 8.686 * f2 * (
+        1.84e-11 * (pr / pa) * (T / T0) ** 0.5
+        + (T / T0) ** -2.5 * (
+            0.01275 * math.exp(-2239.1 / T) / (frO + f2 / frO)
+            + 0.1068 * math.exp(-3352.0 / T) / (frN + f2 / frN)))
+
+
+class _AirFIR:
+    """Air absorption over one path, as a linear-phase FIR re-designed every
+    block from the ISO 9613-1 curve at that path's length.  The loss grows as
+    ~f^2 per metre, which no fixed low-pass can follow: from 400 m it is -2 dB
+    at 1 kHz and -36 dB at 8 kHz.  The old and new designs are cross-faded
+    across the block, so a moving distance never zippers.  128 taps (within
+    1 dB of the standard wherever it is above -40 dB, at 32-48 kHz): a
+    constant 64-sample latency, the same on every path that has one."""
+
+    M = 128
+
+    def __init__(self, sr):
+        f = np.fft.rfftfreq(self.M, 1.0 / sr)
+        self._alpha = _iso9613_db_per_m(f)
+        self._win = np.hanning(self.M + 1)[:self.M]     # periodic: peak at M/2
+        self._hist = np.zeros(self.M - 1)
+        self._h = None
+
+    def _design(self, r):
+        H = 10.0 ** (-self._alpha * r / 20.0)
+        h = np.roll(np.fft.irfft(H, self.M), self.M // 2) * self._win
+        return h / h.sum()                            # DC stays exactly 1
+
+    def process(self, x, r):
+        h = self._design(r)
+        xe = np.concatenate((self._hist, x))
+        y = np.convolve(xe, h, mode="valid")
+        if self._h is not None:
+            y0 = np.convolve(xe, self._h, mode="valid")
+            y = y0 + np.linspace(0.0, 1.0, len(x)) * (y - y0)
+        self._hist = xe[-(self.M - 1):]
+        self._h = h
+        return y
+
+
+class _MovingTaps:
+    """One write, several read heads, each with its own RAMPING delay: the
+    direct path, the ground image and the barrier image all read the SAME
+    emitted sound at their own retarded time, so each carries its own Doppler.
+    Each head is exactly a _FlybyDelay read."""
+
+    def __init__(self, size, heads):
+        self.buf = np.zeros(int(size) + 4, dtype=np.float64)
+        self.wp = 0
+        self.prev = [1.0] * heads
+
+    def process(self, x, delays):
+        n = len(x)
+        N = len(self.buf)
+        base = self.wp + np.arange(n)
+        self.buf[base % N] = x
+        outs = []
+        for k, d_new in enumerate(delays):
+            d_new = float(min(max(d_new, 1.0), N - 3))
+            d = np.linspace(self.prev[k], d_new, n)
+            self.prev[k] = d_new
+            idx = base - d
+            i0 = np.floor(idx).astype(np.int64)
+            fr = idx - i0
+            outs.append(self.buf[i0 % N] * (1.0 - fr)
+                        + self.buf[(i0 + 1) % N] * fr)
+        self.wp = (self.wp + n) % N
+        return outs
+
+
+class _OutdoorField:
+    """The track's own reverberation -- grandstand faces, pit buildings,
+    barriers and tree lines tens of metres apart -- as a diffuse field.
+
+    Eight delay lines of 47-179 ms, an energy-preserving Hadamard feedback,
+    loop gains from RT60, and every pass round a loop loses the air's ISO
+    9613-1 high end over that loop's own path length (a one-pole fitted at
+    4 kHz), so the tail darkens as it decays, as outdoor tails do.  Every
+    delay is longer than a block, so it runs a block at a time.  Scaled to a
+    unit energy gain (within 1 dB for an engine-like pink spectrum): the
+    caller sets its level."""
+
+    D_MS = (47.0, 61.0, 73.0, 89.0, 103.0, 127.0, 151.0, 179.0)
+
+    def __init__(self, sr, rt60=_TK_RT60):
+        self.d = [max(int(ms * 1e-3 * sr), BLOCK + 1) for ms in self.D_MS]
+        n = len(self.d)
+        self.g = np.array([10.0 ** (-3.0 * d / (sr * rt60)) for d in self.d])
+        self.lines = [np.zeros(d, dtype=np.float64) for d in self.d]
+        H = np.array([[1.0]])
+        while H.shape[0] < n:
+            H = np.block([[H, H], [H, -H]])
+        self.H = H / math.sqrt(n)
+        self.c = np.array([1.0 if i % 2 == 0 else -1.0
+                           for i in range(n)]) / math.sqrt(n)
+        a4 = float(_iso9613_db_per_m(np.array([4000.0]))[0])
+        w = 2.0 * math.pi * 4000.0 / sr
+        self.p = []
+        for d in self.d:
+            L2 = (10.0 ** (-a4 * 343.0 * d / sr / 20.0)) ** 2
+            if L2 >= 1.0 - 1e-12:
+                self.p.append(0.0)
+                continue
+            # one-pole (1-p)/(1 - p z^-1) with |H(4 kHz)|^2 = L2
+            B = 1.0 - L2 * math.cos(w)
+            self.p.append((B - math.sqrt(max(B * B - (1.0 - L2) ** 2, 0.0)))
+                          / (1.0 - L2))
+        self.zi = [np.zeros(1) for _ in self.d]
+        self.norm = math.sqrt(1.0 - float(np.mean(self.g)) ** 2)
+
+    def process(self, x):
+        n = len(x)
+        Y = np.empty((len(self.d), n))
+        for i, line in enumerate(self.lines):
+            y = line[:n]
+            if _HAVE_SCIPY and self.p[i] > 0.0:
+                p = self.p[i]
+                y, self.zi[i] = lfilter([1.0 - p], [1.0, -p], y, zi=self.zi[i])
+            Y[i] = y
+        out = self.c @ Y
+        Z = self.H @ (self.g[:, None] * Y) + x[None, :]
+        for i in range(len(self.d)):
+            self.lines[i] = np.concatenate((self.lines[i][n:], Z[i]))
+        return out * self.norm
 
 
 class CylinderVoicing:
@@ -1045,6 +1264,7 @@ class Synthesizer:
         #   drive  (combustion grit) ~ compression ratio -> violent burn tears more
         # (dry — the overall bang level — stays the anchor; these colour RELATIVE
         #  to it, and AGC normalises absolute loudness downstream.)
+        self._phys_spread = 0.025 / 0.55     # EFI metering scatter (below)
         try:
             _disp = max(c0.displacement, 1e-6)                       # m^3 / cylinder
             _cr = max(getattr(c0, "compression_ratio", 10.5) or 10.5, 5.0)
@@ -1063,6 +1283,13 @@ class Synthesizer:
                 0.55 + (0.25 if _inj in ("carb", "mech") else 0.0)
                 + (0.20 if getattr(_eng, "header_unequal_deg", 0.0) > 0.0
                    else 0.0), 1.0)
+            # ...but that number is a PERSONALITY (+-41 % loudness, +-71 %
+            # decay on an Aventador), 15-20x the metering scatter above.  What
+            # the EXHAUST pulses really differ by is the metering: +-2.5 % EFI,
+            # +-7 % carb / mechanical (amp = 1 + 0.55 * spread * U(-1, 1)).
+            # The personality belongs to the block and intake (_struct_gain).
+            self._phys_spread = (0.07 if _inj in ("carb", "mech")
+                                 else 0.025) / 0.55
             # EXPLOSION (port/head cavity) REVERB from the port volume: a big
             # cylinder's exhaust port + header entry is a bigger chamber.
             _cyl_l = (_eng.total_displacement * 1000.0) / max(
@@ -1107,9 +1334,14 @@ class Synthesizer:
         self.vx = dict(series_wg=True, sys_helm=True, rumble=True, asym=True,
                        engine_series=True, rad_hp=True, noise=True,
                        bipolar=True,   # F9: AC-couple the source pulses
-                       vacuum=False)   # F10: deep-vacuum overrun — Leo prefers
+                       vacuum=False,   # F10: deep-vacuum overrun — Leo prefers
                                        # the arcade lift-off bark as DEFAULT;
                                        # F10 turns the physical quiet ON
+                       cyl_split=True) # F11: the exhaust merges the cylinders
+                                       # (fuel-metering scatter only); the
+                                       # block and intake carry each one's own
+                                       # path.  OFF = the classic personality
+                                       # on every exhaust pulse
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # LAYER VISIBILITY -- one switch per stage, like the eye column in an
         # image editor.  Hiding a layer passes its input straight through, so
@@ -2145,7 +2377,9 @@ class Synthesizer:
             # Cylinder spread ~3x stronger than before, and bigger still at low
             # rpm (valve shut), where the spaced pops make each cylinder's own
             # character clearly audible -> coarse, grainy low-rpm lumpiness.
-            spread = self.params["cyl_spread"] * (1.0 + 1.4 * (1.0 - self._valve))
+            spread = (self._phys_spread if self.vx.get("cyl_split", True)
+                      else self.params["cyl_spread"]) \
+                * (1.0 + 1.4 * (1.0 - self._valve))
             # Blowdown decay from the cylinder's real STROKE (WHITE-BOX, not an
             # EQ): the exhaust-valve blowdown empties a gas column whose height is
             # the stroke, so the characteristic emptying time ~ stroke / c.  A
@@ -2437,11 +2671,17 @@ class Synthesizer:
             b2, a2 = self._pk(self._blk_f2, self._blk_q * 0.8, 3.0)
             st, self._blk2_zi = lfilter(b2, a2, st, zi=self._blk2_zi)
             combustion = (1.0 - self._blk_seal) * combustion + self._blk_seal * st
+            # what the block RADIATES carries each cylinder's own structural
+            # path; what goes down the pipe (combustion, above) does not
+            if self.vx.get("cyl_split", True) and dps > 1e-12:
+                st = st * self._struct_gain(crank, VALVE_OPEN)
             bay += self._blk_seal * st          # block radiation -> bay bus
         else:                                   # no-scipy lid: 2-tap mass-law crude
             bl = 0.5 * (combustion + np.concatenate(([self._bay_prev],
                                                      combustion[:-1])))
             self._bay_prev = float(combustion[-1]) if frames else self._bay_prev
+            if self.vx.get("cyl_split", True) and dps > 1e-12:
+                bl = bl * self._struct_gain(crank, VALVE_OPEN)
             bay += 0.5 * bl
         combustion = self._tap("block", combustion, "block")  # sealed in-cylinder event
         # keep a decimated copy of the REAL combustion voice for the analyzer's
@@ -2917,6 +3157,15 @@ class Synthesizer:
                                    phase_attr="_itb_phase")
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
 
+        # What has gone in so far leaves through the intake MOUTH: the roar and
+        # the trumpet howl.  Everything added below -- spool, valve dump,
+        # gearbox -- radiates from a housing instead, so only this part of the
+        # bus is given the mouth's radiation pattern.  Each cylinder's intake
+        # event reaches the mouth down its own runner, so the mouth carries the
+        # per-cylinder spread (events at the start of each intake stroke).
+        if self.vx.get("cyl_split", True) and dps > 1e-12:
+            bayi = bayi * self._struct_gain(crank, 0.0)
+        bayi_mouth = bayi
         if self.capture_stages:
             self._dbg_bayi1 = np.asarray(bayi, dtype=np.float64).copy()
         # --- forced induction (blower whine / turbo whistle / BOV) + gearbox -
@@ -2946,6 +3195,7 @@ class Synthesizer:
                                               # vent to open air, not the pipe
         if not self.stage_on.get("induction+gears", True):
             bayi = np.zeros(frames, dtype=np.float64)   # layer hidden
+            bayi_mouth = bayi
         self._tap("induction+gears", bay)     # bay bus: intake, turbo, gearbox
 
         # audit stash: the exit run is reproduced in isolation by the Swift
@@ -3220,6 +3470,7 @@ class Synthesizer:
                 np.asarray(bay, dtype=np.float64).copy(),
                 np.asarray(bayi, dtype=np.float64).copy(),
                 (int(_r.s0), int(_r.s1), int(_r.s2), int(_r.s3)), _r._spare)
+            self._dbg_mouth = np.asarray(bayi_mouth, dtype=np.float64).copy()
         # --- OVERRUN DARKENING: a motoring engine (DFCO / no combustion) has no
         # sharp hot blowdown, so its exhaust note is physically DARK/muffled —
         # not the bright HF hash our residual synthesis leaves on high-boost,
@@ -3314,6 +3565,19 @@ class Synthesizer:
         bay_p = self._pov_delay(bay, "bay_d", geo["d_bay"]) if geo["d_bay"] else bay
         bay_air = self._pov_partition(bay_p, "bay_p",
                                       geo["bay_alpha"], geo["bay_fc"])
+        if geo.get("flyby"):
+            # TRACKSIDE: move the car first.  Both openings' radiation patterns
+            # and the fly-by further down all read this one position.
+            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
+            if getattr(self, "_track", None) is None:
+                self._track = _TrackSide()
+            x = self._track.advance(v, frames / self.sample_rate)
+            self._tk_x = x                # relative to the post it is nearest
+            # the intake mouth faces FORWARD: its roar and howl beam at a mic
+            # the car is still driving towards.  Kept as the CHANGE the pattern
+            # makes, so the unbeamed (omnidirectional) mix survives for the
+            # track's diffuse field, which hears the car from every side.
+            dbi = self._tk_intake(bayi_mouth, x) - bayi_mouth
         # intake-side BRIGHT path: the tract mouth / atmospheric dump is an
         # OPENING — high leak, gentle 2.4 kHz shading (arch/ducting), never the
         # body-panel mass law that was muddying the compressor whistle.
@@ -3328,16 +3592,15 @@ class Synthesizer:
                                "st2", geo["struct_fc"])
             bay_air = bay_air + geo["struct"] * stq
         if geo.get("flyby"):
-            # The car has to be moved BEFORE the mix now: directivity belongs
-            # to the TAILPIPE alone.  The bay -- block, airbox, intake -- is a
-            # big, roughly omnidirectional radiator; only the pipe end beams,
-            # and it beams BACKWARDS.
-            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
-            x = getattr(self, "_tk_x", -60.0) + v * (frames / self.sample_rate)
-            if x > 100.0:
-                x -= 200.0
-            self._tk_x = x
-            tail = self._tk_directivity(tail, x)
+            # Directivity belongs to the two OPENINGS alone.  The block, the
+            # housings and the panels are big, roughly omnidirectional
+            # radiators; the pipe end beams BACKWARDS, the intake mouth (above)
+            # forwards.  The diffuse field is fed from every direction at once,
+            # so it gets the unbeamed mix.
+            omni = geo["g_tail"] * tail + geo["g_bay"] * bay_air
+            tail = self._tk_directivity(tail, self._tk_x)
+            bay_air = bay_air + self._pov_partition(dbi, "bayi_dp", a_hi,
+                                                    2400.0)
         sig = geo["g_tail"] * tail + geo["g_bay"] * bay_air
         if geo["ground"]:
             dg, rg = geo["ground"]
@@ -3375,11 +3638,11 @@ class Synthesizer:
             self._dbg_pov = (np.asarray(sig, dtype=np.float64).copy(),
                              float(getattr(self, "_tk_x", -60.0)))
         if geo.get("flyby"):
-            # TRACKSIDE FLY-BY: the car drives past a fixed mic (posts every
-            # 200 m, 12 m off the line; the car was moved above).  Every path's
-            # propagation delay follows the live distance -- its per-sample ramp
-            # IS the Doppler bend; level 1/r and air absorption ride the same
-            # geometry.
+            # TRACKSIDE FLY-BY: the car drives past fixed mics 12 m off the
+            # line (_TrackSide places the posts; the car was moved above).
+            # Every path's propagation delay follows the live geometry -- its
+            # per-sample ramp IS the Doppler bend; level 1/r and air
+            # absorption ride the same distance.
             #
             # TWO paths now, not one.  The tarmac is a mirror: the mic hears the
             # tailpipe directly AND its image under the road, a little later.
@@ -3387,22 +3650,38 @@ class Synthesizer:
             # the car closes, so the comb it carves SWEEPS -- down through the
             # mids to a first notch near 1.6 kHz at the pass, and back up as the
             # car leaves.  That moving notch is the "whoosh" on a TV pass.
-            x = self._tk_x
+            v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
             L, hm = 12.0, 1.2                     # mic: 12 m off, 1.2 m up
             race = (self.straight_cut
                     or self.sim.engine.exhaust_openness > 0.85)
             hs = 0.55 if race else 0.33           # pipe exit height
-            r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
-            r2 = math.sqrt(x * x + L * L + (hm + hs) ** 2)   # via the image
-            if not hasattr(self, "_tk_dl"):
-                self._tk_dl = _FlybyDelay(12000)
-            if not hasattr(self, "_tk_dg"):
-                self._tk_dg = _FlybyDelay(12000)
-            src = sig
-            sig = self._tk_dl.process(src, r1 / 343.0 * self.sample_rate) \
-                * (L / r1)
-            gnd = self._tk_dg.process(src, r2 / 343.0 * self.sample_rate) \
-                * (0.9 * L / r2)                  # asphalt |R| ~ 0.9, hard
+            sr = self.sample_rate
+            # RETARDED time: the sound arriving now left the car when it was
+            # further back, and c*tau is the distance from THERE -- the moving
+            # SOURCE's Doppler, c/(c -/+ v), falls out of the delay's slope.
+            # Three images of the one car: itself, under the tarmac, and behind
+            # the barrier across the track.
+            Lw = L + 2.0 * _TK_WALL_M
+            tau1, xe1 = self._track.retarded(v, L * L + (hm - hs) ** 2)
+            tau2, _ = self._track.retarded(v, L * L + (hm + hs) ** 2)
+            tau3, xe3 = self._track.retarded(v, Lw * Lw + (hm - hs) ** 2)
+            r1, r2, r3 = 343.0 * tau1, 343.0 * tau2, 343.0 * tau3
+            if getattr(self, "_tk_taps", None) is None:   # 3 s: a pass fits
+                self._tk_taps = _MovingTaps(int(3.0 * sr), 3)
+                self._tk_omni_dl = _FlybyDelay(int(3.0 * sr))
+                self._tk_air1, self._tk_air3 = _AirFIR(sr), _AirFIR(sr)
+                self._tk_field = _OutdoorField(sr)
+            d1, d2, d3 = self._tk_taps.process(
+                sig, (tau1 * sr, tau2 * sr, tau3 * sr))
+            # CONVECTIVE AMPLIFICATION: a moving monopole is louder ahead of
+            # itself than behind, (1 - M_r)^-2 with M_r its Mach number towards
+            # the mic when the sound left (+4.7 dB coming, -3.7 dB going at
+            # 290 km/h).  The Doppler above is the same motion bending pitch.
+            M = min(v, 0.8 * 343.0) / 343.0
+            cv1 = (1.0 + M * xe1 / r1) ** -2
+            cv3 = (1.0 + M * xe3 / r3) ** -2
+            direct = d1 * (L / r1 * cv1)
+            gnd = d2 * (0.9 * L / r2 * cv1)       # asphalt |R| ~ 0.9, hard
             if _HAVE_SCIPY:
                 # The bounce is only COHERENT up to a point.  At grazing
                 # incidence asphalt is smooth by the Rayleigh criterion right up
@@ -3412,21 +3691,32 @@ class Synthesizer:
                 # washes out at range.  (The chase cam's bounce is low-passed
                 # hard for the opposite reason: there the geometry is FIXED, so
                 # its notches never move and just sit in the presence band.)
-                fcoh = min(max(9000.0 * L / r2, 1500.0),
-                           self.sample_rate * 0.45)
+                fcoh = min(max(9000.0 * L / r2, 1500.0), sr * 0.45)
                 bG, aG = self._bw(1, fcoh)
                 if not hasattr(self, "_tk_g_zi"):
                     self._tk_g_zi = np.zeros(1)
                 gnd, self._tk_g_zi = lfilter(bG, aG, gnd, zi=self._tk_g_zi)
-            sig = sig + gnd
-            dist = r1
-            if _HAVE_SCIPY:                       # molecular HF loss over range
-                fca = min(800.0 + 16000.0 / (1.0 + dist / 30.0),
-                          self.sample_rate * 0.45)
-                bA2, aA2 = self._bw(1, fca)
-                if not hasattr(self, "_tk_lp_zi"):
-                    self._tk_lp_zi = np.zeros(1)
-                sig, self._tk_lp_zi = lfilter(bA2, aA2, sig, zi=self._tk_lp_zi)
+            # the air takes its ISO 9613-1 share over each path's own length
+            near = self._tk_air1.process(direct + gnd, r1)
+            wall = self._tk_air3.process(d3 * (_TK_WALL_R * L / r3 * cv3), r3)
+            # THE PLACE: the grandstand, pit wall and trees round the post
+            # scatter the car back at the mic as a diffuse field.  Outdoors that
+            # field is NOT a room's constant: a far car lights the scatterers
+            # with 1/r too, so the field falls with distance -- only slower than
+            # the direct sound while the car is among the scatterers:
+            #     field / direct-at-the-post = (L/r_c) * R_s / (r + R_s)
+            # -> 20 dB under the direct as it passes, only ~4-6 dB under it far
+            # out: far cars go washier, yet their lines stay sharp, as they do
+            # in real recordings.  The reverb slider scales it (0.2 = as
+            # specified).
+            src_then = self._tk_omni_dl.process(omni, tau1 * sr)
+            g_field = (L / _TK_RC_M) * _TK_RS_M / (r1 + _TK_RS_M) * cv1
+            field = self._tk_field.process(src_then * g_field)
+            sig = near + wall + field * (P["reverb"] / 0.2)
+            # the auto-level below measures THIS -- the car as it was when the
+            # arriving sound left it -- not the mic, so it levels rpm and car
+            # like any other view and leaves 1/r, the air and the track alone
+            self._tk_level_src = src_then
 
         # --- the SPACE, per perspective: the open air behind the car (chase)
         # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
@@ -3437,6 +3727,8 @@ class Synthesizer:
             # short room was part of the '闷' feel)
             self._cab_verb.mix = 0.6 * P["reverb"]
             sig = self._cab_verb.process(sig)
+        elif self.pov == "trackside":
+            pass                          # the track's own field is in already
         else:
             self._reverb.mix = P["reverb"] + (0.05 if self.road_pipe else 0.0)
             sig = self._reverb.process(sig)
@@ -3457,13 +3749,22 @@ class Synthesizer:
             # level on a ~300 Hz-high-passed copy (a cheap A-weighting LF roll)
             # so bass rides ON TOP instead of stealing the gain budget.  The
             # signal itself is untouched; peaks stay guarded by the limiter.
+            # TRACKSIDE levels the CAR, not the mic: the fly-by's distance
+            # sweep (1/r, the air, the track) IS the sound, and any AGC that
+            # listens to the mic undoes it -- a "near-freeze" still pumped a
+            # six-second getaway back up to full level.
+            lvl_src = sig
+            ref = getattr(self, "_tk_level_src", None)
+            if self.pov == "trackside" and ref is not None                     and len(ref) == len(sig):
+                lvl_src = ref
             if _HAVE_SCIPY:
                 bwg, awg = self._bw(1, 300.0, btype="high")
                 if not hasattr(self, "_agc_hp_zi"):
                     self._agc_hp_zi = np.zeros(1)
-                est, self._agc_hp_zi = lfilter(bwg, awg, sig, zi=self._agc_hp_zi)
+                est, self._agc_hp_zi = lfilter(bwg, awg, lvl_src,
+                                               zi=self._agc_hp_zi)
             else:
-                est = np.diff(sig, prepend=sig[:1]) * 8.0    # crude HF proxy
+                est = np.diff(lvl_src, prepend=lvl_src[:1]) * 8.0  # crude HF
             rms = float(np.sqrt(np.mean(est * est))) + 1e-9
             self._level += (rms - self._level) * 0.04
             # gain ceiling FOLLOWS COMBUSTION: on the overrun a real car gets
@@ -3473,10 +3774,6 @@ class Synthesizer:
             gmax = 2.2 + 3.8 * getattr(self, "_comb_load", 1.0)
             gain = min(0.22 / (self._level + 1e-6), gmax)
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
-            if self.pov == "trackside":
-                # near-freeze: the fly-by's 1/r loudness sweep IS the drama —
-                # a tracking AGC was flattening the pass to ~9 dB (real: ~20)
-                rate *= 0.06
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
         else:
@@ -3909,56 +4206,126 @@ class Synthesizer:
             if d <= swept:
                 self.cylinder_light[i] = 1.0
 
-    def _tk_directivity(self, tail, x):
-        """How a pipe end radiates depends on which way it points.
+    def _struct_gain(self, crank, ref_deg):
+        """Each cylinder reaches the listener through its OWN path.
 
-        A tailpipe is omnidirectional while its mouth is small against the
-        wavelength and starts to BEAM once the circumference catches up --
-        ka ~ 1, a = the tip radius, so f = c / (2*pi*a).  For the tips in the
-        library that is 1.9-3.0 kHz: exactly the rasp band.  Below it the sound
-        spills out everywhere; above it, it goes where the pipe points, which
-        on a car is straight BACK.
+        The in-cylinder event shakes the block at that cylinder's own place --
+        end or middle, near bank or far -- and the transfer from there to the
+        radiating surfaces differs by a few dB from cylinder to cylinder (the
+        classic NVH transfer-path spread), even when every cylinder burns
+        alike; the intake's runners do the same for the mouth.  So each
+        cylinder's weight is held through its slot -- from its event at
+        ``ref_deg`` in its own cycle to the next cylinder's -- with a
+        12-degree cross-fade.  The paths only SHARE OUT the radiator's power
+        among the cylinders, they cannot add any, so the weights are power-
+        normalised (mean w^2 = 1) -- and a structure's path spread does not
+        change with the exhaust valve.  Their spread is the "cylinder spread"
+        slider, the old per-cylinder personality, which is what it physically
+        is."""
+        s = self.params["cyl_spread"]
+        w = np.maximum(1.0 + 0.55 * s * self._cyl_amp, 0.1)
+        w = w / math.sqrt(float(np.mean(w * w)))
+        ev = np.mod(ref_deg - np.asarray(self._offsets, dtype=np.float64)
+                    - np.asarray(self._header_offset, dtype=np.float64), 720.0)
+        order = np.argsort(ev, kind="stable")
+        ev, w = ev[order], w[order]
+        a = np.mod(crank, 720.0)
+        k = np.searchsorted(ev, a, side="right") - 1   # -1 wraps to the last
+        since = np.mod(a - ev[k], 720.0)
+        return w[k - 1] + (w[k] - w[k - 1]) * np.minimum(since / 12.0, 1.0)
 
-        So the tail is split at ka = 1 and the upper band is given a monopole +
+    def _tk_beam(self, sig, cos_t, a_mouth, key):
+        """How an OPENING radiates depends on which way it points.
+
+        A pipe end or an intake mouth is omnidirectional while it is small
+        against the wavelength and starts to BEAM once its circumference
+        catches up -- ka ~ 1, a = the mouth radius, so f = c / (2*pi*a).
+        Below that the sound spills out everywhere; above it, it goes where the
+        opening points.
+
+        So the signal is split at ka = 1 and the upper band given a monopole +
         dipole pattern, D = (1 - b) + b * (1 + cos t) / 2, with t the angle
-        between the pipe's axis and the mic, normalised so its power averaged
-        over the sphere is unity -- directivity moves energy around, it does not
-        make any.  With b = 0.85 that is +4 dB straight up the pipe, -0.7 dB
-        side-on, and -12 dB from in front.
+        between the opening's axis and the mic, normalised so its power
+        averaged over the sphere is unity -- directivity moves energy around, it
+        does not make any.  With b = 0.85 that is +4 dB straight down the axis,
+        -0.7 dB side-on and -12 dB from behind.  The split is complementary
+        (low + high is the input), so a pattern of 1 gives the input back.
 
-        Which is the TV pass exactly: coming towards you the pipe points away
-        and the car sounds dull; once it is past you are looking up the pipe
-        and the rasp arrives all at once.  The split is complementary (low +
-        high is the input), so a pattern of 1 gives back the input unchanged.
+        ``key`` names the opening: each keeps its own filter and its own last
+        gain, which the next block ramps from.
         """
-        eng = self.sim.engine
         sr = self.sample_rate
-        L, hm = 12.0, 1.2
-        race = self.straight_cut or eng.exhaust_openness > 0.85
-        hs = 0.55 if race else 0.33
-        a_tip = eng.exhaust_radius_m * max(getattr(eng, "tip_scale", 1.0), 0.5)
-        fc = min(343.0 / (2.0 * math.pi * max(a_tip, 0.005)), sr * 0.45)
-        r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
-        # pipe axis points BACKWARD (-x); the mic is at (0, L, hm) from a car at
-        # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
-        cos_t = x / r1
+        fc = min(343.0 / (2.0 * math.pi * max(a_mouth, 0.005)), sr * 0.45)
         b = 0.85
         A, B = 1.0 - 0.5 * b, 0.5 * b
         norm = 1.0 / math.sqrt(A * A + B * B / 3.0)
         d_new = norm * (A + B * cos_t)
-        d_old = getattr(self, "_tk_dir", d_new)
-        self._tk_dir = d_new
+        if not hasattr(self, "_tk_gain"):
+            self._tk_gain, self._tk_zi = {}, {}
+        d_old = self._tk_gain.get(key, d_new)
+        self._tk_gain[key] = d_new
         if not _HAVE_SCIPY:
-            return tail
+            return sig
         bL, aL = self._bw(1, fc)
-        if not hasattr(self, "_tk_dir_zi"):
-            self._tk_dir_zi = np.zeros(1)
-        low, self._tk_dir_zi = lfilter(bL, aL, tail, zi=self._tk_dir_zi)
-        high = tail - low
+        zi = self._tk_zi.get(key)
+        if zi is None:
+            zi = np.zeros(1)
+        low, self._tk_zi[key] = lfilter(bL, aL, sig, zi=zi)
+        high = sig - low
         # ramped across the block: the angle swings fast at the pass, and a
         # step per block would zipper
-        g = np.linspace(d_old, d_new, len(tail))
+        g = np.linspace(d_old, d_new, len(sig))
         return low + g * high
+
+    def _tk_directivity(self, tail, x):
+        """The tailpipe beams BACKWARDS.
+
+        Its tips in the library put ka = 1 at 1.9-3.0 kHz: exactly the rasp
+        band.  Which is the TV pass: coming towards you the pipe points away
+        and the car sounds dull; once it is past you are looking up the pipe
+        and the rasp arrives all at once.
+        """
+        eng = self.sim.engine
+        L, hm = 12.0, 1.2
+        race = self.straight_cut or eng.exhaust_openness > 0.85
+        hs = 0.55 if race else 0.33
+        a_tip = eng.exhaust_radius_m * max(getattr(eng, "tip_scale", 1.0), 0.5)
+        r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
+        # pipe axis points BACKWARD (-x); the mic is at (0, L, hm) from a car at
+        # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
+        return self._tk_beam(tail, x / r1, a_tip, "tail")
+
+    def _tk_intake(self, mouth, x):
+        """The intake mouth beams too -- the OTHER way.
+
+        An inlet faces into the airstream to catch ram pressure: an F1 airbox
+        over the driver's head, a road car's snorkel behind the grille.  Same
+        opening, same pattern, pointed FORWARD.
+
+        Its size is not a free number.  An inlet is sized to pass the engine's
+        peak airflow at a modest velocity, ~35 m/s: faster costs pressure drop,
+        which grows as v^2, and makes the inlet itself whistle.  So
+
+            Q = displacement * redline / 120 * VE * (1 + boost)    [m^3/s]
+            a = sqrt(Q / (pi * 35))
+
+        which lands between ~4 cm (a 1.5 litre road turbo) and ~7 cm (a 5.2
+        litre V8) and puts ka = 1 at 0.7-1.4 kHz.  Bigger mouths than the
+        tailpipes, so the intake beams over a WIDER band than the exhaust does
+        -- and in the opposite direction.  That swap is the pass: the howl
+        comes at you, the rasp goes away from you.
+        """
+        eng = self.sim.engine
+        L, hm = 12.0, 1.2
+        race = self.straight_cut or eng.exhaust_openness > 0.85
+        hi = 0.90 if race else 0.60          # roll-hoop airbox / grille snorkel
+        q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
+             * (1.0 + max(eng.boost_bar, 0.0)))
+        a_in = math.sqrt(q / (math.pi * 35.0))
+        r = math.sqrt(x * x + L * L + (hm - hi) ** 2)
+        # the mouth faces FORWARD (+x): cos(theta) = -x / r, positive while the
+        # car is still coming
+        return self._tk_beam(mouth, -x / r, a_in, "intake")
 
     def _overrun_pops(self, frames):
         """Overrun exhaust pops/bangs ('放炮') — modelled like little combustion

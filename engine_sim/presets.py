@@ -544,7 +544,11 @@ def lamborghini_aventador_v12() -> Engine:
         exhaust_primary_m=0.50, exhaust_total_m=1.95, exhaust_radius_m=0.023,
         exhaust_channels=2, exhaust_openness=0.84, muffler_volume_m3=0.0016,
         wall_material="titanium", cat_cells_cpsi=350,
-        header_unequal_deg=9.0, backpressure_coupling=0.8,   # buzzy 60-deg rasp
+        # Mirror-image bank manifolds: NO bank offset.  Measured on a real
+        # pass: its 9th and 15th orders sit 28-30 dB under the 6th going away,
+        # which leaves no room for the 9 deg this used to have (that put them
+        # within 7 dB and read as a buzz the car does not make).
+        header_unequal_deg=0.0, backpressure_coupling=0.8,
         gear_grain=0.3,                  # a touch of fine gear-driven whir
         gear_ratios=[2.93, 2.15, 1.66, 1.32, 1.06, 0.86, 0.72], final_drive=3.91,
         vehicle_mass=1575.0, wheel_radius=0.35, clutch_capacity=720.0,
