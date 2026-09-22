@@ -128,14 +128,19 @@ public final class InductionStage {
         return out
     }
 
-    /// - Returns: the bay signal to add, and the duck to apply to the exhaust.
+    /// - Returns: the bay signal to add; the part of it that leaves through
+    ///   the intake MOUTH (roar and trumpet howl -- the spool, the valve dump
+    ///   and the gearbox radiate from housings instead), so the listener can
+    ///   give that part the mouth's radiation pattern; and the duck to apply
+    ///   to the exhaust.
     public func process(frames: Int, state s: InductionState,
                         params P: [String: Double]) -> (bay: [Double],
+                                                        mouth: [Double],
                                                         duck: Double) {
         var bay = [Double](repeating: 0, count: frames)
         let p = { (k: String, d: Double) -> Double in P[k] ?? d }
         let sr = sampleRate
-        guard s.degPerSample > 1e-12 else { return (bay, 0.0) }
+        guard s.degPerSample > 1e-12 else { return (bay, bay, 0.0) }
         let rpmFrac = min(s.rpm / max(eng.redlineRpm, 1.0), 1.0)
 
         // --- intake roar: the broadband suck through the airbox -------------
@@ -175,6 +180,7 @@ public final class InductionStage {
         }
 
         dbgIntakeOnly = bay
+        let mouth = bay                  // what leaves through the intake mouth
         // --- forced induction and the gearbox -------------------------------
         var gw = gearboxAudio(frames: frames, state: s, params: P)
         var ind = inductionAudio(frames: frames, state: s, params: P)
@@ -194,7 +200,7 @@ public final class InductionStage {
         // the driver has just LIFTED, so the note collapses and the valve event
         // is what is actually heard -- duck the exhaust rather than bury it
         let duck = min(0.40 * bovEnv, 0.40)
-        return (bay, duck)
+        return (bay, mouth, duck)
     }
 
     // ------------------------------------------------------------------ spool

@@ -397,6 +397,9 @@ public final class Synthesizer {
         // ADDED to the mix, it is not a filter in series
         let bayAdd = layers.gate(.inductionGears, ind.bay)
         for i in 0..<frames { bayi[i] += bayAdd[i] }
+        // the share of it that leaves through the intake MOUTH, which the
+        // trackside listener gives the mouth's radiation pattern
+        let mouth = layers.gate(.inductionGears, ind.mouth)
         // the driver has just LIFTED, so the note collapses and the valve event
         // is what is actually heard
         if ind.duck > 1e-6 {
@@ -425,8 +428,8 @@ public final class Synthesizer {
         ls.rpm = rpm; ls.speed = speed; ls.degPerSample = dps
         ls.crank = audioCrank; ls.combLoad = combLoad; ls.injAmt = r.injAmt
         if captureTaps { debugTaps["bay"] = bay; debugTaps["bayi"] = bayi }
-        sig = listener.process(sig, bay: bay, bayi: bayi, state: ls,
-                               params: params)
+        sig = listener.process(sig, bay: bay, bayi: bayi, mouth: mouth,
+                               state: ls, params: params)
 
         // --- master -------------------------------------------------------------
         var ms = MasterState()

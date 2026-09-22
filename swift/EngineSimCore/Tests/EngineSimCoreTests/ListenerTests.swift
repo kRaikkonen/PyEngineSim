@@ -21,6 +21,7 @@ final class ListenerTests: XCTestCase {
         let rpm: Double, throttle: Double, speed: Double, dps: Double
         let crank: Double, comb_load: Double, inj_amt: Double, track_x: Double
         let sig: [Double], bay: [Double], bayi: [Double]
+        let mouth: [Double]?             // the intake mouth's share of bayi
         let rng: RngState
         let cache: [String: [[Double]]]
         let cache_after: [String: [[Double]]]
@@ -78,7 +79,8 @@ final class ListenerTests: XCTestCase {
                 s.combLoad = b.comb_load; s.injAmt = b.inj_amt
 
                 let out = stage.process(b.sig, bay: b.bay, bayi: b.bayi,
-                                        state: s, params: c.params)
+                                        mouth: b.mouth, state: s,
+                                        params: c.params)
                 if let want = b.taps["EQ"], let mine = layers.lastValue(.eq) {
                     let db = residualDB(mine, want)
                     if db > worstEQ { worstEQ = db; whereEQ = name }

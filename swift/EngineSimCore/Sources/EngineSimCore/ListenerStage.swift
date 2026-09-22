@@ -114,8 +114,8 @@ public final class ListenerStage {
     /// The tailpipe's IMAGE under the road: the ground-bounce path, delayed by
     /// its own (slightly longer) distance so its Doppler is its own too.
     var flybyDG = FlybyDelay(maxDelay: 12000)
-    /// Last block's directivity gain, so the next one ramps from it.
-    var tkDir: Double?
+    /// Each opening's last directivity gain, so the next block ramps from it.
+    var tkGain = [String: Double]()
     var flybyLP = OnePole.identity, flybyLPKey = ""
     var trackX = -60.0
     /// The mix just before the fly-by, and the car's position -- the two
@@ -209,8 +209,11 @@ public final class ListenerStage {
     ///   - sig: the tailpipe signal, bay: the bay bus, bayi: the intake sub-bus
     ///     (a bright OPENING, never the body-panel mass law -- that was turning
     ///     the compressor whistle to mud).
+    ///   - mouth: the part of `bayi` that leaves through the intake mouth,
+    ///     which beams forward on trackside.  nil = no mouth pattern.
     public func process(_ input: [Double], bay bayIn: [Double],
-                        bayi bayiIn: [Double], state s: ListenerState,
+                        bayi bayiIn: [Double], mouth mouthIn: [Double]? = nil,
+                        state s: ListenerState,
                         params P: [String: Double]) -> [Double] {
         var sig = input
         var bay = bayIn
@@ -303,10 +306,25 @@ public final class ListenerStage {
         }
         let bayP = geo.dBay > 0 ? povDelay(bay, "bay_d", geo.dBay) : bay
         var bayAir = povPartition(bayP, "bay_p", geo.bayAlpha, geo.bayFc)
+        var bayi = bayiIn
+        if geo.flyby {
+            // TRACKSIDE: move the car first.  Both openings' radiation
+            // patterns and the fly-by further down all read this one position.
+            let v = abs(s.speed)
+            var x = trackX + v * (Double(n) / sr)
+            if x > 100.0 { x -= 200.0 }
+            trackX = x
+            // the intake mouth faces FORWARD: its roar and howl beam at a mic
+            // the car is still driving towards
+            if let mouth = mouthIn {
+                let beamed = tkIntake(mouth, x)
+                for i in 0..<n { bayi[i] += beamed[i] - mouth[i] }
+            }
+        }
         // the intake tract mouth and the atmospheric dump are OPENINGS: a high
         // leak with gentle shading from the arch and ducting, never the body
         // panel's mass law
-        let bayiP = geo.dBay > 0 ? povDelay(bayiIn, "bayi_d", geo.dBay) : bayiIn
+        let bayiP = geo.dBay > 0 ? povDelay(bayi, "bayi_d", geo.dBay) : bayi
         let aHi = min(geo.bayAlpha * 2.2 + 0.15, 0.80)
         let bayiAir = povPartition(bayiP, "bayi_p", aHi, 2400.0)
         for i in 0..<n { bayAir[i] += bayiAir[i] }
@@ -318,15 +336,11 @@ public final class ListenerStage {
             for i in 0..<n { bayAir[i] += geo.strct * st[i] }
         }
         if geo.flyby {
-            // The car is moved BEFORE the mix now: directivity belongs to the
-            // TAILPIPE alone.  The bay -- block, airbox, intake -- is a big,
-            // roughly omnidirectional radiator; only the pipe end beams, and it
-            // beams BACKWARDS.
-            let v = abs(s.speed)
-            var x = trackX + v * (Double(n) / sr)
-            if x > 100.0 { x -= 200.0 }
-            trackX = x
-            tail = tkDirectivity(tail, x)
+            // Directivity belongs to the two OPENINGS alone.  The block, the
+            // housings and the panels are big, roughly omnidirectional
+            // radiators; the pipe end beams BACKWARDS, the intake mouth (above)
+            // forwards.
+            tail = tkDirectivity(tail, trackX)
         }
         for i in 0..<n { sig[i] = geo.gTail * tail[i] + geo.gBay * bayAir[i] }
 
@@ -427,46 +441,80 @@ public final class ListenerStage {
         return Array(y.prefix(x.count))
     }
 
-    /// How a pipe end radiates depends on which way it points.
+    /// How an OPENING radiates depends on which way it points.
     ///
-    /// Omnidirectional while the mouth is small against the wavelength; it
-    /// starts to BEAM once the circumference catches up, ka ~ 1, so above
-    /// f = c / (2*pi*a).  For the tips in the library that is 1.9-3.0 kHz --
-    /// exactly the rasp band -- and on a car the pipe points straight BACK.
+    /// A pipe end or an intake mouth is omnidirectional while it is small
+    /// against the wavelength and starts to BEAM once its circumference
+    /// catches up -- ka ~ 1, so above f = c / (2*pi*a).
     ///
-    /// The tail is split at ka = 1 and the upper band given a monopole + dipole
-    /// pattern D = (1 - b) + b (1 + cos t) / 2, normalised so its power averaged
-    /// over the sphere is one: directivity moves energy, it does not make it.
-    /// At b = 0.85 that is +4 dB up the pipe, -0.7 dB side-on, -12 dB in front.
-    /// The split is complementary, so a pattern of one returns the input.
-    func tkDirectivity(_ tail: [Double], _ x: Double) -> [Double] {
+    /// The signal is split at ka = 1 and the upper band given a monopole +
+    /// dipole pattern D = (1 - b) + b (1 + cos t) / 2, normalised so its power
+    /// averaged over the sphere is one: directivity moves energy, it does not
+    /// make it.  At b = 0.85 that is +4 dB down the axis, -0.7 dB side-on,
+    /// -12 dB from behind.  The split is complementary, so a pattern of one
+    /// returns the input.  `key` names the opening: each keeps its own filter
+    /// and its own last gain.
+    func tkBeam(_ sig: [Double], _ cosT: Double, _ aMouth: Double,
+                _ key: String) -> [Double] {
         let sr = sampleRate
-        let L = 12.0, hm = 1.2
-        let race = eng.straightCut || eng.exhaustOpenness > 0.85
-        let hs = race ? 0.55 : 0.33
-        let aTip = eng.exhaustRadiusM * max(eng.tipScale, 0.5)
-        let fc = min(343.0 / (2.0 * Double.pi * max(aTip, 0.005)), sr * 0.45)
-        let r1 = (x * x + L * L + (hm - hs) * (hm - hs)).squareRoot()
-        // the pipe points BACKWARD (-x): cos(theta) = x / r1, positive once
-        // the car is past the mic
-        let cosT = x / r1
+        let fc = min(343.0 / (2.0 * Double.pi * max(aMouth, 0.005)), sr * 0.45)
         let b = 0.85
         let A = 1.0 - 0.5 * b, B = 0.5 * b
         let norm = 1.0 / (A * A + B * B / 3.0).squareRoot()
         let dNew = norm * (A + B * cosT)
-        let dOld = tkDir ?? dNew
-        tkDir = dNew
-        let low = povLowPass(tail, "tk_dir", fc)
-        let n = tail.count
+        let dOld = tkGain[key] ?? dNew
+        tkGain[key] = dNew
+        let low = povLowPass(sig, "tk_" + key, fc)
+        let n = sig.count
         var out = [Double](repeating: 0, count: n)
-        // ramped across the block like numpy.linspace(d_old, d_new, n): the
-        // angle swings fast at the pass and a step per block would zipper
+        // numpy.linspace(d_old, d_new, n) to the bit -- i * step + start, the
+        // last sample pinned to the end value -- because the angle swings fast
+        // at the pass and a step per block would zipper
+        let step = n > 1 ? (dNew - dOld) / Double(n - 1) : 0.0
         for i in 0..<n {
-            let g = n > 1 ? dOld + (dNew - dOld) * Double(i) / Double(n - 1)
-                          : dNew
-            out[i] = low[i] + g * (tail[i] - low[i])
+            let g = (n > 1 && i == n - 1) ? dNew : Double(i) * step + dOld
+            out[i] = low[i] + g * (sig[i] - low[i])
         }
         return out
+    }
+
+    /// The tailpipe beams BACKWARDS.  Its tips put ka = 1 at 1.9-3.0 kHz:
+    /// exactly the rasp band.  Coming towards you the pipe points away and the
+    /// car sounds dull; once it is past, the rasp arrives all at once.
+    func tkDirectivity(_ tail: [Double], _ x: Double) -> [Double] {
+        let L = 12.0, hm = 1.2
+        let race = eng.straightCut || eng.exhaustOpenness > 0.85
+        let hs = race ? 0.55 : 0.33
+        let aTip = eng.exhaustRadiusM * max(eng.tipScale, 0.5)
+        let r1 = (x * x + L * L + (hm - hs) * (hm - hs)).squareRoot()
+        // the pipe points BACKWARD (-x): cos(theta) = x / r1, positive once
+        // the car is past the mic
+        return tkBeam(tail, x / r1, aTip, "tail")
+    }
+
+    /// The intake mouth beams too -- the OTHER way.  An inlet faces into the
+    /// airstream to catch ram pressure (an F1 airbox over the driver's head, a
+    /// road car's snorkel behind the grille), so the same pattern points
+    /// FORWARD.
+    ///
+    /// Its size is not a free number: an inlet is sized to pass the engine's
+    /// peak airflow at ~35 m/s (faster costs pressure drop, which grows as
+    /// v^2, and makes the inlet whistle), so a = sqrt(Q / (pi * 35)) with
+    /// Q = displacement * redline / 120 * VE * (1 + boost).  That is ~4-7 cm
+    /// and ka = 1 at 0.7-1.4 kHz -- bigger mouths than the tailpipes, so the
+    /// intake beams over a wider band, in the opposite direction.  That swap
+    /// is the pass: the howl comes at you, the rasp goes away from you.
+    func tkIntake(_ mouth: [Double], _ x: Double) -> [Double] {
+        let L = 12.0, hm = 1.2
+        let race = eng.straightCut || eng.exhaustOpenness > 0.85
+        let hi = race ? 0.90 : 0.60          // roll-hoop airbox / grille snorkel
+        let q = eng.totalDisplacement * eng.redlineRpm / 120.0 * eng.veMax
+            * (1.0 + max(eng.boostBar, 0.0))
+        let aIn = (q / (Double.pi * 35.0)).squareRoot()
+        let r = (x * x + L * L + (hm - hi) * (hm - hi)).squareRoot()
+        // the mouth faces FORWARD (+x): cos(theta) = -x / r, positive while
+        // the car is still coming
+        return tkBeam(mouth, -x / r, aIn, "intake")
     }
 
     func povLowPass(_ x: [Double], _ key: String, _ fc: Double) -> [Double] {
