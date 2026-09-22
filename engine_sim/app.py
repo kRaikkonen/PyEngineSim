@@ -1330,7 +1330,7 @@ class App:
                                    else "OFF (arcade overrun)"))
                 elif e.key == pygame.K_F11:    # physical cylinder split
                     self.synth.vx["cyl_split"] = not self.synth.vx.get(
-                        "cyl_split", True)
+                        "cyl_split", False)
                     self._flash("cylinders "
                                 + ("SPLIT (exhaust merged, block per-cyl)"
                                    if self.synth.vx["cyl_split"]

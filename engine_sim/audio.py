@@ -1350,11 +1350,15 @@ class Synthesizer:
                                          # (experiment; see _gas_pulse_at)
                        phys_voice=False, # the PHYSICAL voice: solver pulse, no
                                          # synthesizer layers (see p_phys_voice)
-                       cyl_split=True) # F11: the exhaust merges the cylinders
-                                       # (fuel-metering scatter only); the
-                                       # block and intake carry each one's own
-                                       # path.  OFF = the classic personality
-                                       # on every exhaust pulse
+                       cyl_split=False) # F11: the exhaust merges the cylinders
+                                        # (fuel-metering scatter only); the
+                                        # block and intake carry each one's own
+                                        # path.  PART OF THE PHYSICAL VOICE
+                                        # (on with it): the classic voice's
+                                        # narrow pulses need the per-cylinder
+                                        # spread to soften their top end --
+                                        # forced on alone it turned every car
+                                        # shrill and let the fizz up
         self._bip_zi = {}         # per-channel AC-coupling filter states
         # LAYER VISIBILITY -- one switch per stage, like the eye column in an
         # image editor.  Hiding a layer passes its input straight through, so
@@ -1472,6 +1476,13 @@ class Synthesizer:
         hu = eng.header_unequal_deg
         self._header_offset = [hu if c.bank_angle_deg < 0 else 0.0
                                for c in eng.cylinders]
+        # the physical voice uses the MEASURED bank geometry where a preset
+        # carries one (header_unequal_deg can be a voicing choice of the
+        # classic voice, e.g. the Aventador's tuned 9-deg rasp)
+        hp = getattr(eng, "header_unequal_phys_deg", -1.0)
+        hp = hu if hp < 0.0 else hp
+        self._header_offset_phys = [hp if c.bank_angle_deg < 0 else 0.0
+                                    for c in eng.cylinders]
         # --- (Step 2) per-cylinder header-runner DELAY LINES --------------------
         # Each cylinder sits a different distance from the collector, so its pulse
         # reaches the merge point at a slightly different time.  Firing order x
@@ -2399,7 +2410,7 @@ class Synthesizer:
             # Cylinder spread ~3x stronger than before, and bigger still at low
             # rpm (valve shut), where the spaced pops make each cylinder's own
             # character clearly audible -> coarse, grainy low-rpm lumpiness.
-            spread = (self._phys_spread if self.vx.get("cyl_split", True)
+            spread = (self._phys_spread if self._split_on()
                       else self.params["cyl_spread"]) \
                 * (1.0 + 1.4 * (1.0 - self._valve))
             # Blowdown decay from the cylinder's real STROKE (WHITE-BOX, not an
@@ -2466,7 +2477,7 @@ class Synthesizer:
                     # floor the pulse so the engine keeps barking on lift.
                     lo = 0.06 if self.vx.get("vacuum", True) else 0.30
                     amp_j *= min(max(rel, lo), 1.5) ** 0.8
-                phi = np.mod(crank + off + self._header_offset[j]
+                phi = np.mod(crank + off + self._hdr_off()[j]
                              + self._tjit[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
@@ -2739,14 +2750,14 @@ class Synthesizer:
             combustion = (1.0 - self._blk_seal) * combustion + self._blk_seal * st
             # what the block RADIATES carries each cylinder's own structural
             # path; what goes down the pipe (combustion, above) does not
-            if self.vx.get("cyl_split", True) and dps > 1e-12:
+            if self._split_on() and dps > 1e-12:
                 st = st * self._struct_gain(crank, VALVE_OPEN)
             bay += self._blk_seal * st          # block radiation -> bay bus
         else:                                   # no-scipy lid: 2-tap mass-law crude
             bl = 0.5 * (combustion + np.concatenate(([self._bay_prev],
                                                      combustion[:-1])))
             self._bay_prev = float(combustion[-1]) if frames else self._bay_prev
-            if self.vx.get("cyl_split", True) and dps > 1e-12:
+            if self._split_on() and dps > 1e-12:
                 bl = bl * self._struct_gain(crank, VALVE_OPEN)
             bay += 0.5 * bl
         combustion = self._tap("block", combustion, "block")  # sealed in-cylinder event
@@ -3234,7 +3245,7 @@ class Synthesizer:
         # bus is given the mouth's radiation pattern.  Each cylinder's intake
         # event reaches the mouth down its own runner, so the mouth carries the
         # per-cylinder spread (events at the start of each intake stroke).
-        if self.vx.get("cyl_split", True) and dps > 1e-12:
+        if self._split_on() and dps > 1e-12:
             bayi = bayi * self._struct_gain(crank, 0.0)
         bayi_mouth = bayi
         if self.capture_stages:
@@ -4318,6 +4329,17 @@ class Synthesizer:
         t = (rf - g[i - 1]) / (g[i] - g[i - 1])
         return (1.0 - t) * self._gp_lut[i - 1] + t * self._gp_lut[i]
 
+    def _split_on(self):
+        """The physical cylinder split (F11) is part of the physical voice."""
+        return bool(self.vx.get("cyl_split", False)
+                    or self.vx.get("phys_voice", False))
+
+    def _hdr_off(self):
+        """Per-cylinder bank offsets: measured geometry in the physical
+        voice, the preset's (possibly voiced) value in the classic one."""
+        return (self._header_offset_phys if self.vx.get("phys_voice", False)
+                else self._header_offset)
+
     def _struct_gain(self, crank, ref_deg):
         """Each cylinder reaches the listener through its OWN path.
 
@@ -4338,7 +4360,7 @@ class Synthesizer:
         w = np.maximum(1.0 + 0.55 * s * self._cyl_amp, 0.1)
         w = w / math.sqrt(float(np.mean(w * w)))
         ev = np.mod(ref_deg - np.asarray(self._offsets, dtype=np.float64)
-                    - np.asarray(self._header_offset, dtype=np.float64), 720.0)
+                    - np.asarray(self._hdr_off(), dtype=np.float64), 720.0)
         order = np.argsort(ev, kind="stable")
         ev, w = ev[order], w[order]
         a = np.mod(crank, 720.0)

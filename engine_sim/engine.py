@@ -226,6 +226,8 @@ class Engine:
     # Unequal-length exhaust headers delay one bank's pulses, creating the
     # classic Subaru boxer rumble (even firing, uneven *sound*).
     header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
+    header_unequal_phys_deg: float = -1.0  # measured value for the physical
+                                           # voice (-1 = same as above)
     # Exhaust merge topology — which cylinders share a (secondary) collector:
     #   "auto" -> 4-1 for equal-length race headers, 4-2-1 otherwise
     #   "4-1"  -> every runner on a bank merges at one collector (raw, top-end)
