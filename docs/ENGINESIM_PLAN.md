@@ -450,6 +450,58 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - 顺序式的 ECU 过渡逻辑（真实掉压更小）；双涡管的脉冲模型只是一个效率增益。
 - Swift 移植。
 
+## 11. 进气、JDM 振颤、驾驶舱（2026-09-24，Leo：进气太吵、白噪音为主、真正的进气没那么大；cabin 不对；我说的振颤是 JDM 改装的 sututu）
+
+### 11.1 诊断（先量再改）
+- 按层关掉测“谐波/噪声比”（发动机阶次上的能量 vs 阶次之间的能量），Golf R 4500 rpm 全油门：
+  - 驾驶舱中频 160–1250 Hz 只有 **+8 dB**（追车 +17 dB）。噪声底主要是**进气白噪声**：关掉它
+    噪声底降 11–14 dB。
+  - 10 kHz 以上是涡轮 whoosh。
+  - 旧进气 = 一段按油门/转速放大的带通白噪声，不是物理。
+- 驾驶舱为什么像“外面调小 5 dB”，三个原因：
+  - 质量定律面板的一阶低通拐点放在了 TL=20 dB 处（2239/m），整整透明了 20 dB——
+    TL = 20log(fm) − 47 的一阶低通拐点应在 TL=0 dB 处：224/m。
+  - 泄漏 NR 只有 5 dB（“头盔耳朵”设定）≈ 开着窗。
+  - 结构传声 −8 dB 平直到 2 kHz。
+  - 另外进气口那条总线在驾驶舱里走的是追车的“开口亮路径”（0.8，平到 2.4 kHz）——可进气口
+    在车舱外面。
+- 旧振颤：每个周期两个点击（dW/dt 经 700 Hz 低通）加一层平的嘶声 → “嗒、嗒”，不是“sututu”。
+
+### 11.2 进气：从气门来（所有车）
+- 源：气体求解器的**进气门流量**（物理音色本来就用它）。每缸按自己的相位求和，和排气脉冲同一
+  比例（经典链用求解器排气脉冲 vs 参数脉冲的 RMS 定标），所以进/排气之比是求解器自己的；
+  冷空气每摩尔体积是热排气的 T_air/T_exh（~1/4）。求解器全车队 131 台都能跑，0.12–0.27 s/车，
+  合成器创建时烘焙。
+- 出口看车：
+  - **airbox（原厂）**：箱体（3×排量）+ 进气管是亥姆霍兹共振器，二阶低通（2 升 ~70 Hz），阻尼来自
+    管内平均流阻（Q = ω_H L'/U）→ 发火阶次到空气里低 20–40 dB。原厂进气本来就安静。
+  - **蘑菇头 pod**（锥形滤芯 + 短管）：没有箱子。节气门（或压气机）到滤芯这段短管是四分之一波长
+    共振器（一端闭一端开，|R|≈0.88，奇数倍 c/4L'）→ 进气“嚎”。
+  - **涡轮车**：发动机脉冲要先穿过中冷/增压腔和转着的压气机才到进气口（×0.3、低于增压腔共振）
+    → 进气声主要是涡轮自己的。
+  - 口部按活塞辐射（f_a = c/2πa 一阶高通）。
+- 白噪声进气删除（为了其余各层噪声逐样本不变，只保留了原来那次随机数抽取）。物理音色（F2004/
+  F2007）的进气不变。App 新增 **“蘑菇头 / Pod filter”** 开关；拉力车和默认无泄压阀的 JDM 车
+  （S15、GDB、GV、VT15R、S1、RS200、205 T16、Delta S4…）默认 pod。
+
+### 11.3 JDM “sututu”
+- 测量：喘振噪声是“多个源在喘振频率上同步辐射声脉冲形成的和弦”（ASME J. Turbomach. 2023），
+  听感像“鸽子/火鸡的咕咕声”。
+- 做法：每次倒流是一个脉冲（dW/dt），倒流是从压气机眼口喷出的射流（∝ u³）；**两者都走进气口**：
+  - pod：每个“tu”敲响短管的四分之一波长共振（~300/900/1500 Hz…）；
+  - airbox：闷的“呼”。
+- 失速叶轮的宽带只跟着**转换**走（|dW/dt| 的 8 ms 包络），不是整个倒流段 → 每个周期是一个“stu”，
+  中间安静（调制深度 25–30 dB）。
+- 节奏仍由增压系统的喘振周期决定（Golf R/S15 ~12 Hz）；响度对齐旧的振颤（S15 0.109 vs 0.122）。
+
+### 11.4 驾驶舱：密封
+- 质量定律拐点改正（224/m）；泄漏 NR：路车 26 dB、剥壳赛车 14 dB（`cabin_nr_db` 可逐车设）。
+- 结构传声：舱内低频的主体（<200 Hz 的 60% 以上）→ 400 Hz 二阶低通，路车 −15 dB、赛车 −10 dB。
+- 进气口总线在驾驶舱里穿过同一面隔板。
+- 保留：排气吊耳的底盘低频、刚度高通、c/2L 驻波。
+- 结果：驾驶舱中频谐波/噪声比 +8 → +18–25 dB，300 Hz 以上每倍频程降 ~7 dB——阶次清楚、低频为主。
+- 追车和赛道边的传递不动。
+
 ---
 
 ## 9. 参考资料
@@ -489,6 +541,9 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - 双涡管 vs 单涡管 A/B（满增压早 400 rpm、+21%）：DSPORT <https://dsportmag.com/the-tech/twin-scroll-vs-single-scroll-turbo-test-the-great-divide/>
 - 2JZ-GTE 顺序式（3600 预旋、4000 并联）：<https://en.wikipedia.org/wiki/Toyota_JZ_engine>；RX-7 FD 顺序式（4500–5500、掉压到 0.6 bar）：<https://www.mazda-turbo.com/mazda-rx7-rotary-sequential-twin-turbo-systems.html>
 - Veyron 四涡轮并联、Chiron 2+2 顺序：<https://carbuzz.com/the-only-quad-turbo-production-cars-in-history/>
+- 喘振噪声=喘振频率上同步辐射的声脉冲“和弦”：ASME J. Turbomach. 2023 <https://asmedigitalcollection.asme.org/turbomachinery/article-abstract/145/8/081014/1160437/Experimental-Investigations-of-Centrifugal>；“stu tu tu”像鸽子咕咕声：<https://www.news24.com/amp/wheels/news/guides_and_lists/watch-why-the-stu-tu-tu-noise-from-your-turbo-might-sound-cool-but-isnt-good-for-your-engine-20190219>
+- 进气口噪声=发动机阶次（一次源）+ 流动噪声（二次源）；关节气门可降进气噪声 18 dB：<https://www.sciencedirect.com/topics/physics-and-astronomy/flow-noise>
+- 舱内 <200 Hz 噪声 60% 以上是结构传声：<https://www.sciencedirect.com/science/article/pii/S2090447924003320>；舱内第一纵向模态 57–69 Hz：<https://www.sciencedirect.com/topics/engineering/interior-noise>；跑车全油门舱内 77–82 dBA（Car and Driver）：<https://rennlist.com/forums/991-gt3-gt3rs-gt2rs-and-911r/1212903-decibels-levels-sports-super-cars.html>
 - 叶轮尺寸：GTX3582R Gen II（66/82 mm、130 krpm）<https://www.garrettmotion.com/racing-and-performance/performance-catalog/turbo/gtx3582r-gen-ii/>；GT2860RS（47.2/60.1 mm）<https://turbochargerspecs.blogspot.com/2013/02/garrett-gt28rs-gt2860rs-62-trim-360-hp.html>
 
 ---

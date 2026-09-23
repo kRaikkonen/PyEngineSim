@@ -222,6 +222,11 @@ class Engine:
     turbo_ball_bearing: bool = False # ball-bearing cartridge: half the friction
     turbo_size: float = 1.0          # scale on the stock turbo: <1 smaller (quick,
                                      #   chokes up top), >1 bigger (lag, top end)
+    intake_filter: str = "airbox"    # the inlet the engine (or its compressor)
+                                     #   breathes through: "airbox" (OEM box +
+                                     #   duct: a Helmholtz low-pass, quiet) |
+                                     #   "pod" (a cone filter on a short pipe:
+                                     #   the honk, and a ringing surge)
 
     # hybrid electric drive ----------------------------------------------------
     # An electric motor that adds torque (instant, low-end-strong) on top of the

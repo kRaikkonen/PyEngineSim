@@ -3191,6 +3191,10 @@ _SEQ_RPM = {"9": (3600.0, 4000.0), "rx7": (4500.0, 5500.0)}
 # Ball-bearing cartridges (half the bearing drag): Ferrari's F154 IHIs, the
 # M139's roller bearings, the S15's ball-bearing T28.
 _TURBO_BB = {"488", "pista", "a45", "s15"}
+# Open inlets: the rally cars' ram scoops and the JDM cars that ship here with
+# their dump valve gone (bov_flutter) wear a cone filter on a short pipe.
+_POD_INTAKE = {"s15", "gdb", "gv", "vt15r", "s1", "rs200", "hoonrs", "p205",
+               "deltas4", "hoonitruck"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
 # (The AMG GT's M178 and the E92 M3's S65 are CROSS-plane -- only the GT Black
 # Series' M178 LS2 is flat; the M3 GTR's P60 and the Valhalla are flat.)
@@ -3387,6 +3391,8 @@ def _annotate(key, eng):
             eng.seq_rpm_on, eng.seq_rpm_full = _SEQ_RPM[key]
         if key in _TURBO_BB:
             eng.turbo_ball_bearing = True
+    if key in _POD_INTAKE:
+        eng.intake_filter = "pod"
     # --- exhaust hardware (audio) ------------------------------------------------
     # Spread the exhaust OPENNESS around the fleet mean so genuinely different
     # exhaust HARDWARE finally sounds different: a track/straight-cut car ends up

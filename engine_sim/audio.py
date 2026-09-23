@@ -841,6 +841,11 @@ _PHYS_MAKEUP = 100.0
 # orders reach the mouth 30-38 dB down either way) and its inlet duct's length.
 _AIRBOX_VOL_X = 3.0
 _AIRBOX_DUCT_M = 0.40
+# The classic chain's intake (every car) uses the same box.  A pod filter's
+# pipe -- throttle or compressor inlet to the cone -- and the intake-manifold
+# plenum an NA engine draws through before the throttle:
+_POD_DUCT_M = 0.25
+_MANIFOLD_VOL_X = 1.2
 
 
 class _TrackSide:
@@ -1244,6 +1249,14 @@ class Synthesizer:
         _S = _Aev * 550.0 / max(_Vevo, 1e-9)
         self._bd_sharp = min(max(_S / 380.0, 0.40), 2.30)       # 380 = reference
         self._gp_grid = None      # gas-solver pulse LUT, baked on first use
+        # the intake: the gas solver's intake-valve flow for every car (the
+        # classic chain's source too), baked here, ~0.15 s
+        self._inl = None
+        self._bake_intake()
+        # the inlet it leaves through: the car's own, the app can swap it
+        self.pod_filter = getattr(simulator.engine, "intake_filter",
+                                  "airbox") == "pod"
+        self._inl_zi = {}
 
         # Fixed per-cylinder 'personality' (runner-length / build differences):
         # each cylinder fires with a slightly different pitch and loudness, which
@@ -2372,10 +2385,19 @@ class Synthesizer:
             # at the bulkhead, race shells with no trim at all): effective
             # engine-band NR ~5 dB sports / ~2 dB race once every flanking path
             # (windows, vents, structure) is summed.
-            nr = getattr(eng, "cabin_nr_db", 0.0) or (2.0 if race else 5.0)
+            # SEALED (2026-09-24, Leo: the cabin was not right -- it was the
+            # outside turned down 5 dB).  The leak is the NR floor the
+            # openings allow: a closed road/sports car 26 dB, a stripped race
+            # shell 14 dB (measured whole-car NR runs ~20 dB at 125 Hz to 40+
+            # by 2 kHz); cabin_nr_db sets it per car.
+            nr = getattr(eng, "cabin_nr_db", 0.0) or (14.0 if race else 26.0)
             a_fw = min(10.0 ** (-nr / 20.0), 0.9)
             m_fw = 6.3 if race else 11.0                          # firewall panel
             m_rr, a_rr = (6.3 if race else 13.0), a_fw * 0.95     # floor + bulkhead
+            # the mass law TL = 20 log10(f m) - 47 dB IS a first-order low-
+            # pass -- cornered where its loss is 0 dB, 10^(47/20)/m = 224/m
+            # (the 2239/m used before is its 20 dB point: 20 dB too clear)
+            fc_mass = lambda m: 223.9 / m
             # STRUCTURE-BORNE path — the DOMINANT in-cabin path in real cars:
             # engine mounts + driveline + exhaust hangers all shake the shell,
             # and the panels re-radiate INSIDE.  Summed over every mount point
@@ -2388,7 +2410,12 @@ class Synthesizer:
                 d_bay=0, d_tail=int((r_tail - r_bay) / c * sr),
                 bay_alpha=a_fw, bay_fc=fc_mass(m_fw),
                 tail_alpha=a_rr, tail_fc=fc_mass(m_rr),
-                struct=(0.55 if race else 0.40), struct_fc=2000.0,
+                # structure-borne: the LOW end of a cabin (>60 % of the sub-
+                # 200 Hz interior noise); the mounts isolate above a few
+                # hundred Hz.  -15 dB elastomer / -10 dB solid race mounts,
+                # second-order above 400 Hz
+                struct=(0.32 if race else 0.18), struct_fc=400.0,
+                sealed=True,
                 # exhaust hangers bolt the pipe to the floor: the panels re-
                 # radiate its LF INSIDE (chest thump), bypassing BOTH the
                 # airborne partition and the stiffness HP — it's structure.
@@ -2594,7 +2621,11 @@ class Synthesizer:
             phys = self.vx.get("phys_voice", False)
             gp = self._gas_pulse_at(sim.rpm, load) \
                 if (self.vx.get("gas_pulse") or phys) else None
-            if gp is not None:
+            # the solver's exhaust pulse the scale is taken from: the physical
+            # voice's, or -- for the classic chain's intake -- the baked one
+            r_ex = gp if gp is not None else self._inl_shape(sim.rpm, 1)
+            self._inl_scale = None
+            if r_ex is not None:
                 ref = np.arange(0.0, 720.0, 1.0)
                 rd = ref - VALVE_OPEN
                 rdd = np.clip(rd, 0.0, None)
@@ -2612,9 +2643,11 @@ class Synthesizer:
                 r_par = np.where(rin, ((0.78 + 0.22 * pk_) * r_blow
                                        + 0.7 * (1.22 - 0.22 * pk_) * r_disp)
                                  * r_cl, 0.0)
-                r_gas = np.interp(ref, self._gp_deg, gp, period=720.0)
+                r_gas = np.interp(ref, self._inl_deg if gp is None
+                                  else self._gp_deg, r_ex, period=720.0)
                 gp_scale = math.sqrt(float(np.mean(r_par * r_par))
                                      / max(float(np.mean(r_gas * r_gas)), 1e-18))
+                self._inl_scale = gp_scale * strength
             inflow = np.zeros(frames) if (gp is not None and phys) else None
             # (the physical voice weights each cylinder's own pulse on its
             # structural path: see _struct_gain)
@@ -3426,30 +3459,43 @@ class Synthesizer:
                                                  self._rv_lp) - sig))
         sig = self._tap("valve bypass", sig)  # active-valve straight-through mix
 
-        # --- intake / induction roar (the OTHER half a real car you hear) ---
-        # Broadband 'sucking' noise through the airbox resonance, swelling with
-        # throttle and rpm.  A separate path from the exhaust, cool-air tuned.
+        # --- THE INTAKE: the valves' own flow, out through the car's inlet ---
+        # (was a band of white noise swelling with pedal and rpm -- Leo: too
+        # loud, mostly white noise, a real intake is not that loud.)  The gas
+        # solver's intake-valve flow, every cylinder at its own phase, at the
+        # scale of the exhaust pulses: the solver's own intake/exhaust ratio.
+        # Per mole the cold charge carries T_air/T_exh of the exhaust's volume.
+        # Then the car's inlet (airbox or pod) and the mouth -- _intake_radiate.
+        # (The physical voice keeps its own intake, further down, and the old
+        # roar at its jet scale.)
         if _HAVE_SCIPY and dps > 1e-12:
             rpm_frac = min(sim.rpm / max(sim.engine.redline_rpm, 1.0), 1.0)
             intake_gain = P["intake"] * sim.throttle * (0.25 + 0.75 * rpm_frac)
-            if self.vx.get("phys_voice", False):
+            phys_ = self.vx.get("phys_voice", False)
+            if phys_:
                 intake_gain *= P.get("phys_jet", _PHYS_JET)   # same flow-noise physics
-            # BOOST mass-flow: a forced-induction engine pumps FAR more air through
-            # the intake (mass flow ~ MAP·rpm), so the induction roar swells with the
-            # compressor's boosted charge — the whoosh a turbo/blower car has that an
-            # NA one doesn't.  Scales with boost gauge / rated boost.
             bb = getattr(sim.engine, "boost_bar", 0.0)
             if bb > 0.0:
                 intake_gain *= 1.0 + 1.1 * min(max(sim.boost, 0.0) / bb, 1.0)
-            if intake_gain > 1e-4:
+            if phys_ and intake_gain > 1e-4:
                 n = self._rng.standard_normal(frames)
                 n, self._intake_bp_zi = lfilter(self._intake_bp[0], self._intake_bp[1],
                                                 n, zi=self._intake_bp_zi)
                 n, self._intake_lp_zi = lfilter(self._intake_lp[0], self._intake_lp[1],
                                                 n, zi=self._intake_lp_zi)
-                bayi = bayi + intake_gain * n  # intake mouth: bright opening
-                                              # (was mid-exhaust-chain: the roar
-                                              # passed through the muffler!)
+                bayi = bayi + intake_gain * n
+            elif intake_gain > 1e-4:
+                # the old roar's draw, kept: the generator's sequence -- every
+                # other noise layer -- stays exactly where it was
+                self._rng.standard_normal(frames)
+            if not phys_ and getattr(self, "_inl_scale", None) is not None:
+                q = self._inl_flow(crank, sim.rpm)
+                if q is not None:
+                    t_ratio = 300.0 / max(sim.exhaust_gas_temp(), 300.0)
+                    # (P["intake"] trims it; 0.11, its default, = as derived)
+                    trim = P["intake"] / 0.11
+                    src = (0.55 * t_ratio * self._inl_scale * trim) * q
+                    bayi = bayi + self._intake_radiate(src, "eng")
 
         # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
         # With one trumpet per cylinder, each intake stroke sucks a sharp tuned
@@ -4005,6 +4051,11 @@ class Synthesizer:
         d_int = geo.get("d_int", geo["d_bay"])
         bayi_p = self._pov_delay(bayi, "bayi_d", d_int) if d_int else bayi
         a_hi = min(geo["bay_alpha"] * 2.2 + 0.15, 0.80)
+        f_hi = 2400.0
+        if geo.get("sealed"):
+            # inside a closed cabin the mouth is OUTSIDE: its bus comes in
+            # through the same partition as the bay, not an opening
+            a_hi, f_hi = geo["bay_alpha"], geo["bay_fc"]
         g_int = geo.get("g_int", geo["g_bay"]) / geo["g_bay"]
         if geo.get("onboard"):
             a_hi = 1.0                    # the inlet is IN the camera's air
@@ -4029,7 +4080,7 @@ class Synthesizer:
             bay_air = bay_air + tk_mouth + tk_house
         else:
             bay_air = bay_air + g_int * self._pov_partition(bayi_p, "bayi_p",
-                                                            a_hi, 2400.0)
+                                                            a_hi, f_hi)
         if geo["struct"] > 0.0:
             # structure-borne mount path: shell re-radiation of the engine's
             # low-mid band inside the cabin (2nd-order above the panel response)
@@ -4395,8 +4446,9 @@ class Synthesizer:
     _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
     _TB_TCN = 0.030               # tip-clearance narrowband
     _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
-    _TB_THUMP = 0.50              # surge volume pulse (dW/dt at the inlet)
-    _TB_STALL = 0.17              # stalled wheel's broadband
+    _TB_THUMP = 0.90              # surge volume pulse (dW/dt at the inlet)
+    _TB_JET = 0.30                # the blow-back jet out of the eye, per (W/W_z)^3
+    _TB_STALL = 0.40              # stalled wheel's broadband
     _TB_BOV = 4.0                 # blow-off jet per (u/c)^4
 
     def _turbo_audio(self, frames, rpm, sv):
@@ -4441,6 +4493,7 @@ class Synthesizer:
         noise = None
         env_t = 0.0
         busy = tw.busy > 0
+        surge = np.zeros(frames)
         for j, u in enumerate(ts.units):
             if u.table is None:
                 continue
@@ -4513,26 +4566,45 @@ class Synthesizer:
                                                zi=self._tw_zi.get(key, np.zeros(2)))
                 g = np.exp(-((phi - 0.060) / 0.025) ** 2) * (phi > 0.0)
                 out += tv * self._TB_WHOOSH * m_u ** 3 * g * nw
-            # SURGE: the reversals themselves
+            # SURGE: the reversals themselves -- each an impulse at the
+            # compressor's inlet, the reversed flow a jet out of its eye --
+            # gathered here and sent out through the car's inlet below
             if busy:
                 dw = np.diff(wj, prepend=wj[0]) * sr          # kg/s^2
                 w_ref = max(ln["w_z"], 1e-3)
                 thump = dw * (0.005 / w_ref)                  # ~1 over a 5 ms flip
-                bL, aL = self._bw(2, 700.0)                   # the air box
-                key = ("th", j)
-                thump, self._tw_zi[key] = lfilter(bL, aL, thump,
-                                                  zi=self._tw_zi.get(key, np.zeros(2)))
-                out += tv * self._TB_THUMP * np.clip(thump, -3.0, 3.0)
+                surge += tv * self._TB_THUMP * np.clip(thump, -3.0, 3.0)
+                # the blow-back jet: the plenum emptying through the wheel
+                # (flow noise, amplitude ~ u^3 -- a dipole on the blades and
+                # the filter mesh), strongest as the reversal peaks
+                rev = np.clip(-wj / w_ref, 0.0, 2.0)
+                if float(rev.max()) > 1e-3:
+                    if noise is None:
+                        noise = self._rng.standard_normal(frames)
+                    surge += tv * self._TB_JET * rev ** 3 * noise
+                # the stalled wheel's broadband comes with the TRANSITIONS --
+                # the rotor losing the flow and taking it back -- not the whole
+                # reversed phase: an envelope on |dW/dt| (8 ms), so each cycle
+                # is a 'stu' with quiet between
+                if noise is None:
+                    noise = self._rng.standard_normal(frames)
+                key = ("tr", j)
+                bE, aE = self._bw(1, 20.0)
+                trans, self._tw_zi[key] = lfilter(
+                    bE, aE, np.abs(thump), zi=self._tw_zi.get(key, np.zeros(1)))
+                trans = np.clip(trans, 0.0, 2.0)
                 stall = np.clip((phi_z - phi) / phi_z, 0.0, 1.5)
-                if float(stall.max()) > 1e-3:
+                if float(trans.max()) > 1e-3:
                     fs2 = min(max(2.0 * f_s, 300.0), nyq)
                     bS, aS = _bandpass(2.0 ** (round(12.0 * math.log2(fs2)) / 12.0),
                                        1.2, sr)
                     key = ("st", j)
                     ns, self._tw_zi[key] = lfilter(bS, aS, noise,
                                                    zi=self._tw_zi.get(key, np.zeros(2)))
-                    out += tv * self._TB_STALL * m_u ** 2 * stall * ns
-                    env_t = max(env_t, float(stall.mean()))
+                    surge += tv * self._TB_STALL * m_u ** 2 * trans * ns
+                env_t = max(env_t, float(stall.mean()))
+        if busy or float(np.abs(surge).max()) > 0.0:
+            out += self._intake_radiate(surge, "surge")
         # BLOW-OFF: the jet through the valve throat at the plenum's pressure
         wbm = float(wb.mean()) if len(wb) else 0.0
         if wbm > 1e-4:
@@ -4911,6 +4983,131 @@ class Synthesizer:
                 d += 720.0
             if d <= swept:
                 self.cylinder_light[i] = 1.0
+
+    _INL_GRID = (0.15, 0.45, 0.75, 1.0)
+
+    def _bake_intake(self):
+        """The intake valve's flow over one cycle at four speeds, from the gas
+        solver (the physical voice's solver; 2-degree steps, ~0.15 s a car),
+        with the exhaust valve's for the same cycles -- the classic chain's
+        pulses are scaled to the latter, so the intake keeps the solver's own
+        ratio to them."""
+        try:
+            from .gas_truth import exhaust_pulse_with_amplitude
+            eng = self.sim.engine
+            ex, inn = [], []
+            for rf in self._INL_GRID:
+                sh, _dp, _pm, ish = exhaust_pulse_with_amplitude(
+                    eng, rf, dphi=2.0, N=self._GP_N, warmup=3, intake=True)
+                ex.append(np.asarray(sh, dtype=np.float64))
+                inn.append(np.asarray(ish, dtype=np.float64))
+            if not (np.isfinite(ex).all() and np.isfinite(inn).all()):
+                raise ValueError("non-finite solver output")
+            self._inl = (np.asarray(self._INL_GRID, dtype=np.float64),
+                         np.asarray(ex), np.asarray(inn))
+            self._inl_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
+        except Exception:
+            self._inl = None
+
+    def _inl_shape(self, rpm, which):
+        """The baked exhaust (which=1) or intake (2) flow at this rpm."""
+        if self._inl is None:
+            return None
+        grid = self._inl[0]
+        v = rpm / max(self.sim.engine.redline_rpm, 1.0)
+        tab = self._inl[which]
+        if v <= grid[0]:
+            return tab[0]
+        if v >= grid[-1]:
+            return tab[-1]
+        i = int(np.searchsorted(grid, v))
+        t = (v - grid[i - 1]) / (grid[i] - grid[i - 1])
+        return (1.0 - t) * tab[i - 1] + t * tab[i]
+
+    def _inl_flow(self, crank, rpm):
+        """The intake flow of every cylinder, each at its own phase."""
+        shape = self._inl_shape(rpm, 2)
+        if shape is None:
+            return None
+        q = np.zeros(len(crank))
+        for off in self._offsets:
+            q += np.interp(np.mod(crank + off, 720.0), self._inl_deg, shape,
+                           period=720.0)
+        return q
+
+    def _intake_radiate(self, src, key):
+        """The car's inlet between a source and the air, then the mouth.
+
+        ``key`` "eng": the valves' flow; "surge": a surging compressor's
+        (which sits at the pipe's far end, past the manifold and the charge
+        air).
+          * airbox (OEM): the box (3 x displacement) and its inlet duct are a
+            Helmholtz resonator -- a 2nd-order low-pass at f_H = c/2pi
+            sqrt(A / V L'), L' = duct + end corrections, damped by the duct's
+            mean-flow resistance (Q = w_H L' / U).  Firing orders reach the
+            air 20-40 dB down.
+          * pod: no box.  The pipe from the throttle (or the compressor) to
+            the cone -- closed at that end, open at the cone -- rings at
+            (2n-1) c / 4 L'; the mesh barely damps it.
+          An NA engine draws through its manifold plenum first (a Helmholtz
+          low-pass with the throttle as its neck); a turbo engine's pulses
+          cross the charge-air volume and the spinning compressor before
+          they reach the inlet at all (x0.3, ~-10 dB, below the plenum's
+          own resonance).  The mouth radiates as a piston: a first-order
+          high-pass at f_a = c / 2 pi a."""
+        sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
+        zi = self._inl_zi
+        a_m = max(self._intake_mouth_radius(), 0.01)
+        A_m = math.pi * a_m * a_m
+        vd = max(eng.total_displacement, 1e-4)
+        map_f = sim._manifold_pressure() / P_ATM
+        q_air = (vd * max(sim.rpm, 1.0) / 120.0
+                 * sim._volumetric_efficiency(map_f) * map_f)
+        u = max(q_air / A_m, 0.5)
+
+        def biquad_lp(x, w0, q, name):
+            w0 = min(w0 / sr, 0.45 * math.pi)
+            cw, al = math.cos(w0), math.sin(w0) / (2.0 * q)
+            b = np.array([0.5 * (1.0 - cw), 1.0 - cw, 0.5 * (1.0 - cw)])
+            a = np.array([1.0 + al, -2.0 * cw, 1.0 - al])
+            y, zi[name] = lfilter(b / a[0], a / a[0], x,
+                                  zi=zi.get(name, np.zeros(2)))
+            return y
+
+        x = src
+        turbo = eng.induction == "turbo" and getattr(sim, "turbo", None) is not None
+        if key == "eng":
+            if turbo:
+                # the charge air (the plenum, the throttle its neck) and the
+                # compressor between the valves and the turbo's inlet
+                a_th = 0.6 * A_m
+                w_pl = 343.0 * math.sqrt(a_th / (sim.turbo.air.v_p * 0.15))
+                x = 0.3 * biquad_lp(x, w_pl, 0.7, key + "_pl")
+            elif self.pod_filter:
+                # the manifold plenum ahead of the throttle
+                a_th = 0.6 * A_m
+                w_m = 343.0 * math.sqrt(a_th / (_MANIFOLD_VOL_X * vd * 0.15))
+                x = biquad_lp(x, w_m, 1.0, key + "_mf")
+        if self.pod_filter:
+            wg = self._inl_zi.get(key + "_wg")
+            if wg is None:
+                wg = self._inl_zi[key + "_wg"] = ExhaustWaveguide(
+                    int(0.02 * sr) + 8)
+            L_ = _POD_DUCT_M + 0.61 * a_m
+            d = max(int(round(2.0 * L_ / 343.0 * sr)), 4)
+            # the cone end reflects inverted, the wheel/throttle end not; a
+            # smooth pipe and an open mesh lose ~12 % a round trip (|R| of an
+            # open end ~0.9 at ka << 1), more up high where the end radiates
+            x = wg.process(x, d, 0.88, -1.0, math.exp(-2.0 * math.pi * 4000.0 / sr))
+        else:
+            L_eff = _AIRBOX_DUCT_M + (0.61 + 0.85) * a_m
+            w_H = 343.0 * math.sqrt(A_m / (_AIRBOX_VOL_X * vd * L_eff))
+            Q_H = min(max(w_H * L_eff / u, 0.5), 20.0)
+            x = biquad_lp(x, w_H, Q_H, key + "_box")
+        f_a = min(343.0 / (2.0 * math.pi * a_m), sr * 0.45)
+        b_i, a_i = self._bw(1, f_a, btype="high")
+        y, zi[key + "_rad"] = lfilter(b_i, a_i, x, zi=zi.get(key + "_rad", np.zeros(1)))
+        return y
 
     _GP_GRID = (0.12, 0.25, 0.40, 0.55, 0.70, 0.85, 1.0)
     _GP_LOAD = (0.1, 0.4, 0.7, 1.0)

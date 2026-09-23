@@ -126,7 +126,7 @@ TR_ZH = {
     "Auto": "自动", "Manual": "手动", "Cabin": "车内", "Cockpit": "驾驶舱",
     "Chase cam": "追尾视角", "Trackside": "路边飞驰", "Gear whine": "直齿啸叫",
     "Touch": "触屏", "Touch OFF": "关闭触屏",
-    "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Hybrid": "混动",
+    "Cat": "三元", "Bent": "弯管", "Flutter": "颤振", "Pod filter": "蘑菇头", "Hybrid": "混动",
     "G-pad": "G力",
     "Lang": "语言", "Pops": "放炮", "Slip": "打滑", "Slow-mo": "慢动作", "Slow": "慢",
     "Sustain": "松油延音",
@@ -478,6 +478,10 @@ class App:
             # HKS SSQV atmospheric dump valve — loud sharp 'TSSSH' on lift-off
             (T("SSQV"), lambda: setattr(sy, "ssqv", not sy.ssqv),
              lambda: sy.ssqv, 1),
+            # the cone ('mushroom') filter on a short pipe in place of the
+            # airbox: the induction honk, and with Flutter the JDM stu-tu-tu
+            (T("Pod filter"), lambda: setattr(sy, "pod_filter", not sy.pod_filter),
+             lambda: sy.pod_filter, 1),
             (T("Hybrid"), lambda: setattr(self.sim, "hybrid_on", not self.sim.hybrid_on),
              lambda: self.sim.hybrid_on and self.sim.engine.hybrid_kw > 0, 1),
             (T("Pops"), lambda: setattr(sy, "pops_on", not sy.pops_on),
@@ -611,7 +615,8 @@ class App:
                 saved.pop(k, None)
         _flags = ["cabin", "pops_on", "sustain_on_lift"]
         if keep_engine_flags:
-            _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe"]
+            _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe",
+                       "ssqv", "pod_filter"]
         saved_flags = ({f: getattr(self.synth, f) for f in _flags}
                        if self.synth else None)
         # the F11 voice choice survives a device / rate change (a car change
