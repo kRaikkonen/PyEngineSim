@@ -376,6 +376,55 @@ except Exception:                       # pragma: no cover -- the phone
     lfilter, butter = _np_lfilter, _np_butter
     _NATIVE_SCIPY = False
 
+
+def _direct_lfilter(wrapper):
+    """scipy's lfilter minus its wrapper, for IIR filters -- or None.
+
+    Since scipy 1.15 lfilter goes through array-API dispatch first: ~5 us a
+    call, more than the C routine needs for a 256-sample biquad, and a block
+    makes 110-130 calls.  For len(a) > 1 the wrapper only does atleast_1d /
+    asarray and calls _sigtools._linear_filter -- so calling that directly
+    runs the same code on the same arrays and gives the same samples.  FIR
+    calls (len(a) == 1: the wrapper convolves instead) still go through it.
+    Proven identical here at import, or not used."""
+    try:
+        from scipy.signal import _sigtools
+        lin = _sigtools._linear_filter
+    except Exception:
+        return None
+
+    def fast(b, a, x, axis=-1, zi=None):
+        a = np.atleast_1d(a)
+        if a.ndim != 1 or a.shape[0] < 2:
+            return wrapper(b, a, x, axis=axis, zi=zi)
+        b = np.atleast_1d(b)
+        if zi is None:
+            return lin(b, a, np.asarray(x), axis)
+        return lin(b, a, np.asarray(x), axis, np.asarray(zi))
+
+    try:
+        rng = np.random.default_rng(1)
+        x = rng.standard_normal(300)
+        b2, a2 = butter(2, 0.1)
+        z2 = rng.standard_normal(2)
+        for args, kw in (((b2, a2, x), dict(zi=z2)),
+                         (([0.3], [1.0, -0.7], x), dict(zi=np.zeros(1))),
+                         ((b2, a2, x), {})):
+            r0, r1 = wrapper(*args, **kw), fast(*args, **kw)
+            r0 = r0 if isinstance(r0, tuple) else (r0,)
+            r1 = r1 if isinstance(r1, tuple) else (r1,)
+            if len(r0) != len(r1) or any(
+                    np.asarray(p).dtype != np.asarray(q).dtype
+                    or not np.array_equal(p, q) for p, q in zip(r0, r1)):
+                return None
+    except Exception:
+        return None
+    return fast
+
+
+if _NATIVE_SCIPY:
+    lfilter = _direct_lfilter(lfilter) or lfilter
+
 _HAVE_SCIPY = True
 
 class PortableRNG:
@@ -870,6 +919,14 @@ class _TrackSide:
 _TK_T_K, _TK_RH = 293.15, 60.0     # a 20 C, 60 % RH race day
 _TK_WALL_M = 15.0                  # far-side barrier, this far beyond the line
 _TK_WALL_R = 0.7                   # concrete, but only ~1 m of it faces the car
+_TK_WALL_H = 1.0                   #   ...its height (m)
+_TK_NEAR_M = 5.0                   # a facade behind the mic, this far behind it
+_TK_NEAR_R = 0.6                   #   pressure reflection (openings, people)
+_TK_NEAR_H = 4.0                   #   ...its height (m)
+_TK_TYRE_DB = -12.0                # tyre/road noise at 270 km/h, re the auto-
+_TK_WIND_DB = -16.0                # level's target; wind the same.  Together
+                                   #   ~-22 dB of the whole at the pass, full
+                                   #   load (Leo: very small)
 _TK_RC_M = 100.0                   # direct = diffuse here, for a car in the
                                    #   middle of the scatterers (r << R_s)
 _TK_JET_DB = 15.0                  # depth of the hot jet's zone of silence
@@ -924,14 +981,21 @@ class _AirFIR:
         return h / h.sum()                            # DC stays exactly 1
 
     def process(self, x, r):
-        h = self._design(r)
+        # distance buckets (0.5 m near, 2 % far): inside one the design is
+        # the same to well under 0.1 dB, so it is neither re-built nor faded
+        rq = round(r * 2.0) / 2.0 if r < 50.0 else round(math.log(r) * 50.0)
         xe = np.concatenate((self._hist, x))
-        y = np.convolve(xe, h, mode="valid")
-        if self._h is not None:
-            y0 = np.convolve(xe, self._h, mode="valid")
-            y = y0 + np.linspace(0.0, 1.0, len(x)) * (y - y0)
+        if self._h is not None and rq == getattr(self, "_rq", None):
+            y = np.convolve(xe, self._h, mode="valid")
+        else:
+            h = self._design(r)
+            y = np.convolve(xe, h, mode="valid")
+            if self._h is not None:
+                y0 = np.convolve(xe, self._h, mode="valid")
+                y = y0 + np.linspace(0.0, 1.0, len(x)) * (y - y0)
+            self._h = h
+            self._rq = rq
         self._hist = xe[-(self.M - 1):]
-        self._h = h
         return y
 
 
@@ -951,18 +1015,24 @@ class _MovingTaps:
         N = len(self.buf)
         base = self.wp + np.arange(n)
         self.buf[base % N] = x
-        outs = []
-        for k, d_new in enumerate(delays):
-            d_new = float(min(max(d_new, 1.0), N - 3))
-            d = np.linspace(self.prev[k], d_new, n)
-            self.prev[k] = d_new
-            idx = base - d
-            i0 = np.floor(idx).astype(np.int64)
-            fr = idx - i0
-            outs.append(self.buf[i0 % N] * (1.0 - fr)
-                        + self.buf[(i0 + 1) % N] * fr)
+        # every head's ramp at once: numpy's linspace written out (start +
+        # arange * step, the last sample exactly the end), so a head reads
+        # the same samples it would alone
+        d1 = np.array([float(min(max(d, 1.0), N - 3)) for d in delays])
+        d0 = np.array(self.prev[:len(d1)], dtype=np.float64)
+        if n > 1:
+            D = np.arange(n, dtype=np.float64)[None, :] \
+                * ((d1 - d0) / (n - 1))[:, None] + d0[:, None]
+            D[:, -1] = d1
+        else:
+            D = d0[:, None] + np.zeros((1, n))
+        self.prev[:len(d1)] = d1.tolist()
+        idx = base[None, :] - D
+        i0 = np.floor(idx).astype(np.int64)
+        fr = idx - i0
+        Y = self.buf[i0 % N] * (1.0 - fr) + self.buf[(i0 + 1) % N] * fr
         self.wp = (self.wp + n) % N
-        return outs
+        return list(Y)
 
 
 class _OutdoorField:
@@ -4022,16 +4092,20 @@ class Synthesizer:
             # SOURCE's Doppler, c/(c -/+ v), falls out of the delay's slope.
             # EVERY RADIATOR FROM ITS OWN PLACE: the exhaust at the tail, the
             # intake where the engine breathes, the block and housings with
-            # the engine (_tk_sources).  Whichever of them stands out at this
-            # rpm arrives with its own delay (the front ones pass the mic
-            # first), its own distance, its own ground bounce and its own air.
+            # the engine (_tk_sources) -- each its own delay line (its own
+            # Doppler; the front ones pass the mic first).  They sit within
+            # 4 m of each other, so the air and the ground bounce's coherence,
+            # which differ by nothing measurable between them, are applied
+            # once to the sum.
             if getattr(self, "_tk_paths", None) is None:  # 3 s: a pass fits
-                self._tk_paths = {nm: (_MovingTaps(int(3.0 * sr), 2),
-                                       _AirFIR(sr), np.zeros(1))
+                self._tk_paths = {nm: _MovingTaps(int(3.0 * sr), 2)
                                   for nm in ("exh", "intake", "body")}
-                self._tk_taps = _MovingTaps(int(3.0 * sr), 1)
+                self._tk_air1 = _AirFIR(sr)
+                self._tk_gzi = np.zeros(1)
+                self._tk_img = _MovingTaps(int(3.0 * sr), 4)
+                self._tk_img_zi = [[np.zeros(1), np.zeros(1)]
+                                   for _ in range(4)]
                 self._tk_omni_dl = _FlybyDelay(int(3.0 * sr))
-                self._tk_air3 = _AirFIR(sr)
                 self._tk_field = _OutdoorField(sr)
             # CONVECTIVE AMPLIFICATION: a moving monopole is louder ahead of
             # itself than behind, (1 - M_r)^-2 with M_r its Mach number towards
@@ -4039,44 +4113,43 @@ class Synthesizer:
             # 290 km/h).  The Doppler above is the same motion bending pitch.
             M = min(v, 0.8 * 343.0) / 343.0
             pos = self._tk_sources()
-            near = np.zeros(frames)
+            _m = getattr(self, "_tk_mute", ())
+            d_sum = np.zeros(frames)
+            g_sum = np.zeros(frames)
             for nm, s_ in zip(("exh", "intake", "body"), self._tk_src):
-                if nm in getattr(self, "_tk_mute", ()):
+                if nm in _m:
                     continue                  # analysis: this source silenced
                 dx, z = pos[nm]
                 t_d, xe_d = self._track.retarded(v, L * L + (hm - z) ** 2, dx)
                 t_g, _ = self._track.retarded(v, L * L + (hm + z) ** 2, dx)
                 r_d, r_g = 343.0 * t_d, 343.0 * t_g
-                taps, air, gzi = self._tk_paths[nm]
-                dd, dg = taps.process(s_, (t_d * sr, t_g * sr))
+                dd, dg = self._tk_paths[nm].process(s_, (t_d * sr, t_g * sr))
                 cv = (1.0 + M * xe_d / r_d) ** -2
-                direct = dd * (L / r_d * cv)
-                gnd = dg * (0.9 * L / r_g * cv)   # asphalt |R| ~ 0.9, hard
-                if _HAVE_SCIPY:
-                    # The bounce is only COHERENT up to a point.  At grazing
-                    # incidence asphalt is smooth by the Rayleigh criterion
-                    # right up through the audio band, but air turbulence and
-                    # the fact that a car is not a point source decorrelate
-                    # the two paths more the farther they run -- so the comb
-                    # is sharp as it passes and washes out at range.
-                    fcoh = min(max(9000.0 * L / r_g, 1500.0), sr * 0.45)
-                    bG, aG = self._bw(1, fcoh)
-                    gnd, gzi[:] = lfilter(bG, aG, gnd, zi=gzi)
-                # the air takes its ISO 9613-1 share over this path's length
-                near = near + air.process(direct + gnd, r_d)
-            # the barrier across the track and the place's diffuse field hear
-            # the car as a whole, from mid-car
-            Lw = L + 2.0 * _TK_WALL_M
+                d_sum = d_sum + dd * (L / r_d * cv)
+                g_sum = g_sum + dg * (0.9 * L / r_g * cv)  # asphalt |R| 0.9
+            # the car as a whole, from mid-car: the ground bounce's coherence,
+            # the air, the walls and the place's field
             tau1, xe1 = self._track.retarded(v, L * L + (hm - 0.5) ** 2)
-            tau3, xe3 = self._track.retarded(v, Lw * Lw + (hm - 0.5) ** 2)
-            r1, r3 = 343.0 * tau1, 343.0 * tau3
+            r1 = 343.0 * tau1
             cv1 = (1.0 + M * xe1 / r1) ** -2
-            cv3 = (1.0 + M * xe3 / r3) ** -2
-            (d3,) = self._tk_taps.process(sig, (tau3 * sr,))
-            wall = self._tk_air3.process(d3 * (_TK_WALL_R * L / r3 * cv3), r3)
-            # the tyres' geometry, for the road-noise path after the auto-level
-            self._tk_tire_geo = (v, [self._track.retarded(
-                v, L * L + (hm - 0.05) ** 2, dxa) for dxa in (1.35, -1.35)])
+            if _HAVE_SCIPY:
+                # The bounce is only COHERENT up to a point.  At grazing
+                # incidence asphalt is smooth by the Rayleigh criterion right
+                # up through the audio band, but air turbulence and the fact
+                # that a car is not a point source decorrelate the two paths
+                # more the farther they run -- so the comb is sharp as it
+                # passes and washes out at range.  (12th-octave steps: the
+                # design caches.)
+                r_g1 = math.sqrt(r1 * r1 + 4.0 * hm * 0.5)
+                fcoh = min(max(9000.0 * L / r_g1, 1500.0), sr * 0.45)
+                fcoh = 2.0 ** (round(12.0 * math.log2(fcoh)) / 12.0)
+                bG, aG = self._bw(1, fcoh)
+                g_sum, self._tk_gzi = lfilter(bG, aG, g_sum, zi=self._tk_gzi)
+            # the air takes its ISO 9613-1 share over the path's length
+            near = self._tk_air1.process(d_sum + g_sum, r1)
+            # BOTH WALLS: the barrier across the track and the facade behind
+            # the mic, and the bounces between them (_tk_walls)
+            wall = self._tk_walls(sig, v, M, L, hm, frames)
             # THE PLACE: the grandstand, pit wall and trees round the post
             # scatter the car back at the mic as a diffuse field.  Outdoors that
             # field is NOT a room's constant: a far car lights the scatterers
@@ -4090,9 +4163,11 @@ class Synthesizer:
             src_then = self._tk_omni_dl.process(omni, tau1 * sr)
             g_field = (L / _TK_RC_M) * _TK_RS_M / (r1 + _TK_RS_M) * cv1
             field = self._tk_field.process(src_then * g_field)
-            _m = getattr(self, "_tk_mute", ())
             sig = near + (0.0 if "wall" in _m else wall) \
                 + (0.0 if "field" in _m else field) * (P["reverb"] / 0.2)
+            # the tyres' geometry, for the tyre and wind noise after the level
+            self._tk_tire_geo = (v, [self._track.retarded(
+                v, L * L + (hm - 0.05) ** 2, dxa) for dxa in (1.35, -1.35)])
             # the auto-level below measures THIS -- the car as it was when the
             # arriving sound left it -- not the mic, so it levels rpm and car
             # like any other view and leaves 1/r, the air and the track alone
@@ -4198,7 +4273,8 @@ class Synthesizer:
                 road = rn * spd * (0.8 * nz + 0.25 * nz2)
                 if self.pov == "trackside" \
                         and getattr(self, "_tk_tire_geo", None) is not None:
-                    road = self._tk_tires(road)   # from the tyres, not the mic
+                    # trackside hears the TYRES and the WIND, from the car
+                    road = self._tk_rolling(frames)
                     if "tires" in getattr(self, "_tk_mute", ()):
                         road = road * 0.0
                 sig = sig + road
@@ -4786,16 +4862,22 @@ class Synthesizer:
                 return np.exp(-((th - tz) / w_lobe) ** 2)
             # the lobe takes back exactly the power the zone lost: solve
             # <(pipe * zone * (1 + G lobe))^2> = <pipe^2> over the sphere
-            th_s = np.linspace(0.0, math.pi, 181)
-            wgt = np.sin(th_s) / np.sum(np.sin(th_s))
-            pz = (A + B * np.cos(th_s)) * zone(th_s)
-            lb = lobe(th_s)
-            p0 = float(np.sum((A + B * np.cos(th_s)) ** 2 * wgt))
-            qa = float(np.sum((pz * lb) ** 2 * wgt))
-            qb = 2.0 * float(np.sum(pz * pz * lb * wgt))
-            qc = float(np.sum(pz * pz * wgt)) - p0
-            G = (-qb + math.sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))) \
-                / (2.0 * max(qa, 1e-12))
+            gkey = (round(tz, 2), round(dep, 1))
+            G = getattr(self, "_tk_lobe_g", {}).get(gkey)
+            if G is None:
+                th_s = np.linspace(0.0, math.pi, 181)
+                wgt = np.sin(th_s) / np.sum(np.sin(th_s))
+                pz = (A + B * np.cos(th_s)) * zone(th_s)
+                lb = lobe(th_s)
+                p0 = float(np.sum((A + B * np.cos(th_s)) ** 2 * wgt))
+                qa = float(np.sum((pz * lb) ** 2 * wgt))
+                qb = 2.0 * float(np.sum(pz * pz * lb * wgt))
+                qc = float(np.sum(pz * pz * wgt)) - p0
+                G = (-qb + math.sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))) \
+                    / (2.0 * max(qa, 1e-12))
+                if not hasattr(self, "_tk_lobe_g"):
+                    self._tk_lobe_g = {}
+                self._tk_lobe_g[gkey] = G
             th = math.acos(min(max(cos_t, -1.0), 1.0))
             d_new = norm * (A + B * cos_t) * float(zone(th)) \
                 * (1.0 + G * float(lobe(th)))
@@ -4834,7 +4916,11 @@ class Synthesizer:
         # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
         # ...and the sound leaves through the pipe's hot JET, which refracts
         # its top end out of a cone round that axis (_tk_jet)
-        return self._tk_beam(tail, x / r1, a_tip, "tail", jet=self._tk_jet())
+        n_ = getattr(self, "_tk_jet_n", 0)
+        if n_ % 8 == 0 or getattr(self, "_tk_jet_v", None) is None:
+            self._tk_jet_v = self._tk_jet()         # slow: load, temperature
+        self._tk_jet_n = n_ + 1
+        return self._tk_beam(tail, x / r1, a_tip, "tail", jet=self._tk_jet_v)
 
     def _exhaust_outlet_radius(self):
         """The outlet the exhaust jet leaves through: the preset tip, or --
@@ -4923,23 +5009,119 @@ class Synthesizer:
             return dict(exh=(-2.3, hs), intake=(-1.9, 0.9), body=(-1.7, 0.5))
         return dict(exh=(-2.2, hs), intake=(1.9, 0.6), body=(1.3, 0.5))
 
-    def _tk_tires(self, road):
-        """The road/tyre noise from the TYRES: each axle's own retarded time
-        (so its own Doppler), 1/r, convective amplification and air.  It was
-        a constant hiss added after the auto-level -- still there with the car
-        500 m away.  At the pass (r = L) it is as loud as it always was."""
+    def _tk_walls(self, sig, v, M, L, hm, frames):
+        """The track's two walls: the barrier across it and the facade behind
+        the mic, as image sources in the two planes -- each wall once and each
+        pair of bounces between them.  One delay buffer, four read heads, each
+        at its own retarded time (its own Doppler).
+
+        A wall reflects only what it is big enough to: coherently where it
+        covers the first Fresnel zone, f > c d1 d2 / ((d1 + d2) h^2) (d1, d2
+        the lateral legs to and from it, h its height) -- a first-order
+        high-pass there.  And the long legs lose their top end to the air (a
+        one-pole where ISO 9613-1 takes 3 dB over the path)."""
         sr = self.sample_rate
-        L = 12.0
-        if getattr(self, "_tk_tire_taps", None) is None:
-            self._tk_tire_taps = _MovingTaps(int(3.0 * sr), 2)
-            self._tk_tire_air = _AirFIR(sr)
+        z = 0.5
+        a_, b_ = -_TK_WALL_M, L + _TK_NEAR_M          # the two planes (lateral)
+        # (image lateral position, reflections as (wall, leg-to, leg-from))
+        imgs = (
+            (2.0 * a_, (("far", -a_, L - a_),)),
+            (2.0 * b_, (("near", b_, b_ - L),)),
+            (2.0 * b_ - 2.0 * a_, (("far", -a_, b_ - a_), ("near", b_ - a_, b_ - L))),
+            (2.0 * a_ - 2.0 * b_, (("near", b_, b_ - a_), ("far", b_ - a_, L - a_))),
+        )
+        taus, gains, fcs, fas = [], [], [], []
+        for y_img, refl in imgs:
+            ly = abs(y_img - L)
+            t_, xe_ = self._track.retarded(v, ly * ly + (hm - z) ** 2)
+            r_ = 343.0 * t_
+            g = L / r_ * (1.0 + M * xe_ / r_) ** -2
+            fc = 20.0
+            for wall, d1, d2 in refl:
+                R, h = ((_TK_WALL_R, _TK_WALL_H) if wall == "far"
+                        else (_TK_NEAR_R, _TK_NEAR_H))
+                g *= R
+                fc = max(fc, 343.0 * d1 * d2 / ((d1 + d2) * h * h))
+            taus.append(t_ * sr)
+            gains.append(g)
+            fcs.append(fc)
+            fas.append(self._air_f3db(r_))
+        heads = self._tk_img.process(sig, taus)
+        out = np.zeros(frames)
+        for k in range(4):
+            y_ = heads[k] * gains[k]
+            if _HAVE_SCIPY:
+                q = lambda f: 2.0 ** (round(12.0 * math.log2(f)) / 12.0)
+                bH, aH = self._bw(1, q(min(fcs[k], sr * 0.4)), btype="high")
+                y_, self._tk_img_zi[k][0] = lfilter(bH, aH, y_,
+                                                    zi=self._tk_img_zi[k][0])
+                bL, aL = self._bw(1, q(min(fas[k], sr * 0.45)))
+                y_, self._tk_img_zi[k][1] = lfilter(bL, aL, y_,
+                                                    zi=self._tk_img_zi[k][1])
+            out = out + y_
+        return out
+
+    def _air_f3db(self, r):
+        """Where ISO 9613-1 takes 3 dB over a path of r metres (cached)."""
+        key = int(r / 5.0)
+        if not hasattr(self, "_f3db"):
+            self._f3db = {}
+        f = self._f3db.get(key)
+        if f is None:
+            lo, hi = 200.0, 24000.0
+            for _ in range(24):
+                mid = math.sqrt(lo * hi)
+                if _iso9613_db_per_m(mid) * max(key * 5.0 + 2.5, 1.0) > 3.0:
+                    hi = mid
+                else:
+                    lo = mid
+            f = self._f3db[key] = lo
+        return f
+
+    def _tk_rolling(self, frames):
+        """Tyre/road and wind noise, from the car (Leo: very small).
+
+        Tyres: a band round the 1 kHz octave (tread impact and air pumping),
+        ~32 dB per decade of speed (tyre/road noise grows as the 3rd-4th power
+        of speed).  Wind: a mid band (A-pillars, mirrors, wheel arches), a
+        dipole -- the 6th power, 60 dB per decade -- so it overtakes the tyres
+        only at the very top.  At 270 km/h they sit _TK_TYRE_DB and
+        _TK_WIND_DB under the engine at full load (the auto-level's target);
+        under 150 km/h they are gone.  They leave from the axles: each with
+        its own retarded time, 1/r, convective amplification, and the air."""
+        sr = self.sample_rate
         v, ((tf, xf), (tr, xr)) = self._tk_tire_geo
+        if v < 5.0:
+            return np.zeros(frames)
+        if getattr(self, "_tk_roll", None) is None:
+            self._tk_roll = dict(taps=_MovingTaps(int(3.0 * sr), 2),
+                                 air=_AirFIR(sr), zt=np.zeros(2),
+                                 zw1=np.zeros(1), zw2=np.zeros(1))
+        st = self._tk_roll
+        u = v / 75.0
+        a_t = 0.22 * 10.0 ** (_TK_TYRE_DB / 20.0) * u ** 1.6
+        a_w = 0.22 * 10.0 ** (_TK_WIND_DB / 20.0) * u ** 3.0
+        n1 = self._rng.standard_normal(frames)
+        n2 = self._rng.standard_normal(frames)
+        if _HAVE_SCIPY:
+            f0 = min(1000.0 * u ** 0.25, sr * 0.4)      # the peak drifts up
+            bT, aT = _bandpass(2.0 ** (round(12.0 * math.log2(f0)) / 12.0),
+                               0.8, sr)
+            tyre, st["zt"] = lfilter(bT, aT, n1, zi=st["zt"])
+            bW1, aW1 = self._bw(1, 150.0, btype="high")
+            wind, st["zw1"] = lfilter(bW1, aW1, n2, zi=st["zw1"])
+            bW2, aW2 = self._bw(1, 2500.0)
+            wind, st["zw2"] = lfilter(bW2, aW2, wind, zi=st["zw2"])
+            # unit rms for the band-passes (Q 0.8: ~0.55; 150-2500 Hz: ~0.37)
+            src = a_t * tyre / 0.55 + a_w * wind / 0.37
+        else:
+            src = (a_t + a_w) * n1 * 0.5
         M = min(v, 0.8 * 343.0) / 343.0
-        df, dr = self._tk_tire_taps.process(road, (tf * sr, tr * sr))
+        df, dr = st["taps"].process(src, (tf * sr, tr * sr))
         rf, rr = 343.0 * tf, 343.0 * tr
-        out = 0.5 * (df * (L / rf) * (1.0 + M * xf / rf) ** -2
-                     + dr * (L / rr) * (1.0 + M * xr / rr) ** -2)
-        return self._tk_tire_air.process(out, 0.5 * (rf + rr))
+        out = 0.5 * (df * (12.0 / rf) * (1.0 + M * xf / rf) ** -2
+                     + dr * (12.0 / rr) * (1.0 + M * xr / rr) ** -2)
+        return st["air"].process(out, 0.5 * (rf + rr))
 
     def _tk_intake(self, mouth, x):
         """The intake mouth beams too -- the OTHER way.
