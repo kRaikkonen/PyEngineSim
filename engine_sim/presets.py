@@ -502,8 +502,11 @@ def subaru_22b() -> Engine:
         heat_release_k=4.4, ve_width_frac=0.72, closed_map_fraction=0.17,
         exhaust_tone=74.0,
         exhaust_primary_m=0.5, exhaust_total_m=1.9, exhaust_radius_m=0.025,
-        exhaust_channels=2, exhaust_openness=0.6, muffler_volume_m3=0.003,
+        # both banks merge into ONE up-pipe to the turbo; the rumble is the
+        # long bank's extra runner length (it crosses under the engine)
+        exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.003,
         header_unequal_deg=28.0,                 # the boxer-rumble delay
+        header_unequal_m=0.45,
         induction="turbo", boost_bar=0.9, turbo_lag=0.5,
         gear_ratios=[3.45, 2.06, 1.45, 1.09, 0.82], final_drive=4.44,
         vehicle_mass=1270.0, wheel_radius=0.31, clutch_capacity=480.0,        gearbox_type="manual",
@@ -514,9 +517,10 @@ def lamborghini_huracan_v10() -> Engine:
     """Lamborghini Huracan — 5.2 L naturally-aspirated 90-deg V10 (Audi/Lambo).
 
     84.5 x 92.8 mm, ~12.7:1 CR, ~8500 rpm, ~610 hp.  High-revving NA screamer
-    with the raspy V10 voice.  DOHC 4-valve.
+    with the raspy V10 voice.  DOHC 4-valve.  The 5.2 has NON-split crankpins:
+    it fires 90/54 (only the 2003 Gallardo 5.0 had 18-deg split pins, even 72).
     """
-    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])
+    offsets = _offsets_from_intervals([1, 6, 5, 10, 2, 7, 3, 8, 4, 9], _ODD_V10)
     cylinders = []
     for i in range(10):
         bank = -45.0 if i < 5 else 45.0          # 90-deg V
@@ -1188,12 +1192,13 @@ def mercedes_amg_gt_m178() -> Engine:
     """Mercedes-AMG GT — M178 4.0 L twin-turbo 'hot-V' V8.
 
     83 x 92 mm, ~10.5:1 CR, ~7000 rpm, ~523 hp.  Turbos inside the 90-deg vee,
-    flat-plane crank — a hard, bark-y twin-turbo V8.  7-speed dual-clutch.
+    CROSS-plane crank (only the GT Black Series' M178 LS2 went flat) — a hard,
+    bark-y twin-turbo V8.  7-speed dual-clutch.
     """
     offsets = _even_offsets(8, firing_order=[1, 5, 3, 7, 4, 8, 2, 6])
     cylinders = []
     for i in range(8):
-        bank = -45.0 if i < 4 else 45.0          # 90-deg flat-plane (hot-V)
+        bank = -45.0 if i < 4 else 45.0          # 90-deg cross-plane (hot-V)
         cylinders.append(
             Cylinder(bore=mm(83), stroke=mm(92), rod_length=mm(150),
                      compression_ratio=10.5, cycle_offset_deg=offsets[i],
@@ -1247,9 +1252,9 @@ def singer_dls_williams_flat6() -> Engine:
 def bmw_e92_m3_s65() -> Engine:
     """BMW E92 M3 — S65 4.0 L naturally-aspirated 90-deg V8.
 
-    92 x 75.2 mm, ~12.0:1 CR, ~8300 rpm, ~414 hp.  Firing 1-5-4-8-6-3-7-2,
-    flat-plane-ish high-revving V8 — a smooth, hard-edged top-end scream.  M-DCT
-    7-speed.
+    92 x 75.2 mm, ~12.0:1 CR, ~8300 rpm, ~414 hp.  Firing 1-5-4-8-6-3-7-2 on a
+    CROSS-plane crank -- the highest-revving cross-plane V8 made — a smooth,
+    hard-edged top-end scream.  M-DCT 7-speed.
     """
     offsets = _even_offsets(8, firing_order=[1, 5, 4, 8, 6, 3, 7, 2])
     cylinders = []
@@ -1426,6 +1431,11 @@ def bmw_44_v8() -> Engine:
         exhaust_tone=58.0,
         exhaust_primary_m=0.66, exhaust_total_m=2.1, exhaust_radius_m=0.028,
         exhaust_channels=2, exhaust_openness=0.62, muffler_volume_m3=0.0034,
+        # the cross-bank manifold: each twin-scroll turbo is fed by alternate
+        # firings from BOTH banks, evenly spaced -- no cross-plane burble.  A
+        # tuned header: near-equal runners into each scroll (0.6-0.9 all give
+        # the same order balance)
+        exhaust_grouping="firing", header_equality=0.8,
         induction="turbo", boost_bar=1.1, turbo_lag=0.4,
         gear_ratios=[4.71, 3.14, 2.11, 1.67, 1.29, 1.00, 0.84, 0.67],
         final_drive=3.15, vehicle_mass=1930.0, wheel_radius=0.33,
@@ -1865,9 +1875,12 @@ def _inline(name, n, bore_mm, stroke_mm, rod_mm, cr, firing, **kw):
     return Engine(name=name, cylinders=cyls, **kw)
 
 
-def _vee(name, n, bore_mm, stroke_mm, rod_mm, cr, bank, firing, **kw):
-    """Helper: a generic V-N engine (banks 1..n/2 left at -bank, rest right)."""
-    offsets = _even_offsets(n, firing_order=firing)
+def _vee(name, n, bore_mm, stroke_mm, rod_mm, cr, bank, firing,
+         intervals=None, **kw):
+    """Helper: a generic V-N engine (banks 1..n/2 left at -bank, rest right).
+    ``intervals`` (summing to 720) for an odd-firing crank, else even."""
+    offsets = (_offsets_from_intervals(firing, intervals) if intervals
+               else _even_offsets(n, firing_order=firing))
     cyls = [Cylinder(bore=mm(bore_mm), stroke=mm(stroke_mm), rod_length=mm(rod_mm),
                      compression_ratio=cr, cycle_offset_deg=offsets[i],
                      bank_angle_deg=(-bank if i < n // 2 else bank)) for i in range(n)]
@@ -1879,6 +1892,10 @@ _FO_V8_FLAT = [1, 8, 3, 6, 4, 5, 2, 7]      # flat-plane (clean L-R alternation)
 _FO_V8_X = [1, 5, 4, 8, 6, 3, 7, 2]         # cross-plane (the burble)
 _FO_V6 = [1, 6, 3, 4, 2, 5]
 _FO_V10 = [1, 6, 5, 10, 2, 7, 3, 8, 4, 9]
+# A 90-deg V10 on COMMON crankpins (72 deg apart) fires 90/54: each bank evenly
+# every 144, the other bank 90 later.  Viper (all generations), BMW S85,
+# Lamborghini/Audi 5.2 (Gallardo LP560 on, Huracan, R8 II), Ferrari F2004.
+_ODD_V10 = [90.0, 54.0] * 5
 _FO_V12 = [1, 12, 5, 8, 3, 10, 6, 7, 2, 11, 4, 9]
 _FO_I6 = [1, 5, 3, 6, 2, 4]
 _FO_FLAT6 = [1, 6, 2, 4, 3, 5]               # Porsche flat-six (alternates banks)
@@ -2047,8 +2064,9 @@ def subaru_wrx_sti_gdb() -> Engine:
         flywheel_inertia=0.18, redline_rpm=8000, idle_rpm=820,
         heat_release_k=4.2, ve_width_frac=0.7, closed_map_fraction=0.17,
         exhaust_tone=72.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
-        exhaust_radius_m=0.025, exhaust_channels=2, exhaust_openness=0.62,
-        muffler_volume_m3=0.003, header_unequal_deg=28.0, induction="turbo",
+        exhaust_radius_m=0.025, exhaust_channels=1, exhaust_openness=0.62,
+        muffler_volume_m3=0.003, header_unequal_deg=28.0, header_unequal_m=0.45,
+        induction="turbo",
         boost_bar=1.0, turbo_lag=0.45, bov_flutter=True,
         gear_ratios=[3.45, 2.06, 1.45, 1.09, 0.82, 0.65], final_drive=4.44,
         vehicle_mass=1330.0, wheel_radius=0.31, clutch_capacity=480.0,
@@ -2061,8 +2079,9 @@ def subaru_wrx_sti_gv() -> Engine:
         flywheel_inertia=0.2, redline_rpm=6700, idle_rpm=800,
         heat_release_k=4.2, ve_width_frac=0.72, closed_map_fraction=0.17,
         exhaust_tone=70.0, exhaust_primary_m=0.55, exhaust_total_m=2.0,
-        exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.58,
-        muffler_volume_m3=0.0035, header_unequal_deg=30.0, induction="turbo",
+        exhaust_radius_m=0.026, exhaust_channels=1, exhaust_openness=0.58,
+        muffler_volume_m3=0.0035, header_unequal_deg=30.0, header_unequal_m=0.45,
+        induction="turbo",
         boost_bar=0.95, turbo_lag=0.5, bov_flutter=True,
         gear_ratios=[3.64, 2.24, 1.59, 1.14, 0.89, 0.71], final_drive=3.90,
         vehicle_mass=1505.0, wheel_radius=0.32, clutch_capacity=520.0,
@@ -2075,8 +2094,9 @@ def subaru_wrx_sti_vt15r() -> Engine:
         flywheel_inertia=0.16, redline_rpm=7500, idle_rpm=950,
         heat_release_k=4.2, ve_width_frac=0.72, closed_map_fraction=0.18,
         exhaust_tone=72.0, exhaust_primary_m=0.5, exhaust_total_m=1.7,
-        exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.8,
-        muffler_volume_m3=0.0015, header_unequal_deg=30.0, induction="turbo",
+        exhaust_radius_m=0.026, exhaust_channels=1, exhaust_openness=0.8,
+        muffler_volume_m3=0.0015, header_unequal_deg=30.0, header_unequal_m=0.45,
+        induction="turbo",
         boost_bar=1.1, turbo_lag=0.5, turbo_spool_frac=0.16, anti_lag=True,
         bov_flutter=True, has_cat=False, straight_cut=True,
         gear_ratios=[2.62, 1.85, 1.4, 1.1, 0.9], final_drive=4.44,
@@ -2143,9 +2163,13 @@ def maserati_granturismo_s() -> Engine:
 
 
 def jaguar_xj220_v6() -> Engine:
-    """Jaguar XJ220 3.5 twin-turbo V6 — a raw, boosty, 90s supercar V6."""
+    """Jaguar XJ220 3.5 twin-turbo V6 — a raw, boosty, 90s supercar V6.
+
+    JRV-6: a 90-deg V6 from the Austin-Rover V64V ("symmetrical crankshaft and
+    uneven firing"): three common crankpins, so it fires 90/150."""
     return _vee("Jaguar XJ220 JRV-6 3.5TT V6", 6, 94.0, 84.0, 152.0, 8.3,
-                30.0, _FO_V6, flywheel_inertia=0.2, redline_rpm=7200, idle_rpm=850,
+                45.0, _FO_V6, intervals=[90.0, 150.0] * 3,
+                flywheel_inertia=0.2, redline_rpm=7200, idle_rpm=850,
                 heat_release_k=3.4, ve_width_frac=0.62, closed_map_fraction=0.17,
                 exhaust_tone=98.0, exhaust_primary_m=0.5, exhaust_total_m=1.9,
                 exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.82,
@@ -2215,6 +2239,7 @@ def bmw_330i_n53() -> Engine:
 def bmw_m5_e60_v10() -> Engine:
     """BMW M5 E60 S85 5.0 V10 — the F1-derived, 8250-rpm screaming road V10."""
     return _vee("BMW M5 E60 S85 5.0 V10", 10, 92.0, 75.2, 139.0, 12.0, 45.0, _FO_V10,
+                intervals=_ODD_V10,       # shared crankpins: 90/54 odd-fire
                 flywheel_inertia=0.2, redline_rpm=8250, idle_rpm=900,
                 heat_release_k=3.6, ve_peak_frac=0.78, ve_width_frac=0.6,
                 closed_map_fraction=0.12, exhaust_tone=120.0, exhaust_primary_m=0.5,
@@ -2659,6 +2684,7 @@ def dodge_challenger_rt() -> Engine:
 def dodge_viper_gts() -> Engine:
     """Dodge SRT Viper GTS — 8.4 NA OHV V10 — a colossal, torquey, ten-cylinder rumble."""
     return _vee("Dodge SRT Viper GTS 8.4 V10", 10, 103.0, 100.6, 168.0, 10.4, 45.0, _FO_V10,
+                intervals=_ODD_V10,       # shared crankpins: 90/54 odd-fire
                 flywheel_inertia=0.4, redline_rpm=6200, idle_rpm=600,
                 heat_release_k=3.4, ve_width_frac=0.7, closed_map_fraction=0.13,
                 exhaust_tone=54.0, exhaust_primary_m=0.62, exhaust_total_m=2.0,
@@ -2672,7 +2698,8 @@ def dodge_viper_gts() -> Engine:
 def fd_viper_srt10() -> Engine:
     """Formula Drift Viper SRT10 — 8.4 V10, opened-up and screaming for drift."""
     return _vee("Formula Drift Viper SRT10 8.4 V10", 10, 103.0, 100.6, 168.0, 11.0, 45.0,
-                _FO_V10, flywheel_inertia=0.3, redline_rpm=6800, idle_rpm=800,
+                _FO_V10, intervals=_ODD_V10,   # shared crankpins: 90/54
+                flywheel_inertia=0.3, redline_rpm=6800, idle_rpm=800,
                 heat_release_k=3.6, ve_width_frac=0.66, closed_map_fraction=0.12,
                 exhaust_tone=60.0, exhaust_primary_m=0.5, exhaust_total_m=1.6,
                 exhaust_radius_m=0.026, exhaust_channels=2, exhaust_openness=0.96,
@@ -3146,7 +3173,9 @@ _TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
 # Parallel twin-turbo inline engines — two turbos, not one (S58, RB26DETT).
 _INLINE_TWIN = {"0", "r34"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
-_FLAT_PLANE = {"4", "488", "918", "amggt", "atomv8", "e92m3", "f2007", "f355",
+# (The AMG GT's M178 and the E92 M3's S65 are CROSS-plane -- only the GT Black
+# Series' M178 LS2 is flat; the M3 GTR's P60 and the Valhalla are flat.)
+_FLAT_PLANE = {"4", "488", "918", "atomv8", "f2007", "f355",
                "f40", "gt350r", "m3gtr", "one1", "p1", "pista", "senna",
                "valhalla"}
 
@@ -3407,9 +3436,9 @@ def _annotate(key, eng):
             eng.cam_profile = "hot"
         elif diesel or eng.redline_rpm <= 5600:
             eng.cam_profile = "mild"
-    # crank plane (display) for V8s: the screamers (Ferrari/McLaren/AMG GT/S65/
-    # Voodoo ...) run a single-plane FLAT crank; every other 90-deg V8 is the
-    # two-plane CROSS crank that gives the burble.
+    # crank plane (display) for V8s: the screamers (Ferrari/McLaren/Voodoo/
+    # Koenigsegg ...) run a single-plane FLAT crank; every other 90-deg V8 is
+    # the two-plane CROSS crank that gives the burble.
     if not eng.crank_plane and eng.num_cylinders == 8 and not eng.is_rotary:
         banks = {round(c.bank_angle_deg, 1) for c in eng.cylinders}
         if len(banks) >= 2:
@@ -3445,7 +3474,8 @@ def _apply_crank_plane(eng):
         # bank pulse train survives to the ear as the potato-potato BURBLE.  Give
         # it a modest default bank offset (only if the preset hasn't set one).
         # Flat-plane V8s stay symmetric (header_unequal_deg = 0) -> smooth scream.
-        if eng.exhaust_channels >= 2 and eng.header_unequal_deg == 0.0:
+        if eng.exhaust_channels >= 2 and eng.header_unequal_deg == 0.0 \
+                and getattr(eng, "exhaust_grouping", "bank") == "bank":
             eng.header_unequal_deg = 18.0
     else:                                          # flat
         off_a, off_b = [0.0, 180.0, 360.0, 540.0], [90.0, 270.0, 450.0, 630.0]

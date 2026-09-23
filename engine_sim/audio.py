@@ -1489,6 +1489,14 @@ class Synthesizer:
         self._nchan = max(1, int(eng.exhaust_channels))
         if self._nchan == 1:
             self._channel_of = [0] * eng.num_cylinders
+        elif getattr(eng, "exhaust_grouping", "bank") == "firing":
+            # a CROSS-BANK manifold: alternate firings share a collector, so
+            # each sees evenly spaced pulses from both banks (BMW S63)
+            rank = sorted(range(eng.num_cylinders),
+                          key=lambda i: eng.cylinders[i].cycle_offset_deg % 720.0)
+            self._channel_of = [0] * eng.num_cylinders
+            for slot, i in enumerate(rank):
+                self._channel_of[i] = slot % self._nchan
         else:
             self._channel_of = [0 if c.bank_angle_deg < 0 else 1 for c in eng.cylinders]
         # Unequal-length headers: delay one bank's pulses a few crank-degrees so
@@ -1496,11 +1504,14 @@ class Synthesizer:
         hu = eng.header_unequal_deg
         self._header_offset = [hu if c.bank_angle_deg < 0 else 0.0
                                for c in eng.cylinders]
-        # the physical voice uses the MEASURED bank geometry where a preset
-        # carries one (header_unequal_deg can be a voicing choice of the
-        # classic voice, e.g. the Aventador's tuned 9-deg rasp)
+        # the physical voice takes a bank offset only where a preset states a
+        # MEASURED one: header_unequal_deg is mostly a voicing choice of the
+        # classic voice (the Aventador's 9-deg rasp, 14 deg on every dual-
+        # exhaust V6 / flat-6, 18 on every cross-plane V8 -- bank character
+        # kept audible in mono).  Real unequal-length headers reach it as a
+        # LENGTH (header_unequal_m, below), a time delay.
         hp = getattr(eng, "header_unequal_phys_deg", -1.0)
-        hp = hu if hp < 0.0 else hp
+        hp = 0.0 if hp < 0.0 else hp
         self._header_offset_phys = [hp if c.bank_angle_deg < 0 else 0.0
                                     for c in eng.cylinders]
         # --- (Step 2) per-cylinder header-runner DELAY LINES --------------------
@@ -1531,8 +1542,8 @@ class Synthesizer:
                                    or eng.redline_rpm >= 8400)
             spread = 0.10 if self._equal_headers else 0.95
         seen, posn = {}, []
-        for c in eng.cylinders:
-            ch = 0 if (self._nchan == 1 or c.bank_angle_deg < 0) else 1
+        for j in range(eng.num_cylinders):
+            ch = self._channel_of[j]              # position along its collector
             posn.append(seen.get(ch, 0)); seen[ch] = seen.get(ch, 0) + 1
         # store each runner's LENGTH (m); the per-block delay is L / c(live) so the
         # whole manifold interference pattern breathes with exhaust temperature.
@@ -1541,7 +1552,13 @@ class Synthesizer:
             ch = self._channel_of[j]
             frac = posn[j] / max(seen[ch] - 1, 1)        # 0 (near) .. 1 (far)
             self._runner_len.append(prim * (1.0 - spread * 0.5 + spread * frac))
-        maxd = int(max(self._runner_len) / 380.0 * sr) + BLOCK + 8
+        # the physical voice: real unequal-length headers add their length to
+        # the long bank's runners (the delay is L / c, a time)
+        du = max(getattr(eng, "header_unequal_m", 0.0), 0.0)
+        self._runner_len_phys = [
+            L_ + (du if eng.cylinders[j].bank_angle_deg < 0 else 0.0)
+            for j, L_ in enumerate(self._runner_len)]
+        maxd = int(max(self._runner_len_phys) / 380.0 * sr) + BLOCK + 8
         self._runner_dl = [_BlockDelay(maxd) for _ in eng.cylinders]
         # (#3) muffler internal reflections: two short feed-forward taps (expansion
         # chamber + baffle path lengths) -> comb notches that give the box its
@@ -2589,7 +2606,8 @@ class Synthesizer:
                     pulse = voice.damp(j, pulse)
                 # delay this cylinder's pulse down its own runner (length / live
                 # sound speed) before it merges at the collector -> interference.
-                d_samp = self._runner_len[j] / c_runner * self.sample_rate
+                d_samp = (self._runner_len_phys[j] if phys
+                          else self._runner_len[j]) / c_runner * self.sample_rate
                 pulse = self._runner_dl[j].process(pulse, d_samp)
                 chans[self._channel_of[j]] += pulse
                 if blk_dev is not None:

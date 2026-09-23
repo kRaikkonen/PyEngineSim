@@ -226,6 +226,14 @@ class Engine:
     # Unequal-length exhaust headers delay one bank's pulses, creating the
     # classic Subaru boxer rumble (even firing, uneven *sound*).
     header_unequal_deg: float = 0.0  # extra crank-deg delay on one bank
+    header_unequal_m: float = 0.0    # the REAL extra runner length (m) of the
+                                     # long bank (unequal-length headers): a
+                                     # time delay L/c for the physical voice
+    exhaust_grouping: str = "bank"   # which cylinders share a collector:
+                                     # "bank" -- each bank its own; "firing" --
+                                     # a cross-bank manifold (BMW S63 hot-V):
+                                     # alternate firings share one, so each
+                                     # sees evenly spaced pulses
     open_cockpit: bool = False       # single-seater: the cockpit view is an
                                      # onboard camera in open air
     phys_voice: bool = False         # open on the PHYSICAL voice (solver pulse,

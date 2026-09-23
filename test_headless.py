@@ -347,7 +347,77 @@ def run_swift_parity():
     print("  lamps decay once the engine stops")
 
 
+def run_fact_checks():
+    """The engine FACTS the sound is built on (docs/ENGINESIM_PLAN.md s.9).
+
+    A wrong crank cannot be voiced right: the F2004 once fired an even 72 and
+    its loudest real line cancelled.  So the verified facts are pinned here --
+    firing intervals, crank plane, exhaust grouping -- and every preset must
+    at least fire a consistent 720-degree cycle."""
+    from engine_sim.audio import Synthesizer
+    from engine_sim.simulator import Simulator
+
+    print("\nENGINE FACTS")
+
+    def intervals(offs):
+        o = sorted(x % 720.0 for x in offs)
+        return sorted(round((o[(i + 1) % len(o)] - o[i]) % 720.0, 3)
+                      for i in range(len(o)))
+
+    def bank_intervals(eng, sign):
+        return intervals([c.cycle_offset_deg for c in eng.cylinders
+                          if (c.bank_angle_deg < 0) == sign])
+
+    for key, _name, fac in presets.PRESETS:        # every preset: a full cycle
+        e = fac()
+        iv = intervals([c.cycle_offset_deg for c in e.cylinders])
+        assert abs(sum(iv) - 720.0) < 0.01 * len(iv) and min(iv) > 0.0, \
+            f"{key}: firing does not close a 720-deg cycle: {iv}"
+
+    for key in ("7", "viper", "fdviper", "hura", "e60m5"):   # common-pin V10s
+        e = presets.ALL[key]()
+        iv = intervals([c.cycle_offset_deg for c in e.cylinders])
+        assert iv == [54.0] * 5 + [90.0] * 5, f"{key} must fire 90/54: {iv}"
+        for side in (True, False):
+            assert bank_intervals(e, side) == [144.0] * 5, key
+    e = presets.ALL["5"]()                                  # LFA: true 72 deg V
+    assert intervals([c.cycle_offset_deg for c in e.cylinders]) == [72.0] * 10
+    e = presets.ALL["xj220"]()                              # JRV-6 / V64V
+    banks = sorted({c.bank_angle_deg for c in e.cylinders})
+    assert banks[-1] - banks[0] == 90.0, "XJ220 JRV-6 is a 90-deg V6"
+    assert intervals([c.cycle_offset_deg for c in e.cylinders]) \
+        == [90.0] * 3 + [150.0] * 3, "the V64V crank fires 90/150"
+    print("  V10 common pins 90/54 (x5), LFA 72, XJ220 90-deg 90/150: ok")
+
+    flat = {"4", "488", "918", "atomv8", "f2007", "f355", "f40", "gt350r",
+            "m3gtr", "one1", "p1", "pista", "senna", "valhalla"}
+    for key, _name, fac in presets.PRESETS:
+        e = fac()
+        if e.num_cylinders != 8 or e.is_rotary or not e.crank_plane:
+            continue
+        want = "flat" if key in flat else "cross"
+        assert e.crank_plane == want, f"{key}: {e.crank_plane}, is {want}"
+        per_bank = bank_intervals(e, True)
+        assert per_bank == ([180.0] * 4 if want == "flat"
+                            else [90.0, 180.0, 180.0, 270.0]), (key, per_bank)
+    print("  V8 crank planes (AMG GT M178 + S65 cross, P60/Valhalla flat): ok")
+
+    e = presets.ALL["bmwv8"]()                  # S63 cross-bank manifold
+    syn = Synthesizer(Simulator(e), sample_rate=32000, seed=1)
+    syn.enabled = False
+    assert e.header_unequal_deg == 0.0, "the S63 manifold evens the pulses"
+    for ch in range(syn._nchan):
+        iv = intervals([e.cylinders[j].cycle_offset_deg
+                        for j in range(8) if syn._channel_of[j] == ch])
+        assert iv == [180.0] * 4, f"S63 collector {ch} is not even: {iv}"
+    for key in ("22b", "gdb", "gv", "vt15r"):   # EJ turbo: one up-pipe
+        e = presets.ALL[key]()
+        assert e.exhaust_channels == 1 and e.header_unequal_m > 0.0, key
+    print("  S63 collectors evenly fed, Subaru EJ one up-pipe + UEL length: ok")
+
+
 if __name__ == "__main__":
+    run_fact_checks()
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
         run_startup(eng)

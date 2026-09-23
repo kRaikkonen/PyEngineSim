@@ -1,0 +1,303 @@
+# EngineSim：从零重建方案 + 现状对照（2026-09-24）
+
+> 目的：把这一个多月踩过的坑、131 台车的发动机事实、发动机/声学文献，整理成一份
+> “如果今天从零开始做 EngineSim 该怎么做”的精确方案，再逐项对照现在的
+> PyEngineSim，列出差距和改进顺序。第 8 节记录本次已经落地的优化。
+> 原则：**白盒**——每个常数要么从物理/几何推出来，要么写明出处和标定依据。
+
+---
+
+## 0. 一句话结论
+
+现在的系统有两套“声音”：**经典声音**（参数化脉冲 + 约 40 个按耳朵调的合成层与启发式）
+和 **物理声音**（气体求解器的真实脉冲 + 管道/辐射/听者物理，目前只默认用于
+F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是物理声音那条路：
+**事实正确的数据模型 → 离线真值气体动力学 → 实时代理（LUT）→ 线性声学后处理
+→ 多声源空间渲染 → 对真录音的自动验证**。现项目的最大差距依次是：
+预设事实错误（本次查出 12 台）、排气拓扑只能用“通道数+假偏移”表达、单声道输出、
+涡轮/消声器没有物理模型、只有 2 段真录音可验证。
+
+---
+
+## 1. 现状总览（2026-09-24，`36aad01` 之后）
+
+| 模块 | 行数 | 作用 | 性质 |
+|---|---|---|---|
+| `engine.py` | 335 | Engine/Cylinder 数据模型（点火用 `cycle_offset_deg` 直接给） | 数据 |
+| `presets.py` | 3497 | 131 台车 + 事实表（平面曲轴/ITB/喷射/VE/扭矩包络）+ **声音启发式**（假偏移、开放度拉伸） | 数据+启发式 |
+| `simulator.py` | 1035 | 实时 0-D 曲轴域热力学（开环压力模型 + Wiebe + 白盒 MAP/VE/BMEP） | 物理 |
+| `ve_model / map_model / bmep_model` | 443 | 白盒闭式：Taylor 马赫指数、Helmholtz 进气冲压、节气门孔口质量平衡、能量守恒扭矩 | 物理 |
+| `exhaust_tmm.py` | 113 | 传递线/反射系数 → 4 个标量旋钮（res1/res2/wall/muffler） | 物理→旋钮 |
+| `gas_truth.py` | 930 | AngeTheGreat 气体动力学的忠实移植（离线，**单缸代表、假设均匀点火**） | 真值 |
+| `gas_moc.py` | 276 | 多缸 MOC 排气（特征线法）——**没有任何地方调用** | 实验 |
+| `surrogate.py` | 217 | LUT/MLP 代理层基础设施 | 基础设施 |
+| `audio.py` | 5071 | 经典声音 20 个 stage + 物理声音 + POV（车外/座舱/车载/赛道边） | 声音 |
+| `drivetrain.py` | 452 | 离合、变速箱类型（dct/single/manual/at）、车辆 | 物理 |
+| `app.py` / `car.py` / `obd.py` | 6450 | pygame UI、OBD 车模式 | 应用 |
+| `swift/` | — | iOS 移植（落后：物理声音、赛道边新物理都没移植） | 移植 |
+
+输出虽开 2 声道，但合成是**单声道**复制。
+
+---
+
+## 2. 经验教训（决定了方案的形状）
+
+1. **事实先于音色。** F2004 点火错（写成均匀 72°，实为 90/54 奇点火），它的
+   2.5 阶——真录音里最响的线——在我们这里被两排抵消掉，任何 EQ 都补不回来。
+   本次普查又查出 4 台 V10、1 台 V6、2 台 V8 同类错误（第 8 节）。
+2. **单位错误比参数错误更致命。** 脉冲衰减用“曲轴角度”写，高转速时只剩
+   0.024 ms；真实喷流是时间尺度（求解器：17.5k 转时约 0.87 ms）。
+3. **合成层会重新造出“电钻”。** ITB 正弦叠加、crack 导数、和弦共鸣器、tanh
+   饱和、源端房间混响……每层单独都“有道理”，叠起来就是合成器。
+4. **全局启发式会一次毁掉整个车队。** 把 cylinder split 默认打开，全部普通车变尖、
+   fizz 变大（Leo 原话：“you fucked up the system”）。改动必须证明对其他车逐位一致。
+5. **量纲/量级陷阱。** 物理引擎比经典低约 40 dB，留在里面的经典层就等于 +40 dB
+   （F2007 的正时齿轮 grain 占了它 90% 能量）。
+6. **逐缸权重必须作用在逐缸事件上。** 把按槽位切换的增益乘到总线上，会把融合的
+   基座（DC）调制成假的 0.5/1 阶。
+7. **有真录音就一切清楚。** 阶次表 + 频段份额 + 换挡掉电平，三张表就能定位问题。
+   直觉判断（比如“需要进气声”）常常是反的：真 F2004 车载的频谱就是排气本身，
+   进气被进气箱 Helmholtz 低通压掉 30 dB 以上。
+8. **单声道会丢掉两排的特征。** 为了在单声道里听出十字曲轴 V8 的 burble，
+   经典声音给所有双排气 V8 加了 18° 假偏移、V6/水平对置 6 缸 14°——这是用
+   假事实补偿缺失的空间渲染。
+9. **App 和离线渲染可能不一样。** 换车时 App 把上一台车的整套“每车派生参数”
+   带过去（默认从 Aventador 启动，所以几乎所有车都在用 Aventador 的参数）。
+   验证必须覆盖 App 路径。
+10. **环境不稳定会静默损坏结果。** CPython 3.14 偶发 segfault 或静默算错
+    （本次 fleet 检查里有 2 次渲染被损坏），一切对比都要可复跑、重跑确认。
+
+---
+
+## 3. 发动机类型知识库（车队里的每一族）
+
+车队 131 台：NA 63、涡轮 60、罗茨/螺杆机械增压 5、离心增压 3。完整分族清单见附录 A。
+
+| 族 | 几何/点火（1 转 = 1 阶） | 声学指纹 | 模型必须有的东西 |
+|---|---|---|---|
+| I3 | 240° 均匀 | 1.5 阶主导，一阶摇摆力偶 | 排气 3-1 |
+| I4 | 180° 均匀 | 2 阶主导；4-2-1 与 4-1 集气差异明显；二阶惯性力 | 集气拓扑（4-2-1 配对） |
+| I5 | 144° 均匀（1-2-4-5-3） | 2.5 阶 + 奇数半阶谐波 = 五缸 warble | 5-1 集气 |
+| I6 | 120° 均匀 | 3 阶；最平顺；6-1 或 3-1×2（6-2-1） | 分组集气 |
+| VR6/VR5 | 15° 单缸盖，120°/144° 均匀 | 与 I6/I5 相近，排气歧管前后 3+3 合流 | 歧管分组 |
+| V6 60° | 通常错开曲柄销 → 120° 均匀 | 每排 240° 的“三连” warble，排分开时可闻 | 排拓扑 + 空间 |
+| V6 90° | 错开 30° 销 → 均匀；**共销 → 90/150 奇点火**（别克 3.8、Austin-Rover V64V/**JRV-6**） | 奇点火：强 1.5 阶、粗糙 | 曲柄销几何 |
+| 水平对置 4 | 180° 均匀 | 不等长排气歧管 → 脉冲到达集气不均 → **斯巴鲁 rumble**（两排汇入**同一根** up-pipe） | 歧管长度差（时间延迟，不是角度） |
+| 水平对置 6 | 120° 均匀，每排 240° | 细腻，排间差小 | 排拓扑 |
+| 水平对置 12（917） | 60° 均匀 | 双排 6 缸 | — |
+| V8 十字曲轴 | 全局 90° 均匀；**每排 90/180/270/180 不均** | 两排分开排气时 = burble；**X/H 管让每个出口都有 8 缸、近乎均匀** | 排拓扑（真双排/X/H/跨排歧管）+ 空间渲染 |
+| V8 十字 + 跨排歧管（BMW S63） | 同上，但歧管跨两排，每个双涡管涡轮收到 180° 均匀脉冲 | **官方：消除了 V8 的冒泡声** | 按点火分组的集气 |
+| V8 平面曲轴 | 每排 180°（两台 I4） | 尖锐 scream；二阶惯性力 | — |
+| V10 72° | 共销即均匀 72°（LFA） | 纯 5 阶族 | — |
+| V10 90° 共销 | **奇点火 90/54**（Viper、BMW S85、奥迪/兰博 5.2、F2004） | 2.5 阶很强，粗犷 | 曲柄销几何 |
+| V10 90° 错开 18° 销 | 均匀 72°（只有 2003 款 Gallardo 5.0） | — | 曲柄销几何 |
+| V10 68°（Carrera GT） | 共销则 68/76（近均匀）；资料未证实是否错销 | 近乎 LFA | 待证 |
+| V12 60° | 均匀 60° | 6 阶族，极平顺 | — |
+| V12 65°（法拉利 F130/F140、Valkyrie） | 共销则 65/55；F140 点火顺序 1-12-5-8-3-10-6-7-2-11-4-9 已证，是否错销未证 | 极小的半阶 | 待证 |
+| W12 / W16 | 两个 VR 组，均匀 60° / 45° | 近 V12/V16 | 分组集气 |
+| 转子（Wankel） | 每转子每偏心轴转一爆；**排气口开 ~270°（占空 ~75%，活塞 ~25%）**，周边口开启极陡 | “brap”、偏高频 | 口正时模型（不是阀门窗口） |
+| 柴油 | 压缩比 ≥ 14.5；预混燃烧压升率高 | 燃烧噪声经缸体辐射（1–3 kHz 敲击）；涡轮 + 重消声 | 缸压谱 × 缸体衰减 |
+| 星型 14 缸 | 51.4° 均匀，集气环 | 低沉 throb | 集气环 |
+| 航空 Merlin | 60° V12，短喷射排气管，离心增压 | 无长管共鸣，原始 | 短管辐射 + 增压器啸叫 |
+| F1（开放座舱） | 见上各族 | 车载摄像头在开放空气中 | onboard POV（已做） |
+
+**进气/增压声源（按物理）**
+- 涡轮：涡轮本身是排气路径上的**被动声学元件**（Peat & Torregrosa, JSV 2006），会削弱脉动；压气机叶片通过频率啸叫 + 喘振/泄压阀。
+- 罗茨/螺杆机械增压：**转子叶瓣通过频率**啸叫（叶瓣数 × 转子转速），螺杆比罗茨更高更尖。
+- 离心增压（航空）：叶轮叶片通过频率。
+- NA 进气：进气箱/空滤箱是 Helmholtz 低通；ITB 裸喇叭口才有强进气嚎叫。
+
+---
+
+## 4. 声学知识库（每个结论都要能落到公式上）
+
+| 主题 | 结论 | 在方案中的用法 |
+|---|---|---|
+| 源 | 排气门开启时的**可压缩孔口流**（高压比下壅塞）；喷流宽度随转速在曲轴角里变宽（时间尺度近似不变） | 离线求解器给脉冲形状+幅值 |
+| 管内传播 | 1-D 线性声学（传递矩阵，Munjal）；热气 c ≈ 450–700 m/s；大振幅时**有限振幅陡化**（Burgers/特征线） | 线性部分用 TMM 滤波；非线性在离线真值里做 |
+| 截面突变 | 反射 R = (A₂−A₁)/(A₂+A₁) | 集气/膨胀腔 |
+| 消声器 | 膨胀腔 TL = 10·lg[1 + ¼(m−1/m)² sin²kL]；穿孔/吸音型加耗散 | TMM 真几何，替代“muffler 旋钮” |
+| 三元催化 | 低频由阻抗突变主导（随流量增大），高频靠耗散 | TMM 元件 |
+| 涡轮 | 被动声学元件，削弱脉动 | TMM 元件（需参数） |
+| 开口端 | Levine–Schwinger：端修正 δ = 0.6133a；ka<1 时辐射效率 ∝(ka)²、ka>1 起指向性 | 活塞辐射高通 + 指向性（已做） |
+| 管口噪声 | 工程实践（GT-Power 等）：管口体积速度 → **单极子辐射**，与台架实测吻合 | 物理声音的辐射模型（已做） |
+| 流致噪声 | Lighthill 喷流 ∝ U⁸ | 已做（`_PHYS_JET`） |
+| 进气 | 进气箱 Helmholtz：f_H = c/2π·√(A/VL′)，阻尼由平均流阻给出 | 已做（`_AIRBOX_*`） |
+| 结构噪声 | 燃烧噪声由缸压谱（几百 Hz 以上）× 缸体衰减决定；柴油压升率高更吵 | 缸压谱源 + 衰减曲线 |
+| 齿轮 | 啮合频率 = 齿数 × 轴转速，幅值随传递扭矩（传动误差） | 已做（与扭矩成正比） |
+| 传播 | 球面扩散、ISO 9613-1 空气吸收、地面反射、Doppler（推迟时间）、对流放大 | 赛道边已做 |
+| 感知/验证 | 阶次分析 + 响度、尖锐度、粗糙度（15–300 Hz 调制 = burble/warble）、音调性；“运动感”模型 = f(粗糙度, 尖锐度, 音调性) | 自动验证指标 |
+| 合成方法现状 | 采样/颗粒合成（Wwise/FMOD）、阶次合成（ASD）、加法合成、物理启发波导（Baldan 2015）、AngeTheGreat engine-sim（0-D 气体 + 录制 IR 卷积）、DNN（2024） | 我们的差异化：白盒物理 + 离线真值 |
+
+---
+
+## 5. 从零重建方案
+
+### 5.1 原则
+1. **事实驱动的数据模型**：点火由曲柄销几何 + 气缸夹角 + 点火顺序**推导**，不手填
+   偏移；排气/进气拓扑是一张图，不是“通道数”。
+2. **一条物理链覆盖所有发动机**：不同族的差异只来自数据（几何、拓扑、材料），
+   不来自按车的声音开关。
+3. **离线真值 → 实时代理**：贵的东西（1-D 气体动力学、TMM）离线烘焙成 LUT；
+   实时只做查表、逐缸事件合成、线性滤波和空间渲染。手机可跑。
+4. **每个常数白盒**：物理推导，或写明出处/标定录音。
+5. **对真录音自动验证**：每一族至少一段参考录音，指标自动出表；改动要证明其余车逐位一致。
+6. **空间渲染**：每个声源（左右尾管、进气口、发动机本体、齿轮箱）有自己的位置，
+   立体声/双耳输出。
+
+### 5.2 分层架构
+
+| 层 | 内容 | 速率 | 关键模型 |
+|---|---|---|---|
+| L0 数据 | `EngineSpec`（缸径/行程/连杆、夹角、**曲柄销相位（含错销）**、点火顺序 → 推导点火角；配气正时 EVO/EVC/IVO/IVC、气门面积）；`ExhaustGraph`（歧管→集气→X/H/跨排→涡轮→催化→消声器→尾管 + 尾管位置）；`IntakeGraph`（喇叭口/歧管→稳压腔→节气门→进气箱→进气口位置）；`Vehicle`（声源位置、车身面板、座舱）；`Drivetrain`（换挡策略、齿数） | 静态 | 校验：推导出的点火间隔必须与文献一致 |
+| L1 热力学/机械 | 曲轴动力学、0-D 缸内（Wiebe、传热）、白盒 MAP/VE/增压、限转/断油策略（逐缸） | 控制率 ~1 kHz | 现有 simulator 基本够 |
+| L2 离线气体真值 | 全拓扑 1-D 非线性求解（特征线/有限体积）+ 闭环气缸；输出每个开口（尾管、进气口）在每个工况 (rpm, load, boost) 下**每缸事件**的体积速度，含干涉与陡化 | 离线 | gas_truth 扩展到 N 缸 + gas_moc |
+| L3 实时声源 | 按 LUT 逐缸合成事件（时间真实单位）、循环变动（COV 百分之几）、逐缸断油/限转、逐缸传递路径（只在结构一阶模态以上） | 音频率 | 物理声音已有雏形 |
+| L4 线性声学 | 消声器/催化/涡轮 TMM → IIR/FIR（随工况插值）；开口辐射（活塞高通 + Levine–Schwinger + 指向性） | 音频率 | exhaust_tmm 升级为真滤波 |
+| L5 次级声源 | 齿轮啸叫（啮合阶 × 扭矩）、增压器（叶瓣/叶片通过频率）、涡轮（BPF、泄压阀物理）、配气/喷油器（冲击）、结构燃烧噪声（缸压谱 × 衰减）、流致噪声（Lighthill）、混动电机（电磁阶次） | 音频率 | 部分已有 |
+| L6 听者/环境 | 多声源空间渲染（ITD/ILD/简化 HRTF）；POV：车外追车、座舱（质量定律 + 座舱模态）、车载（开放空气）、赛道边（推迟时间、ISO 9613、地面、护栏、漫射场）；可选转播链（压缩、高通） | 音频率 | 大部分已有，缺空间 |
+| L7 母带 | 与物理电平挂钩的响度归一 + 限幅；不改音色的 AGC | 音频率 | 已有 |
+| L8 验证 | 参考录音库 + 自动指标（阶次表、频段份额、音调噪声比、粗糙度/尖锐度、换挡掉电平、电平随转速）+ golden 回归 + 全车队逐位一致检查 + App 路径检查 | 离线 | 已有雏形 |
+
+### 5.3 验收标准（每族一段参考录音）
+- 主阶次（该族的 1–3 条最强线）相对电平误差 ≤ 3 dB；低阶（0.5/1/2）≤ 4 dB。
+- 频段份额（0.1–0.3/0.3–1/1–2/2–4/4–8 kHz）每段误差 ≤ 6 个百分点。
+- 换挡掉电平与真录音差 ≤ 1 dB；松油门电平落差与真录音差 ≤ 3 dB。
+- 改动对非目标车：golden 150 个阶段信号 + 全车队 × 3 视角逐位一致。
+
+---
+
+## 6. 对照现状：差距分析
+
+| 方案项 | 现状 | 差距 | 优先级 |
+|---|---|---|---|
+| 点火由几何推导 | 手填 `cycle_offset_deg`；V8 由 `_apply_crank_plane` 改写 | **12 台事实错误**（本次修 12 台，见第 8 节）；无曲柄销几何字段 | P0 |
+| 排气拓扑图 | `exhaust_channels` 1/2 + 按排分组 + 4-2-1 配对启发式 | 无 X/H 管、跨排歧管（本次新增 `exhaust_grouping="firing"`）、UEL 用角度而非长度 | P0/P2 |
+| 假偏移启发式 | V6/水平对置 6 缸 14°、十字 V8 18°、Aven 9° | 经典声音保留；**物理声音不应继承**（本次改） | P0 |
+| 0-D 热力学 | simulator + 白盒 VE/MAP/BMEP | 够用 | — |
+| 离线气体真值 | gas_truth 单缸代表、假设均匀点火；gas_moc 未接入 | 需要 N 缸 + 全拓扑 | P3 |
+| 实时声源 | 物理声音（求解器脉冲 + 陡化 + 逐缸事件）| 只验证了 NA F1；涡轮车/消声车未验证 | P1 |
+| 线性声学 | 经典：波导 + 启发式滤波；exhaust_tmm 只出 4 个旋钮 | TMM 需要变成真正的滤波器 | P2 |
+| 涡轮声学 | 经典有“turbine damping”启发式 | 物理声音**没有涡轮**（60 台涡轮车不能默认物理） | P1 |
+| 结构噪声 | 经典“锅盖”低通 | 应为缸压谱 × 缸体衰减 | P3 |
+| 空间渲染 | 单声道 | 立体声/双耳 | P2 |
+| 验证 | golden + 两套测试 + F2004 阶次表 | 只有 2 段真录音（F2004 车载、Aventador 通过） | P1 |
+| App 一致性 | 换车带走上一台车的派生参数 | 需 Leo 决定是否全车队修 | P0（待决） |
+| Swift | 物理声音/赛道边都没移植 | 等 Mac | P4 |
+
+---
+
+## 7. 路线图
+
+- **P0（本次）**：修预设事实错误；跨排歧管分组；物理声音不再继承假偏移，
+  UEL 改为真实长度差；本文档。
+- **P1**：参考录音库。每族一段（十字 V8 真双排 & X 管、平面 V8、涡轮 I4、I5、水平对置 6、V12、转子、柴油卡车、增压 V8），
+  用 `f2004_eval` 泛化出的对比工具自动出表。涡轮物理（涡轮 TMM 元件 + BPF）。
+- **P2**：物理声音覆盖 NA 公路车：消声器/催化用 TMM 真滤波；对 Aventador 通过录音验证。
+  排气拓扑图 + 立体声渲染，之后删掉假偏移。
+- **P3**：离线全拓扑真值（gas_truth 扩展到 N 缸 + gas_moc 接入），按车烘焙声源 LUT；
+  结构燃烧噪声（柴油敲击）。
+- **P4**：每族验证通过后，物理声音成为全车队默认，经典层退役；Swift 移植。
+
+---
+
+## 8. 本次已落地的优化
+
+### 8.1 预设事实修正（12 台，经典和物理声音都受影响）
+
+| key | 车 | 原来 | 现在（事实） | 阶次效果（WOT 追车，前→后） |
+|---|---|---|---|---|
+| `viper` `fdviper` | Dodge Viper 8.4 V10 | 均匀 72° | 共销 **90/54** | 2.5 阶 −22.8→−6.0 / −17.7→−2.6 dB |
+| `e60m5` | BMW S85 V10 | 均匀 72° | 共销 **90/54** | 2.5 阶 −19.6→−1.3 dB |
+| `hura` | Huracán 5.2 V10 | 均匀 72° | 非错销 **90/54** | 2.5 阶 −18.2→−0.6 dB |
+| `xj220` | Jaguar JRV-6 | 60° V6 均匀 | **90° V6，90/150**（V64V 曲轴） | 均匀点火的 3 阶 −7→−17 dB |
+| `amggt` | AMG GT M178 | 平面曲轴 | **十字曲轴** | 0.5 阶 −13.7→−8.9 dB（burble） |
+| `e92m3` | BMW S65 | 平面曲轴 | **十字曲轴** | 0.5 阶 −9.5→−5.6 dB |
+| `bmwv8` | BMW S63 | 按排集气 + 18° 假 burble | **跨排歧管**：按点火交替分组，每个涡轮 180° 均匀；调谐歧管 | 1 阶 0→−7、0.5 阶 −10→−14.5，4 阶成为最强线 |
+| `22b` `gdb` `gv` `vt15r` | 斯巴鲁 EJ 涡轮 | 2 个排气通道 | **1 根 up-pipe**；UEL 长度差 0.45 m（物理声音用） | rumble 保留（0.5/1 阶基本不变） |
+
+### 8.2 架构改进
+- `Engine.exhaust_grouping`：`"bank"`（默认）或 `"firing"`（跨排歧管）。
+- `Engine.header_unequal_m`：真实不等长歧管的长度差，物理声音按 L/c 做**时间**延迟。
+- `_vee(..., intervals=...)` 支持奇点火；`_ODD_V10 = [90, 54] × 5`。
+- 排管位置按**集气通道**计数（对按排分组的车逐位一致）。
+- 物理声音不再继承经典声音的假偏移（14°/18°/9°），只用实测几何。
+- `test_headless.run_fact_checks()`：每台车必须闭合 720° 循环；锁定 V10 共销集合、
+  LFA、XJ220、全部 V8 曲轴平面、S63 集气均匀、斯巴鲁拓扑。
+
+### 8.3 验证
+- golden：150 个阶段信号逐位一致（max diff 0）。
+- 全车队 131 台 × 追车/座舱/赛道边：**119 台逐位一致**，恰好只有上表 12 台改变
+  （S63 之后又加了调谐歧管，单独复测）。
+- `test_headless`（含新的事实检查）、`test_obd` 全部通过。
+- 12 台车的前后对比音频已单独交付（每台：修正前 3 s → 修正后 3 s，响度对齐）。
+
+### 8.4 证据不足、暂不改（记录在案）
+- Carrera GT 68° V10：是否错销未证（68/76 vs 72）。
+- 法拉利 65° V12（F130/F140）、Valkyrie：点火顺序已证，是否错销未证（65/55 vs 60）。
+- 转子：模型用的是活塞阀门窗口 505–715°（210°）；真实排气口约 270°、开启极陡——
+  是模型层面的错误，改它会动 golden 里的 787B，列入 P2。
+- 各车 X/H 管（Mustang、Corvette……）未知，经典声音的 18° 启发式先保留。
+- App 换车带走上一台车的派生参数：需要 Leo 决定是否全车队修。
+
+---
+
+## 9. 参考资料
+
+- Viper V10 奇点火 54/90、共销：<https://www.viperclub.org/vca/threads/need-explanation-of-vipers-firing-order.643552/>、<https://www.msextra.com/forums/viewtopic.php?t=27801>
+- BMW S85 共销、90/54、点火顺序 1-6-5-10-2-7-3-8-4-9：<https://en.wikipedia.org/wiki/BMW_S85>
+- 兰博/奥迪 V10：5.0 用 18° 错销均匀；5.2（LP560-4、Huracán、R8）非错销 90/54：<https://en.wikipedia.org/wiki/Lamborghini_V10>
+- 生产 V10 汇总（LFA 真 72°、Carrera GT 68°）：<https://drjlt.com/article/tech/376/ranking-v10-engines>
+- AMG M178：只有 GT Black Series 的 M178 LS2 是平面曲轴：<https://media.mbusa.com/releases/release-9e110a76b364c518148b9c1ade228cbc-the-new-mercedes-amg-gt-black-series>、<https://en.wikipedia.org/wiki/Mercedes-Benz_M176/M177/M178_engine>
+- BMW S65 十字曲轴：<https://carbuzz.com/the-highest-revving-cross-plane-v8/>、<https://en.wikipedia.org/wiki/BMW_S65>
+- BMW P60B40 平面曲轴：<https://en.wikipedia.org/wiki/BMW_P60B40>
+- BMW S63 跨排歧管、消除 V8 冒泡声：<https://f10m5.bimmerpost.com/forums/showthread/548345/new-bmw-m5-s63tu-engine-improves-upon-x5-x6m-s-s63-all-details>、<https://www.bmwblog.com/2011/06/16/analysis-f10-bmw-m5-s63-engine-power-delivery/>
+- Jaguar XJ220 JRV-6 为 90° V6：<https://en.wikipedia.org/wiki/Jaguar_XJ220>；V64V 90° V6、不均匀点火：<https://en.wikipedia.org/wiki/Austin-Rover_V64V_engine>、<https://www.aronline.co.uk/cars/austin/metro/mg-metro-6r4/>
+- 法拉利 65° V12 点火顺序：<https://en.wikipedia.org/wiki/Ferrari_F140_engine>
+- 斯巴鲁 UEL：两排汇入同一根 up-pipe：<https://www.maperformance.com/pages/equal-length-vs-unequal-length-subaru-headers>、<https://www.slashgear.com/1970710/subaru-unequal-length-headers-rumble-sound/>
+- 十字 V8 每排不均、X/H 管让每个出口近乎均匀：<https://en.wikipedia.org/wiki/Crossplane>、<https://forums.autosport.com/topic/215212-x-pipes-and-h-pipes-for-v8s/>
+- 转子每转一爆、排气口开 ~270°：<https://www.slashgear.com/1879127/rotary-engine-brap-sound-reason/>
+- 涡轮的被动声学效应：Peat & Torregrosa, JSV 2006 <https://www.sciencedirect.com/science/article/abs/pii/S0022460X06000940>
+- 催化器的反应/耗散衰减：<https://mae.osu.edu/sites/default/files/2021-12/J23.pdf>
+- Levine–Schwinger 端修正 0.6133a：<https://journals.aps.org/pr/abstract/10.1103/PhysRev.73.383>、<https://arxiv.org/pdf/0811.3625>
+- 1-D 气体动力学 + 单极子辐射预测管口噪声：<https://www.gtisoft.com/intake-and-exhaust-acoustics/>、<https://www.researchgate.net/publication/261983748>
+- 燃烧噪声与缸压谱：<https://doi.org/10.1177/1468087411428040>
+- 机械增压啸叫与叶瓣数：<https://low-offset.com/workshop/supercharger-whine/>
+- 合成方法：Baldan et al. 2015 <https://www.researchgate.net/publication/280086598>；Wwise 颗粒合成 <https://www.audiokinetic.com/en/community/blog/engine-sound-modeling-from-sampling-to-granular-synthesis-in-wwise/>；DNN <https://sites.duke.edu/dkusmiip/files/2023/12/Engine_Sound_Synthesis_ncmmsc-52-1.pdf>
+- 心理声学（粗糙度/尖锐度/运动感）：<https://www.sciencedirect.com/science/article/abs/pii/S0003682X17307624>
+
+---
+
+## 附录 A：车队分族（`census.py` 生成）
+
+| 族 | 数量 | 预设 key（induction） |
+|---|---|---|
+| V8 cross-plane | 22 | `3`, `8`(roots), `audiv8`, `bmwv8`(turbo), `boneshaker`(roots), `c63bs`, `c7`, `challenger`, `charger`, `chevyss`, `ct5v`(roots), `e63`(turbo), `ftype`(roots), `funco`, `gt40`, `gt500`(roots), `gts`, `pro2`, `r390`(turbo), `rtr`, `t100`, `z28` |
+| I4 | 16 | `2`(turbo), `a3`(turbo), `a45`(turbo), `ab500`(turbo), `ae86`, `b48`(turbo), `deltas4`(turbo), `ek9`, `ep3`, `escrs`(turbo), `evo7`(turbo), `fk8`(turbo), `hoonrs`(turbo), `p205`(turbo), `rs200`(turbo), `s15`(turbo) |
+| V8 flat-plane | 16 | `4`, `488`(turbo), `918`, `amggt`(turbo), `atomv8`, `e92m3`, `f2007`, `f355`, `f40`(turbo), `gt350r`, `m3gtr`, `one1`(turbo), `p1`(turbo), `pista`(turbo), `senna`(turbo), `valhalla`(turbo) |
+| V12-60 | 15 | `250cal`, `6`, `aven`, `clkgtr`, `countach`, `db11`(turbo), `diablo`, `merlin`(centr), `mf1`, `sl65`(turbo), `speed12`, `vulcan`, `w154`(centr), `zonda`, `zondar` |
+| F6 | 10 | `1`, `930`(turbo), `991rs`, `993gt2`(turbo), `996gt1`(turbo), `997rs4`, `crs27`, `gt2rs`(turbo), `gt3`, `singer` |
+| V6-60 | 6 | `fd370z`, `fordgt`(turbo), `hoonitruck`(turbo), `r35`(turbo), `raptor`(turbo), `xj220`(turbo) |
+| I6 | 5 | `0`(turbo), `330i`, `9`(turbo), `e36m3`, `r34`(turbo) |
+| V10-90 | 5 | `7`, `e60m5`, `fdviper`, `hura`, `viper` |
+| V12-65 | 5 | `enzo`, `f50gt`, `fxxk`, `lafe`, `valk` |
+| F4 | 4 | `22b`(turbo), `gdb`(turbo), `gv`(turbo), `vt15r`(turbo) |
+| V6-90 | 4 | `giulia`(turbo), `nsx`, `rs5`(turbo), `sf25`(turbo) |
+| I5 | 3 | `d8gto`(turbo), `rs3`(turbo), `s1`(turbo) |
+| I6 diesel | 3 | `actros`(turbo), `ironknight`(turbo), `pete`(turbo) |
+| V6-15 | 2 | `corradovr6`, `golfvr6` |
+| V8 cross-plane diesel | 2 | `f450`(turbo), `titan`(turbo) |
+| W12 | 2 | `bentss`(turbo), `conti`(turbo) |
+| rotary4 | 2 | `rx7`(turbo), `rx7fc`(turbo) |
+| F12 | 1 | `917` |
+| I3 | 1 | `focus3`(turbo) |
+| V10-68 | 1 | `cgt` |
+| V10-72 | 1 | `5` |
+| V5-15 | 1 | `borav5` |
+| V6-80 | 1 | `mp44`(turbo) |
+| W16 | 1 | `veyron`(turbo) |
+| radial14 | 1 | `wildcat`(centr) |
+| rotary8 | 1 | `787b` |
+
+（普查于修正前生成：`amggt`、`e92m3` 已改为十字曲轴，`xj220` 已改为 90° V6；`viper`/`fdviper`/`hura`/`e60m5` 已改为 90/54 奇点火。）
+
