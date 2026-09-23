@@ -835,24 +835,31 @@ class _TrackSide:
             self.m_next = self.m_cur + self.spacing(v)
         return self.X - self.m_cur
 
-    def retarded(self, v, h2):
+    def retarded(self, v, h2, dx=0.0):
         """(tau, x_e) of the sound arriving NOW at the post that hears it:
         its delay in seconds, and where it LEFT the car along the track,
         relative to that post.  ``h2`` = the squared off-line distance
-        (lateral^2 + height^2)."""
+        (lateral^2 + height^2); ``dx`` = where on the car it comes from,
+        along the direction of travel (+ ahead of mid-wheelbase).  Each point
+        changes post as its own emission point crosses the midway, so every
+        delay stays continuous."""
         v = min(v, 0.8 * self.C)
         a = self.C * self.C - v * v
+        X = self.X + dx
 
         def tau(m):
-            x = self.X - m
+            x = X - m
             return (-x * v + math.sqrt((x * v) ** 2 + a * (x * x + h2))) / a
 
         m = self.m_cur
         t = tau(m)
-        if self.X - v * t < 0.5 * (self.m_prev + self.m_cur):
+        if X - v * t < 0.5 * (self.m_prev + self.m_cur):
             m = self.m_prev          # it left while the previous post was nearer
             t = tau(m)
-        return t, self.X - v * t - m
+        elif X - v * t >= 0.5 * (self.m_cur + self.m_next):
+            m = self.m_next          # a point ahead of the car, at crawl speed
+            t = tau(m)
+        return t, X - v * t - m
 
 
 # --- the track itself -----------------------------------------------------------
@@ -3890,7 +3897,9 @@ class Synthesizer:
             # the car is still driving towards.  Kept as the CHANGE the pattern
             # makes, so the unbeamed (omnidirectional) mix survives for the
             # track's diffuse field, which hears the car from every side.
-            dbi = self._tk_intake(bayi_mouth, x) - bayi_mouth
+            dbi = self._tk_intake(bayi_mouth,
+                                  x + self._tk_sources()["intake"][0]) \
+                - bayi_mouth
         # intake-side BRIGHT path: the tract mouth / atmospheric dump is an
         # OPENING — high leak, gentle 2.4 kHz shading (arch/ducting), never the
         # body-panel mass law that was muddying the compressor whistle.
@@ -3910,6 +3919,15 @@ class Synthesizer:
             # the housings (spool, dump, gearbox) at the back of the engine
             bay_air = bay_air + g_int * bayi_mouth \
                 + (geo["g_box"] / geo["g_bay"]) * (bayi - bayi_mouth)
+        elif geo.get("flyby"):
+            # the mouth and the housings radiate from different places on the
+            # car: the same partition, kept apart (it is linear)
+            tk_block = bay_air
+            tk_mouth = g_int * self._pov_partition(bayi_mouth, "tk_pm",
+                                                   a_hi, 2400.0)
+            tk_house = g_int * self._pov_partition(bayi - bayi_mouth, "tk_ph",
+                                                   a_hi, 2400.0)
+            bay_air = bay_air + tk_mouth + tk_house
         else:
             bay_air = bay_air + g_int * self._pov_partition(bayi_p, "bayi_p",
                                                             a_hi, 2400.0)
@@ -3926,9 +3944,14 @@ class Synthesizer:
             # forwards.  The diffuse field is fed from every direction at once,
             # so it gets the unbeamed mix.
             omni = geo["g_tail"] * tail + geo["g_bay"] * bay_air
-            tail = self._tk_directivity(tail, self._tk_x)
-            bay_air = bay_air + self._pov_partition(dbi, "bayi_dp", a_hi,
-                                                    2400.0)
+            pos = self._tk_sources()
+            tail = self._tk_directivity(tail, self._tk_x + pos["exh"][0])
+            dbi_p = self._pov_partition(dbi, "bayi_dp", a_hi, 2400.0)
+            bay_air = bay_air + dbi_p
+            # the three engine radiators, each propagated from its own place
+            self._tk_src = (geo["g_tail"] * tail,
+                            geo["g_bay"] * (tk_mouth + dbi_p),
+                            geo["g_bay"] * (tk_block + tk_house))
         if geo.get("onboard"):
             # the pipes from in front of their exits: their top end beams away
             a_tip = sim.engine.exhaust_radius_m \
@@ -3988,53 +4011,67 @@ class Synthesizer:
             # car leaves.  That moving notch is the "whoosh" on a TV pass.
             v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
             L, hm = 12.0, 1.2                     # mic: 12 m off, 1.2 m up
-            race = (self.straight_cut
-                    or self.sim.engine.exhaust_openness > 0.85)
-            hs = 0.55 if race else 0.33           # pipe exit height
             sr = self.sample_rate
             # RETARDED time: the sound arriving now left the car when it was
             # further back, and c*tau is the distance from THERE -- the moving
             # SOURCE's Doppler, c/(c -/+ v), falls out of the delay's slope.
-            # Three images of the one car: itself, under the tarmac, and behind
-            # the barrier across the track.
-            Lw = L + 2.0 * _TK_WALL_M
-            tau1, xe1 = self._track.retarded(v, L * L + (hm - hs) ** 2)
-            tau2, _ = self._track.retarded(v, L * L + (hm + hs) ** 2)
-            tau3, xe3 = self._track.retarded(v, Lw * Lw + (hm - hs) ** 2)
-            r1, r2, r3 = 343.0 * tau1, 343.0 * tau2, 343.0 * tau3
-            if getattr(self, "_tk_taps", None) is None:   # 3 s: a pass fits
-                self._tk_taps = _MovingTaps(int(3.0 * sr), 3)
+            # EVERY RADIATOR FROM ITS OWN PLACE: the exhaust at the tail, the
+            # intake where the engine breathes, the block and housings with
+            # the engine (_tk_sources).  Whichever of them stands out at this
+            # rpm arrives with its own delay (the front ones pass the mic
+            # first), its own distance, its own ground bounce and its own air.
+            if getattr(self, "_tk_paths", None) is None:  # 3 s: a pass fits
+                self._tk_paths = {nm: (_MovingTaps(int(3.0 * sr), 2),
+                                       _AirFIR(sr), np.zeros(1))
+                                  for nm in ("exh", "intake", "body")}
+                self._tk_taps = _MovingTaps(int(3.0 * sr), 1)
                 self._tk_omni_dl = _FlybyDelay(int(3.0 * sr))
-                self._tk_air1, self._tk_air3 = _AirFIR(sr), _AirFIR(sr)
+                self._tk_air3 = _AirFIR(sr)
                 self._tk_field = _OutdoorField(sr)
-            d1, d2, d3 = self._tk_taps.process(
-                sig, (tau1 * sr, tau2 * sr, tau3 * sr))
             # CONVECTIVE AMPLIFICATION: a moving monopole is louder ahead of
             # itself than behind, (1 - M_r)^-2 with M_r its Mach number towards
             # the mic when the sound left (+4.7 dB coming, -3.7 dB going at
             # 290 km/h).  The Doppler above is the same motion bending pitch.
             M = min(v, 0.8 * 343.0) / 343.0
+            pos = self._tk_sources()
+            near = np.zeros(frames)
+            for nm, s_ in zip(("exh", "intake", "body"), self._tk_src):
+                if nm in getattr(self, "_tk_mute", ()):
+                    continue                  # analysis: this source silenced
+                dx, z = pos[nm]
+                t_d, xe_d = self._track.retarded(v, L * L + (hm - z) ** 2, dx)
+                t_g, _ = self._track.retarded(v, L * L + (hm + z) ** 2, dx)
+                r_d, r_g = 343.0 * t_d, 343.0 * t_g
+                taps, air, gzi = self._tk_paths[nm]
+                dd, dg = taps.process(s_, (t_d * sr, t_g * sr))
+                cv = (1.0 + M * xe_d / r_d) ** -2
+                direct = dd * (L / r_d * cv)
+                gnd = dg * (0.9 * L / r_g * cv)   # asphalt |R| ~ 0.9, hard
+                if _HAVE_SCIPY:
+                    # The bounce is only COHERENT up to a point.  At grazing
+                    # incidence asphalt is smooth by the Rayleigh criterion
+                    # right up through the audio band, but air turbulence and
+                    # the fact that a car is not a point source decorrelate
+                    # the two paths more the farther they run -- so the comb
+                    # is sharp as it passes and washes out at range.
+                    fcoh = min(max(9000.0 * L / r_g, 1500.0), sr * 0.45)
+                    bG, aG = self._bw(1, fcoh)
+                    gnd, gzi[:] = lfilter(bG, aG, gnd, zi=gzi)
+                # the air takes its ISO 9613-1 share over this path's length
+                near = near + air.process(direct + gnd, r_d)
+            # the barrier across the track and the place's diffuse field hear
+            # the car as a whole, from mid-car
+            Lw = L + 2.0 * _TK_WALL_M
+            tau1, xe1 = self._track.retarded(v, L * L + (hm - 0.5) ** 2)
+            tau3, xe3 = self._track.retarded(v, Lw * Lw + (hm - 0.5) ** 2)
+            r1, r3 = 343.0 * tau1, 343.0 * tau3
             cv1 = (1.0 + M * xe1 / r1) ** -2
             cv3 = (1.0 + M * xe3 / r3) ** -2
-            direct = d1 * (L / r1 * cv1)
-            gnd = d2 * (0.9 * L / r2 * cv1)       # asphalt |R| ~ 0.9, hard
-            if _HAVE_SCIPY:
-                # The bounce is only COHERENT up to a point.  At grazing
-                # incidence asphalt is smooth by the Rayleigh criterion right up
-                # through the audio band, but air turbulence and the fact that a
-                # car is not a point source decorrelate the two paths more the
-                # farther they run -- so the comb is sharp as it passes and
-                # washes out at range.  (The chase cam's bounce is low-passed
-                # hard for the opposite reason: there the geometry is FIXED, so
-                # its notches never move and just sit in the presence band.)
-                fcoh = min(max(9000.0 * L / r2, 1500.0), sr * 0.45)
-                bG, aG = self._bw(1, fcoh)
-                if not hasattr(self, "_tk_g_zi"):
-                    self._tk_g_zi = np.zeros(1)
-                gnd, self._tk_g_zi = lfilter(bG, aG, gnd, zi=self._tk_g_zi)
-            # the air takes its ISO 9613-1 share over each path's own length
-            near = self._tk_air1.process(direct + gnd, r1)
+            (d3,) = self._tk_taps.process(sig, (tau3 * sr,))
             wall = self._tk_air3.process(d3 * (_TK_WALL_R * L / r3 * cv3), r3)
+            # the tyres' geometry, for the road-noise path after the auto-level
+            self._tk_tire_geo = (v, [self._track.retarded(
+                v, L * L + (hm - 0.05) ** 2, dxa) for dxa in (1.35, -1.35)])
             # THE PLACE: the grandstand, pit wall and trees round the post
             # scatter the car back at the mic as a diffuse field.  Outdoors that
             # field is NOT a room's constant: a far car lights the scatterers
@@ -4151,7 +4188,13 @@ class Synthesizer:
                 nz2, self._roadn_lp_zi = lfilter(self._roadn_lp[0], self._roadn_lp[1],
                                                  nz2, zi=self._roadn_lp_zi)
                 # wind/road wash halved (Leo: cabin/room 风噪太大)
-                sig = sig + rn * spd * (0.8 * nz + 0.25 * nz2)
+                road = rn * spd * (0.8 * nz + 0.25 * nz2)
+                if self.pov == "trackside" \
+                        and getattr(self, "_tk_tire_geo", None) is not None:
+                    road = self._tk_tires(road)   # from the tyres, not the mic
+                    if "tires" in getattr(self, "_tk_mute", ()):
+                        road = road * 0.0
+                sig = sig + road
 
         # --- F1 BROADCAST COMPRESSION: a real F1 feed (and every racing game)
         # rides heavy programme compression — the wall is DENSE, the dynamic
@@ -4763,6 +4806,44 @@ class Synthesizer:
         q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
              * (1.0 + max(eng.boost_bar, 0.0)))
         return math.sqrt(q / (math.pi * 35.0))
+
+    def _tk_sources(self):
+        """Where each radiator sits on the car, (dx, height) in metres, dx
+        along the direction of travel from mid-wheelbase.  The exhaust leaves
+        at the tail; the intake breathes where the engine does -- the grille
+        (front-engined), behind the cabin (mid) or the rear deck (the 911s);
+        the block and its housings sit with the engine.  A single-seater:
+        airbox over the driver's head, exits at the back of the engine
+        cover."""
+        eng = self.sim.engine
+        race = self.straight_cut or eng.exhaust_openness > 0.85
+        hs = 0.55 if race else 0.33              # pipe exit height
+        if getattr(eng, "open_cockpit", False):
+            return dict(exh=(-1.6, 0.75), intake=(-0.3, 1.0), body=(-0.9, 0.45))
+        lay = getattr(eng, "engine_layout", "front")
+        if lay == "mid":
+            return dict(exh=(-2.2, hs), intake=(-0.4, 1.0), body=(-0.9, 0.5))
+        if lay == "rear":
+            return dict(exh=(-2.3, hs), intake=(-1.9, 0.9), body=(-1.7, 0.5))
+        return dict(exh=(-2.2, hs), intake=(1.9, 0.6), body=(1.3, 0.5))
+
+    def _tk_tires(self, road):
+        """The road/tyre noise from the TYRES: each axle's own retarded time
+        (so its own Doppler), 1/r, convective amplification and air.  It was
+        a constant hiss added after the auto-level -- still there with the car
+        500 m away.  At the pass (r = L) it is as loud as it always was."""
+        sr = self.sample_rate
+        L = 12.0
+        if getattr(self, "_tk_tire_taps", None) is None:
+            self._tk_tire_taps = _MovingTaps(int(3.0 * sr), 2)
+            self._tk_tire_air = _AirFIR(sr)
+        v, ((tf, xf), (tr, xr)) = self._tk_tire_geo
+        M = min(v, 0.8 * 343.0) / 343.0
+        df, dr = self._tk_tire_taps.process(road, (tf * sr, tr * sr))
+        rf, rr = 343.0 * tf, 343.0 * tr
+        out = 0.5 * (df * (L / rf) * (1.0 + M * xf / rf) ** -2
+                     + dr * (L / rr) * (1.0 + M * xr / rr) ** -2)
+        return self._tk_tire_air.process(out, 0.5 * (rf + rr))
 
     def _tk_intake(self, mouth, x):
         """The intake mouth beams too -- the OTHER way.

@@ -236,6 +236,9 @@ class Engine:
                                      # sees evenly spaced pulses
     open_cockpit: bool = False       # single-seater: the cockpit view is an
                                      # onboard camera in open air
+    engine_layout: str = "front"     # "front" | "mid" | "rear": where the
+                                     # engine (and its intake) sits -- places
+                                     # each radiator on the car for the fly-by
     phys_voice: bool = False         # open on the PHYSICAL voice (solver pulse,
                                      # no synthesizer layers); F11 flips it
     header_unequal_phys_deg: float = -1.0  # measured value for the physical

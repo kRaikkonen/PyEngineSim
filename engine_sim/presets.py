@@ -3323,8 +3323,25 @@ _TORQUE_ENVELOPE = {          # key: (peak_torque_Nm, rated_power_hp)
 }
 
 
+# Where the engine sits (fly-by source positions).  Everything else is
+# front-engined (front-mid included: LFA, AMG GT, Corvette, Vulcan ...).
+_MID_ENGINE = frozenset({
+    "aven", "6", "countach", "diablo", "hura", "4", "488", "pista", "f355",
+    "f40", "f50gt", "enzo", "lafe", "fxxk", "918", "cgt", "mf1", "p1", "senna",
+    "one1", "valk", "valhalla", "zonda", "zondar", "fordgt", "gt40", "r390",
+    "clkgtr", "xj220", "atomv8", "787b", "917", "veyron", "audiv8", "nsx",
+    "rs200", "hoonrs", "deltas4", "p205", "996gt1", "funco",
+    "7", "f2007", "mp44", "sf25"})
+_REAR_ENGINE = frozenset({"1", "930", "991rs", "993gt2", "997rs4", "crs27",
+                          "gt2rs", "gt3", "singer"})    # the 911s
+
+
 def _annotate(key, eng):
     """Stamp display-only spec metadata (variable-valve tech, rotation) onto eng."""
+    if key in _MID_ENGINE:
+        eng.engine_layout = "mid"
+    elif key in _REAR_ENGINE:
+        eng.engine_layout = "rear"
     if key in _VE_MAX:                              # per-car spec-power calibration
         eng.ve_max = _VE_MAX[key]
     if key in _TORQUE_ENVELOPE:                     # physical ECU torque+power limiter
