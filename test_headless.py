@@ -416,8 +416,67 @@ def run_fact_checks():
     print("  S63 collectors evenly fed, Subaru EJ one up-pipe + UEL length: ok")
 
 
+def run_app_car_change():
+    """The APP must play what the renders play: each car's own derived values.
+
+    It once carried the previous car's whole params dict into the next car
+    (so every car played the Aventador's pipe/muffler/fizz/body -- the car
+    it opens on), and opened on a stylised firing voice that overrode the
+    first car's physics.  Renders and tests build a fresh synth per car and
+    never saw it -- so this walks the app's own factory."""
+    import types
+    import engine_sim.app as appmod
+    from engine_sim.audio import Synthesizer
+    from engine_sim.simulator import Simulator
+
+    print("\nAPP CAR CHANGE")
+
+    class _Quiet(Synthesizer):              # no audio device
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    real = appmod.Synthesizer
+    appmod.Synthesizer = _Quiet
+    try:
+        keys = set(Synthesizer.PER_CAR_PARAMS) | set(appmod._VOICE_KEYS)
+        app = types.SimpleNamespace(synth=None, devices=[("x", None)],
+                                    device_idx=0, rate_idx=0,
+                                    voice_idx=appmod._VOICE_PHYSICAL)
+        app._apply_voice = lambda: appmod.App._apply_voice(app)
+
+        def switch(key, first=False):
+            app.sim = Simulator(presets.ALL[key]())
+            appmod.App._make_synth(app, start=False, keep_engine_flags=first)
+
+        def own(key):
+            return Synthesizer(Simulator(presets.ALL[key]()),
+                               sample_rate=appmod.SAMPLE_RATES[0]).params
+
+        switch("aven", first=True)
+        app.synth.params["master"] = 0.7            # a real mixer setting
+        for key in ("aven", "rs3", "7", "e92m3"):
+            if key != "aven":
+                switch(key)
+            p, o = app.synth.params, own(key)
+            bad = [k for k in keys if abs(p[k] - o[k]) > 1e-12]
+            assert not bad, f"{key} plays another car's {bad}"
+            assert p["master"] == 0.7, "mixer settings must carry over"
+        app.voice_idx = 1                           # a picked stylised voice
+        app._apply_voice()
+        switch("aven")
+        assert all(app.synth.params[k] == v
+                   for k, v in appmod.FIRING_VOICES[1][1].items())
+    finally:
+        appmod.Synthesizer = real
+    print("  every car plays its own derived values; mixer + picked voice carry")
+
+
 if __name__ == "__main__":
     run_fact_checks()
+    run_app_car_change()
     for factory in (presets.porsche_911_h6, presets.vw_ea888_i4, presets.ford_coyote_v8):
         eng = factory()
         run_startup(eng)

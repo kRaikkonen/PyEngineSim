@@ -156,7 +156,7 @@ TR_ZH = {
     # firing voice + voices
     "Firing voice:": "点火音色:", "cabin": "车内",
     "Balanced": "均衡", "Sharp": "尖锐", "Deep": "低沉", "Raspy": "沙哑",
-    "Hollow": "空洞",
+    "Hollow": "空洞", "Physical": "物理",
     # slider labels
     "MASTER volume": "主音量", "Firing / bang": "点火爆音", "Body (thickness)": "声体(厚)",
     "Drive (solid)": "驱动(扎实)", "Firing pitch (Hz)": "点火音高(Hz)",
@@ -265,7 +265,13 @@ FIRING_VOICES = [
                   "crack": 0.32, "firing_pitch": 130.0}),
     ("Hollow",   {"pulse_tau": 26.0, "turbulence": 0.42, "body": 0.70,
                   "crack": 0.22, "firing_pitch": 95.0}),
+    # the car's OWN values: what each engine's geometry derives (the default;
+    # the others above are stylised overrides, V cycles through them)
+    ("Physical", {}),
 ]
+# the params a firing voice sets (restored from the car's own on "Physical")
+_VOICE_KEYS = sorted({k for _nm, _v in FIRING_VOICES for k in _v})
+_VOICE_PHYSICAL = len(FIRING_VOICES) - 1
 
 
 class App:
@@ -386,7 +392,7 @@ class App:
             preset_key = presets.PRESETS[0][0]
         self.current_key = preset_key
         self.sim = Simulator(presets.ALL[preset_key]())
-        self.voice_idx = 0        # current firing-timbre voice
+        self.voice_idx = _VOICE_PHYSICAL   # firing timbre: the car's own
         self._status = ""         # transient save/load message
         self._status_t = 0.0
         self.synth = None
@@ -593,8 +599,16 @@ class App:
 
         ``keep_engine_flags`` keeps the GPF/Cat toggles (device/rate changes);
         on a CAR change it is False so GPF/Cat reset to the new engine's own
-        has_gpf / has_cat instead of carrying the previous car's exhaust kit."""
+        has_gpf / has_cat instead of carrying the previous car's exhaust kit
+        -- and the values each car DERIVES from its own engine
+        (Synthesizer.PER_CAR_PARAMS: pipe resonances, muffler, wall, crack,
+        body, fizz, drive, spread, source reverb, intake) come from the new
+        car.  They used to ride along like mixer sliders, so every car played
+        the Aventador's (the car the app opens on)."""
         saved = dict(self.synth.params) if self.synth else None
+        if saved is not None and not keep_engine_flags:
+            for k in set(Synthesizer.PER_CAR_PARAMS) | set(_VOICE_KEYS):
+                saved.pop(k, None)
         _flags = ["cabin", "pops_on", "sustain_on_lift"]
         if keep_engine_flags:
             _flags += ["gpf", "cat", "straight_cut", "flutter", "road_pipe"]
@@ -604,26 +618,17 @@ class App:
         # opens on the new car's own voice)
         saved_voice = (self.synth.vx.get("phys_voice")
                        if (self.synth and keep_engine_flags) else None)
-        # PER-CAR params (Synthesizer.PER_CAR_PARAMS, derived from each engine)
-        # ride along a car change like the mixer sliders do -- except into a
-        # PHYSICAL-voice car, which was measured with its own values and keeps
-        # them.  What it would have inherited is passed on when it is left, so
-        # the classic cars after it sound exactly as they did before.
-        if saved is not None and not keep_engine_flags:
-            if getattr(self, "_carry_pc", None) is not None:
-                saved.update(self._carry_pc)
-            self._carry_pc = None
         if self.synth:
             self.synth.stop()
         device = self.devices[self.device_idx][1]
         rate = SAMPLE_RATES[self.rate_idx]
         self.synth = Synthesizer(self.sim, sample_rate=rate, device=device)
+        # this car's own values, for the "Physical" firing voice
+        self.synth._own_params = dict(self.synth.params)
         if saved is not None:
-            if not keep_engine_flags and self.synth.vx.get("phys_voice"):
-                pc = Synthesizer.PER_CAR_PARAMS
-                self._carry_pc = {k: saved[k] for k in pc if k in saved}
-                saved = {k: v for k, v in saved.items() if k not in pc}
             self.synth.params.update(saved)
+            if not keep_engine_flags:
+                self._apply_voice()       # a picked stylised voice carries on
             for f, v in saved_flags.items():
                 setattr(self.synth, f, v)
             if saved_voice is not None:
@@ -837,7 +842,14 @@ class App:
         return False
 
     def _apply_voice(self):
-        self.synth.params.update(FIRING_VOICES[self.voice_idx][1])
+        vals = FIRING_VOICES[self.voice_idx][1]
+        if vals:
+            self.synth.params.update(vals)
+        else:                             # "Physical": the car's own values
+            own = getattr(self.synth, "_own_params", {})
+            for k in _VOICE_KEYS:
+                if k in own:
+                    self.synth.params[k] = own[k]
 
     def _build_mixer(self):
         """Lay out the audio-mixer slider tracks + the spatial XY pad."""
