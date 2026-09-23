@@ -181,7 +181,7 @@ class CarMode:
             if eng.induction != "na":
                 map_kpa = getattr(tm, "map_kpa", 0.0)
                 if map_kpa:      # your REAL boost drives the simulated compressor
-                    sim.boost = max(0.0, (map_kpa - tm.baro_kpa) * 0.01)
+                    sim.set_external_boost((map_kpa - tm.baro_kpa) * 0.01, dt)
                 else:
                     sim._update_boost(dt)
         else:

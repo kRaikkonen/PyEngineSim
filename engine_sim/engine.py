@@ -197,13 +197,31 @@ class Engine:
     # shell is stripped/open race).  Set ~20+ for a sealed luxury saloon.
     cabin_nr_db: float = 0.0
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
-    turbo_lag: float = 0.6           # spool time constant (s) for turbo
+    turbo_lag: float = 0.6           # spool time constant (s) -- only the legacy
+                                     #   boost lag reads it; the turbo MACHINE's lag
+                                     #   is its rotor inertia (turbo.py)
     turbo_spool_frac: float = 0.12   # rpm frac where boost starts (F40: high = laggy)
-    turbo_spool_width: float = 0.5   # rpm frac over which boost ramps to full
+    turbo_spool_width: float = 0.5   # rpm frac over which boost ramps to full; the
+                                     #   machine's turbine is sized so full boost
+                                     #   arrives at (frac + width) x redline
+                                     #   (turbo_full_rpm overrides)
     anti_lag: bool = False           # bangs/crackle + whoosh on overrun
     bov_flutter: bool = False        # lift-off = compressor surge 'stututu' (no/closed
                                      #   dump valve) instead of a clean 'pshhh' BOV
     electric_turbo: bool = False     # e-turbo / e-compressor: near-instant spool, no lag
+    # the turbocharger AS A MACHINE (engine_sim/turbo.py) -------------------------
+    turbo_layout: str = ""           # "single" | "twin" (parallel, one per bank)
+                                     #   | "quad" | "sequential" ("" -> from
+                                     #   induction_subtype: "twin"/"sequential")
+    turbo_full_rpm: float = 0.0      # WOT full boost arrives here (the turbine is
+                                     #   sized for it); 0 -> the spool_frac/width
+    seq_rpm_on: float = 0.0          # sequential: the secondary's pre-spool starts
+    seq_rpm_full: float = 0.0        #   ...and it joins (0 -> 50 % / 57 % redline)
+    bov: str = ""                    # blow-off valve: "recirc" | "atmo" | "none"
+                                     #   ("" -> "none" if bov_flutter, else recirc)
+    turbo_ball_bearing: bool = False # ball-bearing cartridge: half the friction
+    turbo_size: float = 1.0          # scale on the stock turbo: <1 smaller (quick,
+                                     #   chokes up top), >1 bigger (lag, top end)
 
     # hybrid electric drive ----------------------------------------------------
     # An electric motor that adds torque (instant, low-end-strong) on top of the

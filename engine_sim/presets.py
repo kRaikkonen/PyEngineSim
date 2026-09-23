@@ -3169,9 +3169,28 @@ _HOT_V = {"e63", "amggt", "valhalla", "488", "pista", "rs5", "senna", "p1"}
 # first, a big one hands over up top (2JZ-GTE, RX-7 FD 13B-REW).  Twin-scroll =
 # a single divided-housing turbo, tighter/cleaner whistle (BMW B48/N55, EA888).
 _SEQUENTIAL_TT = {"9", "rx7"}
-_TWIN_SCROLL = {"b48", "2", "evo7", "gv"}
+_TWIN_SCROLL = {"b48", "2", "evo7", "gv", "a45", "rx7fc"}
 # Parallel twin-turbo inline engines — two turbos, not one (S58, RB26DETT).
 _INLINE_TWIN = {"0", "r34"}
+# How many turbochargers and how they share the work (turbo.py builds each).
+# Every V / W / flat twin-turbo here runs one turbo per bank; the Veyron four
+# in parallel (the Chiron's 2+2 sequential set is not in the fleet).
+_TURBO_LAYOUT = {
+    **{k: "twin" for k in (
+        "giulia", "db11", "valhalla", "rs5", "conti", "bentss", "bmwv8", "488",
+        "pista", "f40", "raptor", "fordgt", "hoonitruck", "xj220", "one1",
+        "mp44", "p1", "senna", "amggt", "e63", "sl65", "r35", "r390", "996gt1",
+        "993gt2", "gt2rs", "ironknight")},
+    "veyron": "quad",
+}
+# Sequential switch points (rpm): the secondary's exhaust valve starts to
+# bleed (pre-spool), then opens and its compressor joins.  2JZ-GTE: turbo 2
+# pre-spun 3600-4000, both from 4000; RX-7 FD: 4500-5500 (the famous dip at
+# the changeover).
+_SEQ_RPM = {"9": (3600.0, 4000.0), "rx7": (4500.0, 5500.0)}
+# Ball-bearing cartridges (half the bearing drag): Ferrari's F154 IHIs, the
+# M139's roller bearings, the S15's ball-bearing T28.
+_TURBO_BB = {"488", "pista", "a45", "s15"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
 # (The AMG GT's M178 and the E92 M3's S65 are CROSS-plane -- only the GT Black
 # Series' M178 LS2 is flat; the M3 GTR's P60 and the Valhalla are flat.)
@@ -3361,6 +3380,13 @@ def _annotate(key, eng):
             eng.induction_subtype = "twin_scroll"
         elif key in _INLINE_TWIN:
             eng.induction_subtype = "twin"
+    if eng.induction == "turbo":
+        if key in _TURBO_LAYOUT and not eng.turbo_layout:
+            eng.turbo_layout = _TURBO_LAYOUT[key]
+        if key in _SEQ_RPM:
+            eng.seq_rpm_on, eng.seq_rpm_full = _SEQ_RPM[key]
+        if key in _TURBO_BB:
+            eng.turbo_ball_bearing = True
     # --- exhaust hardware (audio) ------------------------------------------------
     # Spread the exhaust OPENNESS around the fleet mean so genuinely different
     # exhaust HARDWARE finally sounds different: a track/straight-cut car ends up

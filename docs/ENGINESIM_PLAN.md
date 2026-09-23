@@ -332,6 +332,124 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
   高频最强，我们在通过后最强（射流侧瓣 + 管口指向性）；轮胎风噪按要求放得很小，
   不足以把高频峰前移。真实录音里 1–2.5 kHz 在通过时占 36%，我们只有 10%。
 
+### 8.9 涡轮增压器按机器重做（2026-09-24，Leo：大涡轮小涡轮双涡轮特性、振颤 sututu、涡轮声音，整个涡轮要重做）
+详见 §10。
+
+---
+
+## 10. 涡轮增压器：从文献到机器
+
+### 10.1 文献要点（每条都落到公式或数字上）
+- **压气机的特性线**（Leufvén & Eriksson 2013，用一个大型车用压气机 map 库验证）：每条
+  等转速线从零斜率点（ZSL，≈喘振线）平顶下降，到堵塞处竖直；ZSL 左边是正斜率的不稳定
+  分支，降到**零流量压比** Π_c0 = Π_zsl − Γ(Π_zsl − 1)，喘振台架实测 **Γ≈50%、与转速
+  无关**；反向流是“像涡轮一样”的强节流（倒流几十 g/s）。
+- **喘振是系统的性质**（Greitzer）：压气机管路里的流量有惯性，dW/dt = A_c/L_c (p̂ − p_p)；
+  增压腔（中冷+管路到节气门）是容性，dp_p/dt = a²/V_p (ΣW − W_节气门 − W_泄压)。二者是亥姆霍兹
+  共振器 f_H = a/2π·sqrt(A_c/(V_p L_c))，稳定性参数 B = U/2a·sqrt(V_p/(A_c L_c))。在正斜率上
+  失稳：**轻度喘振**在 f_H 附近，**深度喘振**（气流反向）远低于 f_H，一周期里“放空（倒流）→
+  恢复”；增压腔小时只剩这两段（Dehner, Selamet et al. 2016）。**发动机台架实测一个深喘振周期
+  71 ms（≈14 Hz）**、每周期压力掉 31–50%（Leufvén & Eriksson）；Galindo 等测到 9–16 Hz。
+  这就是松油门时没有泄压阀的 **"stu-tu-tu"**——涡轮不会停（GFB）。
+- **压气机的声音**：
+  - 出现在**轴频的整数阶**，最常占主导的是**同步（1 阶）**和**叶片通过频率 BPF = 主叶片数×轴频**；
+    80–120 krpm 的 BPF 在 **8–12 kHz**（OSU，6+6 叶片的汽油机压气机）。
+  - 进口叶尖**相对马赫 > 1** 时出现 **buzz-saw**：激波锁在转子上，每个轴频阶次都有、叶片
+    之间不均匀（Raitor & Neise 2008）；亚音速时是**叶尖间隙噪声**，约 BPF/2 的窄带。
+  - **whoosh**：汽油机小压气机的宽带 **4–13 kHz**（柴油 1.5–3 kHz）。下限=进气管第一个周向
+    声模态的截止频率；上限随转速升（80 krpm ~6 kHz → 150 krpm ~12 kHz）；低到中流量最严重
+    （Dehner et al. 2021；Evans & Ward；Teng & Homco）。
+- **涡轮的声学**：双端口测量，透射损失随**质量流量和压比**增大（Tiikoja, Rämmal, Åbom, Bodén）。
+- **大涡轮 / 小涡轮**是同一套物理的缩放：长度×s → 流量能力×s²、转子惯量×s⁵、同叶尖速度的
+  轴转速×1/s。小的：轴转得快（啸叫更高）、低转早起压、高转**堵塞掉压**、甚至超速；大的：迟滞、
+  起压晚、轴慢（啸叫低）、顶端流量足。
+- **双涡轮**：
+  - **并联**（每排一个、各一半流量）：每个转子只要 (1/√2)³≈0.35 的能量、拿到 0.5 的功率，起压
+    快约 1.4 倍；两根轴有公差，两套啸叫轻微拍频。
+  - **顺序式**：2JZ-GTE 在 3600 rpm 开始给二号涡轮预旋（PBCV 分一点排气），4000 rpm 两个并联；
+    RX-7 FD 在 4500–5500 过渡，换挡处掉压（到 0.6 bar）。
+  - **四涡轮**：Veyron 四个并联（Chiron 才是 2+2 顺序）。
+  - **双涡管**：一个涡轮、排气分两路，低速保留脉冲能量；DSPORT A/B：满增压早 400 rpm、
+    过渡区扭矩 +21%、高转无差别。
+
+### 10.2 机器（`engine_sim/turbo.py`，白盒）
+- **压气机**：
+  - 功 = 欧拉功（Wiesner 滑移 σ≈0.85、40° 后弯）ψ_E = σ − κφ。
+  - ZSL 点和最高效率点的压头 = 效率 × ψ_E。
+  - 堵塞 = 进口相对流堵塞（轴向马赫 0.45），以及亚音速时 φ_max = 0.12；两者平滑取小。
+  - 中间用 Leufvén 的椭圆，左边用他的三次不稳定分支 + Γ=0.5 + 倒流节流。
+  - 功率 = 通过流的欧拉功（倒流时一半）+ 盘摩擦。
+  - 检查：GT2860RS（47/60 mm）在 180 krpm 约 0.25 kg/s（Garrett：约 35 lb/min）。
+- **管路+增压腔**：Greitzer 集总模型，0.5 ms 子步半隐式（倒流分支和节气门都很刚性）；
+  节气门 = 发动机自己的抽气线（压气机供气的节气门 × VE × 充量温度）。
+- **泄压阀**：膜片看的是增压腔减进气歧管；有“回流”（recirc）、“排大气”（atmo）和“没有”三种
+  （没有 → 喘振）。App 的 Flutter / SSQV 开关现在就是这只阀。
+- **涡轮**：喷嘴流量 W = A p03/√(RT)·√(1 − (p04/p03)²)，和泄压阀并联时可**闭式反解** p03；
+  效率按叶片速比（最优 0.7）。双涡管在低速加脉冲能量（DSPORT）。
+- **轴**：J dω/dt = (P_t − P_c − P_摩擦)/ω。J 来自叶轮尺寸：铝压气机叶轮 60 mm ~60 g、
+  回转半径 ~0.4R；Inconel 涡轮+轴 54 mm ~170 g、~0.35R；质量 ∝ D³、回转半径² ∝ D²
+  （GT28 级 ~3.4e-5 kg m²，估计值）。
+- **泄压阀控制**：ECU 目标 = boost_bar × 油门；PI 只在接近目标时积分（起压时不饱和），加一个
+  压力变化率项（快冲过目标前先开阀）→ 过冲 0.01–0.03 bar；**超速保护**（轴速超过额定 1.15
+  倍就开阀）。
+- **尺寸从发动机来**：
+  - 压气机：额定点（0.88×红线、满增压）放在特性线从喘振到堵塞 80% 处——原厂小涡轮就是这样匹配，
+    要响应，所以顶端跑到堵塞边上。
+  - 涡轮：流量面积解到“阀门关着时，满增压恰好在这台车的满增压转速到来”。
+  - 惯量、管长（L_c = 5 D2）、增压腔（2×排量，估计值）都跟着尺寸走。
+  - `turbo_size` 整体缩放 → 大/小涡轮的差别由物理给出。
+- **每台车**：
+  - 27 台 V/W/水平对置双涡轮按每排一个并联；Veyron 四个并联。
+  - 2JZ（3600/4000）、RX-7 FD（4500/5500）顺序式。
+  - A45、RX-7 FC 加双涡管；488/Pista/A45/S15 滚珠轴承。
+- **唯一校准到测量的常数**：倒流有效面积 C_REV = 0.07×进口面积——使 2 升车 4 L 系统的深喘振
+  周期 75–82 ms（实测 71 ms），Γ≈57%（实测 50%）。
+
+### 10.3 声音（`audio.py` 的 `_turbo_audio`，全部读机器）
+- **音调**（每个涡轮一套，按它自己的轴速）：
+  - BPF（6 主叶片）+ 二倍 BPF（出口 12 片），加轴频 1、2 阶；幅度 ∝ M_u2^2.5（风扇律：功率 ∝ U⁵）。
+  - 只有**正向流**时叶片才维持压力场 → 喘振时音调跟着“断”。
+  - 超音速时加 buzz-saw（12 个轴频阶次、固定的不均匀幅度），亚音速时叶尖间隙窄带。
+- **whoosh**：从 (1,0) 截止频率（管径 1.2× 进口）到 0.8×BPF 的宽带，中低流量最强、∝ M³。
+  带限，不是白噪声。
+- **喘振**：声音用的是增压系统的**孪生体**——同样的方程，被物理的轴速、抽气线和阀门驱动，在音频
+  时钟上细步（~6 kHz）。平静时直接拷贝物理，不花钱。声音来自两处：进口处的体积脉冲（dW/dt 经
+  空滤箱 700 Hz 低通）；失速叶轮的宽带（2×轴频附近）。“stu-tu-tu”的节奏就是喘振周期本身。
+- **泄压阀**：阀喉的射流——压力来自增压腔，Strouhal 音高，Lighthill u⁴。回流阀经管路变暗变软，
+  排大气亮。
+- **涡轮消声**：原来的耳调范围保留，但驱动量改为**涡轮压比**（相对额定）；废气旁通的比例是真实的
+  旁通流量份额。
+- **移除/保留**：
+  - 去掉了不物理的“纯五度”和白噪声“气声”（6+6 叶轮给的是八度）。
+  - 隐藏的 'o' 和弦彩蛋保留。
+  - 电平按事件对齐原来 Leo 认可的混音：WOT 啸叫 0.044（原 0.052，其中有白噪声），振颤 0.126
+    （原 0.122），SSQV 0.209（原 0.199），回流阀低 ~4 dB（回流阀本来就更安静）。
+
+### 10.4 验证
+- **自然吸气/机械增压车**：71 台车追车/车内/赛道边**逐样本相同**；golden 只有两个 rs3（涡轮）
+  用例改变。
+- **全部 60 台涡轮车**：
+  - 都能起压、松油门、数值有限。
+  - 功率峰值不变（中位 0%，最差 −2%）。
+  - 扭矩峰值多数不变。旧的能量平衡表把中段压力建得太低的车扭矩上升了，多数更接近实车：
+    930 370→432 Nm（它的 ECU 上限，实车 412），RX-7 246→278（实车 314），Focus 1.0 162→171
+    （实车 170），MP4/4、SF-25 上升。
+- **尺寸族**（Golf R，阀门关时的稳态）：0.8×（52 mm）3000 rpm 满增压、高转堵塞掉到 0.43 bar；
+  1.0×（65 mm）~4200；1.15×（75 mm）~5800；1.35× 在 2 升上根本到不了。
+- **顺序式**：一号涡轮单独 2950 rpm 满增压、3600 rpm 已到极限（阀门全关）；二号预旋后按止回阀
+  条件并入，过渡掉压 ~0.4 bar，约 500 rpm 后恢复（真实的深度取决于原厂 ECU 标定，这里可能偏深）。
+- **CPU**（48 kHz、256 样本/块，WOT）：单涡轮音频不变（1.26 ms），双涡轮 +0.09 ms，四涡轮
+  +0.3 ms；物理 0.04–0.07 ms/块。
+- test_headless、test_obd 全过。
+
+### 10.5 还没做的
+- **每台车的满增压转速**按原厂扭矩平台（如 EA888 2000 rpm 起、S58 2750 rpm）+ 对应的 ECU 扭矩
+  上限——会动扭矩曲线，需要和规格标定一起做。
+- **可变截面涡轮 VGT**（柴油、EA211 evo）；**两级串联**（Cummins 5.0）；电动/MGU-H 只是
+  简单的功率控制。
+- 顺序式的 ECU 过渡逻辑（真实掉压更小）；双涡管的脉冲模型只是一个效率增益。
+- Swift 移植。
+
 ---
 
 ## 9. 参考资料
@@ -359,6 +477,19 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - 心理声学（粗糙度/尖锐度/运动感）：<https://www.sciencedirect.com/science/article/abs/pii/S0003682X17307624>
 - 轮胎/路面噪声（CNOSSOS-EU 滚动/推进分量、按倍频程和车速）：<https://circabc.europa.eu/sd/a/904e4131-03b3-4f24-8105-4962439ab2a8/CNOSSOS->、ETRMA《Tyre & Road traffic noise》<https://www.etrma.org/wp-content/uploads/2022/01/ETRMA-Tyre-Road-Traffic-Noise_2022.pdf>
 - 车辆气动噪声：偶极子声强 ∝ U⁶、A 柱/后视镜是主要声源：<https://pmc.ncbi.nlm.nih.gov/articles/PMC12937624/>
+- 深喘振一维模拟（四个阶段、亥姆霍兹频率、B 参数）：Dehner, Selamet et al., J. Turbomach. 2016 <https://mae.osu.edu/sites/default/files/2021-11/J96.pdf>
+- 可描述喘振与堵塞的压气机模型（椭圆特性线、Γ≈50%、71 ms 喘振周期）：Leufvén & Eriksson, Control Eng. Practice 2013 <https://www.diva-portal.org/smash/get/diva2:620108/FULLTEXT01.pdf>
+- whoosh 宽带噪声的产生机理（4–13 kHz、截止频率、6+6 叶片 39/49 mm）：Dehner et al., J. Turbomach. 2021 <https://mae.osu.edu/sites/default/files/2021-12/J111.pdf>
+- 压气机 BPF 音调 8–12 kHz @ 80–120 krpm、同步和 BPF 占主导：<https://mae.osu.edu/sites/default/files/2022-05/J113.pdf>
+- 离心压气机的发声机理（叶片音调、buzz-saw、叶尖间隙噪声）：Raitor & Neise, JSV 2008 <https://www.sciencedirect.com/science/article/abs/pii/S0022460X08000850>
+- whoosh 频段（柴油 1.5–3 kHz / 汽油 4–12 kHz）：<https://www.researchgate.net/publication/279157332_Investigation_of_Compressor_Whoosh_Noise_in_Automotive_Turbochargers>
+- 涡轮增压器声学双端口、透射损失随流量和压比增大：Tiikoja et al. <https://www.sae.org/publications/technical-papers/content/2011-24-0221/>
+- 发动机台架上的喘振极限与频率：Galindo et al. <https://www.researchgate.net/publication/229633432_On-Engine_Measurement_of_Turbocharger_Surge_Limit>
+- 振颤的机理（叶片“失去抓力”、涡轮不会停）：GFB <https://gfb.com.au/tech/tech-articles/11-the-truth-about-compressor-surge/>
+- 双涡管 vs 单涡管 A/B（满增压早 400 rpm、+21%）：DSPORT <https://dsportmag.com/the-tech/twin-scroll-vs-single-scroll-turbo-test-the-great-divide/>
+- 2JZ-GTE 顺序式（3600 预旋、4000 并联）：<https://en.wikipedia.org/wiki/Toyota_JZ_engine>；RX-7 FD 顺序式（4500–5500、掉压到 0.6 bar）：<https://www.mazda-turbo.com/mazda-rx7-rotary-sequential-twin-turbo-systems.html>
+- Veyron 四涡轮并联、Chiron 2+2 顺序：<https://carbuzz.com/the-only-quad-turbo-production-cars-in-history/>
+- 叶轮尺寸：GTX3582R Gen II（66/82 mm、130 krpm）<https://www.garrettmotion.com/racing-and-performance/performance-catalog/turbo/gtx3582r-gen-ii/>；GT2860RS（47.2/60.1 mm）<https://turbochargerspecs.blogspot.com/2013/02/garrett-gt28rs-gt2860rs-62-trim-360-hp.html>
 
 ---
 

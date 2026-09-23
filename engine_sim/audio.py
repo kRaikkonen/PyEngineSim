@@ -500,6 +500,10 @@ class PortableRNG:
 
 
 from .engine import P_ATM
+try:                                    # the turbocharger as a machine
+    from . import turbo as turbo_mod
+except Exception:                       # pragma: no cover
+    turbo_mod = None
 
 SAMPLE_RATE = 44100
 BLOCK = 256
@@ -1481,6 +1485,10 @@ class Synthesizer:
         # 'stututu' — defaults from the engine (some cars have no dump valve).
         self.flutter = simulator.engine.bov_flutter
         self.ssqv = False         # HKS SSQV atmospheric dump: loud sharp 'TSSSH'
+        _ts = getattr(simulator, "turbo", None)
+        if _ts is not None:       # the machine's own valve sets the defaults
+            self.flutter = _ts.air.bov_mode == "none"
+            self.ssqv = _ts.air.bov_mode == "atmo"
         self.last_level = 0.0     # RMS of last rendered block (exhaust loudness meter)
         self.last_wave = np.zeros(64)   # decimated waveform for the HUD flow scope
         self.last_combustion = np.zeros(64)  # decimated REAL combustion voice (analyzer)
@@ -3135,6 +3143,16 @@ class Synthesizer:
             # whistly, low-rpm/high-boost goes deep and dull — they no longer sound
             # identical.  Off-boost it barely touches the note at any rpm.
             rpm_frac = min(sim.rpm / max(_eng.redline_rpm, 1.0), 1.0)
+            _tsm = getattr(sim, "turbo", None)
+            if _tsm is not None:
+                # the machine's turbine: its LOADING is its pressure ratio --
+                # the transmission loss grows with mass flow and pressure ratio
+                # (Tiikoja, Abom & Boden) -- the same 0..1 scale the ear-tuned
+                # range below was set on (1.0 = the rated turbine ratio)
+                u0 = _tsm.units[0]
+                pit = u0.p03 / max(_tsm.p04, 1.0)
+                bf = min(max((pit - 1.0) / max(_tsm.pit_rated - 1.0, 0.05),
+                             0.0), 1.0)
             # eased (2026-07): the turbine muffled turbo cars so hard they lost
             # their combustion fizz/grit (r35 etc.).  Less boost pull-down + a
             # higher floor keeps the dry rasp while still darkening on boost.
@@ -3152,6 +3170,12 @@ class Synthesizer:
             # block; zero extra filter state.
             wg = min(max((bf - 0.78) / 0.22, 0.0), 1.0)   # gate opens ~78% -> 100%
             m = 0.28 * wg
+            if _tsm is not None:
+                # the REAL bypass: the share of the exhaust the open gate
+                # passes around the wheel keeps its raw pulse edge
+                share = sum(u.w_wgf for u in _tsm.units) / max(_tsm.w_ex, 1e-6)
+                wg = min(max(share / 0.35, 0.0), 1.0)
+                m = 0.28 * wg
             if m > 1e-3:
                 sig = (1.0 - m) * sig + m * pre_turbine
             # EXTERNAL WASTEGATE (screamer pipe): an atmospheric-vent gate SCREECHES
@@ -4363,6 +4387,198 @@ class Synthesizer:
         setattr(self, phase_attr, (ph0 + inc * frames) % (2.0 * math.pi))
         return sig
 
+    # the turbocharger's sound sources: levels relative to the turbo_vol mix
+    # knob, set so a WOT pull and a lift sit where the ear-approved old layer
+    # sat (the pitch, timing and spectrum are now the machine's)
+    _TB_TONE = 0.160              # blade-pass tone per M_u2^2.5 (fan law: power
+                                  #   ~ U^5)
+    _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
+    _TB_TCN = 0.030               # tip-clearance narrowband
+    _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
+    _TB_THUMP = 0.50              # surge volume pulse (dW/dt at the inlet)
+    _TB_STALL = 0.17              # stalled wheel's broadband
+    _TB_BOV = 4.0                 # blow-off jet per (u/c)^4
+
+    def _turbo_audio(self, frames, rpm, sv):
+        """The turbocharger, heard from the machine (turbo.py).
+
+        Tones at the shaft's real speed per unit; whoosh; the charge-air twin's
+        surge and blow-off.  Sets self._bov_env (the engine's lift duck) from
+        the valve's and the surge's real activity."""
+        sim, eng, sr = self.sim, self.sim.engine, self.sample_rate
+        ts = sim.turbo
+        tv = self.params["turbo_vol"]
+        out = np.zeros(frames, dtype=np.float64)
+        if frames <= 0:
+            return out
+        # the app's Flutter / SSQV switches ARE the valve now
+        ts.air.bov_mode = ("none" if self.flutter
+                           else ("atmo" if self.ssqv else "recirc"))
+        tw = getattr(self, "_tw", None)
+        if tw is None or tw.ts is not ts:
+            tw = self._tw = turbo_mod.Twin(ts)
+            self._tw_om = [u.omega for u in ts.units]
+            self._tw_w = [u.w_c for u in ts.units]
+            self._tw_p = ts.air.p_p
+            self._tw_ph = [0.0 for _ in ts.units]
+            self._tw_zi = {}
+            self._tw_env = 0.0
+            rs = np.random.RandomState(7)
+            self._tw_buzz = [(rs.uniform(0.3, 1.0, 12), rs.uniform(0, 6.283, 12))
+                             for _ in ts.units]
+        # the hidden BOV test key sets the envelope: stage a lift in the twin
+        if getattr(self, "_bov_env", 0.0) >= 0.999 and self._tw_env < 0.5:
+            tw.air.p_p = P_ATM + eng.boost_bar * 1.0e5
+        n_sub = max(frames // 8, 1)
+        rec = tw.run(frames / sr, n_sub)
+        xs = np.concatenate(([-1.0], (np.arange(n_sub) + 1.0) * (frames / n_sub) - 1.0))
+        xi = np.arange(frames, dtype=np.float64)
+        p_arr = np.interp(xi, xs, np.concatenate(([self._tw_p], [r[1] for r in rec])))
+        wb = np.array([r[2] for r in rec])
+        self._tw_p = float(rec[-1][1])
+        a01 = math.sqrt(1.4 * 287.0 * 298.15)
+        nyq = 0.45 * sr
+        noise = None
+        env_t = 0.0
+        busy = tw.busy > 0
+        for j, u in enumerate(ts.units):
+            if u.table is None:
+                continue
+            ln = u.table.ln
+            wj = np.interp(xi, xs, np.concatenate(([self._tw_w[j]],
+                                                   [r[0][j] for r in rec])))
+            self._tw_w[j] = float(wj[-1])
+            om0, om1 = self._tw_om[j], u.omega
+            self._tw_om[j] = om1
+            om = om0 + (om1 - om0) * (xi + 1.0) / frames
+            ph = self._tw_ph[j] + np.cumsum(om) / sr
+            self._tw_ph[j] = float(ph[-1] % (2.0 * math.pi))
+            c = u.comp
+            u2 = om * (0.5 * c.d2)
+            m_u = u2 / a01
+            rho = ln["rho"]
+            phi = wj / np.maximum(rho * u2 * c.d2 * c.d2, 1e-6)
+            phi_z = turbo_mod.PHI_ZSL
+            # the blades hold their pressure field only with forward flow:
+            # the tones chop with every surge reversal
+            fwd = np.clip(phi / phi_z, 0.0, 1.0) ** 2
+            f_s = float(om1) / (2.0 * math.pi)
+            z = c.z_main
+
+            def fade(f):                 # no partial past the Nyquist guard
+                return min(max((nyq - f) / (0.05 * sr), 0.0), 1.0)
+            a = tv * self._TB_TONE * m_u ** 2.5 * fwd
+            tone = (fade(z * f_s) * np.sin(z * ph)
+                    + 0.35 * fade(2 * z * f_s) * np.sin(2 * z * ph)
+                    + 0.5 * fade(f_s) * np.sin(ph)
+                    + 0.2 * fade(2 * f_s) * np.sin(2 * ph))
+            if self.o_chord:             # easter egg: the V7 on the 1st order
+                for hm, ha in _TURBO_V7:
+                    tone = tone + 0.6 * ha * fade(hm * 4 * f_s) * np.sin(hm * 4 * ph)
+            out += a * tone
+            # buzz-saw: the inducer tip's relative Mach past 1 -> shocks
+            # locked to the rotor, every shaft order, uneven blade to blade
+            c_ax = wj / (rho * c.a_ann)
+            m_rel = np.sqrt(c_ax * c_ax + (om * 0.5 * c.d1s) ** 2) / a01
+            over = np.clip(m_rel - 1.0, 0.0, 0.5)
+            if float(over.max()) > 1e-3:
+                amps, phs = self._tw_buzz[j]
+                bz = np.zeros(frames)
+                for k in range(12):
+                    if (k + 1) * f_s < nyq:
+                        bz += amps[k] * np.sin((k + 1) * ph + phs[k])
+                out += tv * self._TB_BUZZ * over * fwd * bz
+            if noise is None:
+                noise = self._rng.standard_normal(frames)
+            # tip-clearance noise (subsonic): a narrow band near half the BPF
+            sub_ = np.clip((1.05 - m_rel) / 0.15, 0.0, 1.0)
+            f_t = min(0.5 * z * f_s, nyq)
+            if f_t > 200.0:
+                bT, aT = _bandpass(2.0 ** (round(24.0 * math.log2(f_t)) / 24.0), 4.0, sr)
+                key = ("tcn", j)
+                nb, self._tw_zi[key] = lfilter(bT, aT, noise,
+                                               zi=self._tw_zi.get(key, np.zeros(2)))
+                out += tv * self._TB_TCN * m_u ** 2 * fwd * sub_ * nb
+            # whoosh: broadband from the inlet duct's (1,0) cut-on (the duct
+            # ~1.2 x the inducer) to ~0.8 x BPF, worst at low-to-mid flow
+            f_lo = 1.8412 * a01 / (math.pi * 1.2 * c.d1s)
+            f_hi = min(0.8 * z * f_s, nyq)
+            if f_hi > 1.2 * f_lo:
+                fc = math.sqrt(f_lo * f_hi)
+                q = fc / (f_hi - f_lo)
+                bW, aW = _bandpass(2.0 ** (round(12.0 * math.log2(fc)) / 12.0),
+                                   max(q, 0.5), sr)
+                key = ("wh", j)
+                nw, self._tw_zi[key] = lfilter(bW, aW, noise,
+                                               zi=self._tw_zi.get(key, np.zeros(2)))
+                g = np.exp(-((phi - 0.060) / 0.025) ** 2) * (phi > 0.0)
+                out += tv * self._TB_WHOOSH * m_u ** 3 * g * nw
+            # SURGE: the reversals themselves
+            if busy:
+                dw = np.diff(wj, prepend=wj[0]) * sr          # kg/s^2
+                w_ref = max(ln["w_z"], 1e-3)
+                thump = dw * (0.005 / w_ref)                  # ~1 over a 5 ms flip
+                bL, aL = self._bw(2, 700.0)                   # the air box
+                key = ("th", j)
+                thump, self._tw_zi[key] = lfilter(bL, aL, thump,
+                                                  zi=self._tw_zi.get(key, np.zeros(2)))
+                out += tv * self._TB_THUMP * np.clip(thump, -3.0, 3.0)
+                stall = np.clip((phi_z - phi) / phi_z, 0.0, 1.5)
+                if float(stall.max()) > 1e-3:
+                    fs2 = min(max(2.0 * f_s, 300.0), nyq)
+                    bS, aS = _bandpass(2.0 ** (round(12.0 * math.log2(fs2)) / 12.0),
+                                       1.2, sr)
+                    key = ("st", j)
+                    ns, self._tw_zi[key] = lfilter(bS, aS, noise,
+                                                   zi=self._tw_zi.get(key, np.zeros(2)))
+                    out += tv * self._TB_STALL * m_u ** 2 * stall * ns
+                    env_t = max(env_t, float(stall.mean()))
+        # BLOW-OFF: the jet through the valve throat at the plenum's pressure
+        wbm = float(wb.mean()) if len(wb) else 0.0
+        if wbm > 1e-4:
+            pr = np.maximum(p_arr / ts.p01, 1.0)
+            u = np.minimum(np.sqrt(np.maximum(5.0 * (1.0 - pr ** (-2.0 / 7.0)), 0.0)), 1.0)
+            w_ref = max(ts.w_air_rated, 0.02) * 0.5
+            openf = min(wbm / w_ref, 1.0) ** 0.5
+            d_v = math.sqrt(ts.air.bov_cda / 0.6 / (math.pi / 4.0))
+            f_pk = min(max(0.2 * float(u.mean()) * 343.0 / d_v, 120.0), nyq)
+            if noise is None:
+                noise = self._rng.standard_normal(frames)
+            bj, aj = _bandpass(2.0 ** (round(12.0 * math.log2(f_pk)) / 12.0), 1.1, sr)
+            jet, self._tw_zi["bov"] = lfilter(bj, aj, noise,
+                                              zi=self._tw_zi.get("bov", np.zeros(2)))
+            amp = tv * self._TB_BOV * u ** 4 * openf
+            if ts.air.bov_mode == "atmo":
+                out += 1.25 * amp * jet
+            else:                        # back into the intake: the pipe run
+                bR, aR = self._bw(1, 1500.0)
+                jet, self._tw_zi["bovr"] = lfilter(bR, aR, jet,
+                                                   zi=self._tw_zi.get("bovr", np.zeros(1)))
+                out += 0.8 * amp * jet
+            env_t = max(env_t, openf * float(u.mean()))
+            if self.o_chord:             # easter egg: the blow-off as B-dim
+                n = np.arange(frames)
+                chord = np.zeros(frames)
+                inc = 2.0 * math.pi / sr
+                bp0 = getattr(self, "_bdim_phase", 0.0)
+                for fz in _BDIM_HZ:
+                    chord += np.sin(bp0 * (fz / _BDIM_HZ[0]) + inc * fz * n)
+                self._bdim_phase = bp0 + inc * _BDIM_HZ[0] * frames
+                out += (tv * 0.7) * openf * chord
+        # twincharge: the series blower sings low, handing over to the turbo
+        if getattr(eng, "induction_subtype", "") == "twincharge":
+            ratio = eng.blower_ratio if eng.blower_ratio > 0 else 9.0
+            fb = (rpm / 60.0) * ratio
+            low = max(0.0, 1.0 - min(rpm / max(eng.redline_rpm, 1.0), 1.0) / 0.7)
+            if 20.0 < fb < sr * 0.45 and low > 0.01:
+                out += (sv * (0.3 + 0.5 * low) * 0.5) * self._whine(
+                    fb, frames, [(1, 1.0), (2, 0.5), (3, 0.28)],
+                    phase_attr="_whine_phase")
+        # the lift duck follows the valve's and the surge's real activity
+        self._tw_env += (min(env_t * 1.6, 1.0) - self._tw_env) * min(frames / (sr * 0.05), 1.0)
+        self._bov_env = self._tw_env
+        return out
+
     def _induction_audio(self, frames):
         """Supercharger whine / turbo whistle + BOV, and straight-cut gearbox
         whine — the forced-induction and transmission character on top of the
@@ -4403,7 +4619,10 @@ class Synthesizer:
             if 20.0 < f < sr * 0.45:
                 out += (sv * bfrac * 0.5) * self._whine(f, frames, harm)
 
-        if tv > 1e-3 and eng.induction == "turbo":
+        if tv > 1e-3 and eng.induction == "turbo" \
+                and getattr(sim, "turbo", None) is not None:
+            out += self._turbo_audio(frames, rpm, sv)
+        elif tv > 1e-3 and eng.induction == "turbo":
             # perfect fifth (root + 5th); the hidden 'o' mode adds a root bass
             # layer + a dominant-7th (V7) hung on top.
             voicing = _TURBO_V7 if self.o_chord else _PERFECT_FIFTH

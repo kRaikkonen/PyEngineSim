@@ -1483,7 +1483,7 @@ class App:
                 dtr.clutch = 1.0 - tm.clutch        # Forza: 1 = pressed in
                 if eng.induction != "na":
                     # Forza broadcasts boost in PSI (negative = vacuum)
-                    self.sim.boost = max(0.0, tm.boost_psi) * 0.06895   # -> bar
+                    self.sim.set_external_boost(tm.boost_psi * 0.06895, dt)
                 self._disp_torque = max(tm.torque, 0.0)
             else:
                 self.sim._update_boost(dt)          # FH6/unknown: model the spool

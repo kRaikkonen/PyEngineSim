@@ -43,6 +43,11 @@ try:                                    # white-box MAP model (orifice balance)
 except Exception:                       # pragma: no cover
     _HAVE_MAP_MODEL = False
 
+try:                                    # the turbocharger as a machine
+    from . import turbo as turbo_mod
+except Exception:                       # pragma: no cover
+    turbo_mod = None
+
 GAMMA = 1.30          # ratio of specific heats for burned gas (~1.3)
 # combustion temperature-rise anchor (K): the heat-release q/cv term, ONE constant
 # calibrated so a typical NA idle sits ~630 K exhaust and full load ~1230 K (the
@@ -185,6 +190,21 @@ class Simulator:
                     self.surrogate.register("boost", self._boost_lut)
                 except Exception:
                     self._boost_lut = None
+        # THE TURBOCHARGER AS A MACHINE: compressor map, turbine, shaft inertia,
+        # wastegate, blow-off valve and the charge-air plenum, sized from this
+        # engine (turbo.py).  Its plenum pressure IS the boost; its steady state
+        # replaces the energy-balance table above (built on first use).
+        self.turbo = None
+        self._frac_cache = {}
+        if engine.induction == "turbo" and engine.boost_bar > 0.0 \
+                and turbo_mod is not None and _HAVE_MAP_MODEL:
+            try:
+                self.turbo = turbo_mod.build(engine, self._turbo_flow,
+                                             self._turbo_t03,
+                                             bov_mode=self.bov_mode_default())
+                self._boost_lut = None
+            except Exception:
+                self.turbo = None
 
         # Size the clutch so it can actually HOLD this engine.  A real clutch is
         # rated ABOVE peak torque; if the (boosted) engine makes more torque than
@@ -199,6 +219,77 @@ class Simulator:
                 self.drivetrain.clutch_capacity, peak * 1.25)
         except Exception:
             pass
+
+    # ------------------------------------------------------------ turbo
+    def bov_mode_default(self) -> str:
+        """The car's blow-off hardware: its own, or none if it flutters."""
+        eng = self.engine
+        b = getattr(eng, "bov", "") or ""
+        if b in ("recirc", "atmo", "none"):
+            return b
+        return "none" if getattr(eng, "bov_flutter", False) else "recirc"
+
+    def _turbo_flow(self, rpm, thr, p_p):
+        """The air the engine draws from the turbo plenum at p_p (Pa): the
+        compressor-fed throttle (MAP = its WOT-relative orifice fraction x the
+        plenum), the cylinders' VE at that MAP, the charge temperature.
+        Returns (kg/s, MAP Pa, T_manifold K)."""
+        eng = self.engine
+        key = (int(rpm) // 25, int(thr * 400.0))
+        fr = self._frac_cache.get(key)
+        if fr is None:
+            r = max(rpm, 1.0)
+            f = map_model.solve_map_fraction(thr, r, eng.redline_rpm, 0.85,
+                                             self._map_idle_area)
+            fw = map_model.solve_map_fraction(1.0, r, eng.redline_rpm, 0.85,
+                                              self._map_idle_area)
+            fr = f / max(fw, 0.25)
+            if len(self._frac_cache) > 8192:
+                self._frac_cache.clear()
+            self._frac_cache[key] = fr
+        map_pa = fr * p_p
+        mapf = map_pa / P_ATM
+        ve = (self._ve_lut.eval2(rpm, mapf) if self._ve_lut is not None
+              else 0.85)
+        t_man = (charge_temp(eng, max(mapf, 1.0), self.ic_soak)
+                 if _HAVE_SURROGATE else 300.0)
+        w = (map_pa / (287.0 * t_man) * eng.total_displacement
+             * max(rpm, 0.0) / 120.0 * max(ve, 0.0))
+        return w, map_pa, t_man
+
+    def _turbo_t03(self, rpm, load):
+        """Turbine inlet temperature: the cycle's exhaust at the valve."""
+        return self.exhaust_gas_temp(rpm=rpm, load=load)
+
+    def _boost_table(self):
+        """Steady boost (bar) over rpm x pedal: the energy-balance table, or --
+        for a turbo car -- the machine's own steady state, built on first use
+        (it costs a few tenths of a second, and only the dyno asks)."""
+        if self._boost_lut is None and self.turbo is not None \
+                and _HAVE_SURROGATE:
+            eng = self.engine
+            rpm_grid = np.linspace(300.0, eng.redline_rpm + 600.0, 16)
+            thr_grid = np.linspace(0.0, 1.0, 5)
+            vals = np.empty((len(rpm_grid), len(thr_grid)))
+            for i, r in enumerate(rpm_grid):
+                for j, t in enumerate(thr_grid):
+                    b, _ = self.turbo.steady(float(r), float(t), self._turbo_flow,
+                                             self._turbo_t03, wg_closed=False,
+                                             w_iters=24)
+                    vals[i, j] = max(b, 0.0)
+            self._boost_lut = LUT([("rpm", rpm_grid), ("thr", thr_grid)], vals)
+            if self.surrogate is not None:
+                self.surrogate.register("boost", self._boost_lut)
+        return self._boost_lut
+
+    def set_external_boost(self, bar: float, dt: float):
+        """Car / telemetry mode: the REAL boost is known.  Set it, and keep the
+        turbo machine (shaft speeds, plenum) on it so the synthesizer's turbo
+        sounds follow your car."""
+        self.boost = max(float(bar), 0.0)
+        if self.turbo is not None:
+            self.turbo.follow(bar, self.rpm, self._effective_throttle(), dt,
+                              self._turbo_flow)
 
     def _peak_wot_torque(self) -> float:
         """Approximate peak MEAN crank torque at wide-open throttle and full
@@ -296,8 +387,9 @@ class Simulator:
             thr = min(max(float(throttle), 0.0), 1.0)
             boost = 0.0
             if eng.induction != "na":
-                boost = (float(self._boost_lut.eval2(r, thr))
-                         if self._boost_lut is not None else eng.boost_bar * thr)
+                lut = self._boost_table()
+                boost = (float(lut.eval2(r, thr))
+                         if lut is not None else eng.boost_bar * thr)
             if _HAVE_MAP_MODEL:
                 fw = map_model.solve_map_fraction(
                     thr, r, eng.redline_rpm, 0.85, self._map_idle_area)
@@ -462,7 +554,7 @@ class Simulator:
             # turbo on song even off-throttle (the reason a modern F1 turbo has no
             # lag).  Gated by SoC for the MGU-H (an empty battery can't motor it).
             e_spun = eng.electric_turbo or (eng.mgu_h and self.ers_soc > 0.05)
-            if e_spun:
+            if e_spun and self.turbo is None:
                 target = eng.boost_bar * thr
                 tau = 0.05
                 rate = min(dt / tau, 1.0)
@@ -472,6 +564,25 @@ class Simulator:
             # Free-revving in neutral makes little boost (so the car doesn't just
             # surge to the limiter the instant you blip it); in gear it spools fully.
             load_gate = 1.0 if self.drivetrain.gear > 0 else 0.3
+            if self.turbo is not None:
+                # THE MACHINE: exhaust enthalpy drives the turbine, the shaft
+                # carries its inertia, the compressor's speed line meets the
+                # engine's draw in the plenum, the wastegate holds the target,
+                # the blow-off valve (or surge) takes the lift.  An MGU-H /
+                # e-turbo motors the shaft toward the target (and harvests
+                # above it -- it IS a wastegate that makes electricity).
+                mguh = 0.0
+                if e_spun:
+                    p_max = 1000.0 * (self._mgu_h_kw
+                                      or 0.4 * max(eng.hybrid_kw, 50.0))
+                    tgt = P_ATM + eng.boost_bar * 1.0e5 * thr
+                    err = (tgt - self.turbo.air.p_p) / 0.3e5
+                    mguh = p_max * min(max(err, -0.5), 1.0)
+                self.turbo.step(dt, self.rpm, thr, self._turbo_flow,
+                                self._turbo_t03, fuel_cut=self._fuel_cut,
+                                mguh_w=mguh)
+                self.boost = max(self.turbo.boost, 0.0)
+                return
             if self._boost_lut is not None:
                 # steady target from the offline turbine/compressor energy
                 # balance (bmep_model.build_boost_table): onset shape follows
@@ -975,6 +1086,8 @@ class Simulator:
             return self.rpm * 2.6                       # lobe pack, belt-driven
         if ind == "centrifugal":
             return 60000.0 * rf                         # impeller step-up pulley
+        if getattr(self, "turbo", None) is not None:
+            return max(u.rpm for u in self.turbo.units)   # the real shaft
         # turbo / e-turbo: tie to boost so the needle lags & spools realistically
         frac = min(max(self.boost / max(eng.boost_bar, 0.05), 0.0), 1.1)
         running = min(1.0, self.rpm / max(eng.idle_rpm * 0.5, 1.0))
