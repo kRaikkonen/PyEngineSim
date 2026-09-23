@@ -872,6 +872,11 @@ _TK_WALL_M = 15.0                  # far-side barrier, this far beyond the line
 _TK_WALL_R = 0.7                   # concrete, but only ~1 m of it faces the car
 _TK_RC_M = 100.0                   # direct = diffuse here, for a car in the
                                    #   middle of the scatterers (r << R_s)
+_TK_JET_DB = 15.0                  # depth of the hot jet's zone of silence
+                                   #   on its axis, high frequencies (heated
+                                   #   jets: the axial region sits well under
+                                   #   the off-axis lobe; checked against Leo's
+                                   #   Aventador pass, s.8.7 of the plan)
 _TK_RS_M = 50.0                    # the scatterers: grandstand, pit wall, marshal
                                    #   post, trees within ~50 m of the post
 _TK_RT60 = 1.5                     # s: grandstands, pit buildings, tree lines
@@ -4085,7 +4090,9 @@ class Synthesizer:
             src_then = self._tk_omni_dl.process(omni, tau1 * sr)
             g_field = (L / _TK_RC_M) * _TK_RS_M / (r1 + _TK_RS_M) * cv1
             field = self._tk_field.process(src_then * g_field)
-            sig = near + wall + field * (P["reverb"] / 0.2)
+            _m = getattr(self, "_tk_mute", ())
+            sig = near + (0.0 if "wall" in _m else wall) \
+                + (0.0 if "field" in _m else field) * (P["reverb"] / 0.2)
             # the auto-level below measures THIS -- the car as it was when the
             # arriving sound left it -- not the mic, so it levels rpm and car
             # like any other view and leaves 1/r, the air and the track alone
@@ -4737,7 +4744,7 @@ class Synthesizer:
         since = np.mod(a - ev[k], 720.0)
         return w[k - 1] + (w[k] - w[k - 1]) * np.minimum(since / 12.0, 1.0)
 
-    def _tk_beam(self, sig, cos_t, a_mouth, key):
+    def _tk_beam(self, sig, cos_t, a_mouth, key, jet=None):
         """How an OPENING radiates depends on which way it points.
 
         A pipe end or an intake mouth is omnidirectional while it is small
@@ -4756,6 +4763,10 @@ class Synthesizer:
 
         ``key`` names the opening: each keeps its own filter and its own last
         gain, which the next block ramps from.
+
+        ``jet`` = (t_z, depth dB): the zone of silence the opening's own hot
+        jet refracts round its axis (see _tk_jet).  The pattern is
+        re-normalised with it, so the zone's energy reappears off-axis.
         """
         sr = self.sample_rate
         fc = min(343.0 / (2.0 * math.pi * max(a_mouth, 0.005)), sr * 0.45)
@@ -4763,6 +4774,31 @@ class Synthesizer:
         A, B = 1.0 - 0.5 * b, 0.5 * b
         norm = 1.0 / math.sqrt(A * A + B * B / 3.0)
         d_new = norm * (A + B * cos_t)
+        if jet is not None and jet[0] > 1e-3 and jet[1] > 0.0:
+            tz, dep = jet
+            w_lobe = math.radians(12.0)
+
+            def zone(th):
+                return 10.0 ** (-dep * np.clip(1.0 - th / tz, 0.0, 1.0) ** 2
+                                / 20.0)
+
+            def lobe(th):
+                return np.exp(-((th - tz) / w_lobe) ** 2)
+            # the lobe takes back exactly the power the zone lost: solve
+            # <(pipe * zone * (1 + G lobe))^2> = <pipe^2> over the sphere
+            th_s = np.linspace(0.0, math.pi, 181)
+            wgt = np.sin(th_s) / np.sum(np.sin(th_s))
+            pz = (A + B * np.cos(th_s)) * zone(th_s)
+            lb = lobe(th_s)
+            p0 = float(np.sum((A + B * np.cos(th_s)) ** 2 * wgt))
+            qa = float(np.sum((pz * lb) ** 2 * wgt))
+            qb = 2.0 * float(np.sum(pz * pz * lb * wgt))
+            qc = float(np.sum(pz * pz * wgt)) - p0
+            G = (-qb + math.sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))) \
+                / (2.0 * max(qa, 1e-12))
+            th = math.acos(min(max(cos_t, -1.0), 1.0))
+            d_new = norm * (A + B * cos_t) * float(zone(th)) \
+                * (1.0 + G * float(lobe(th)))
         if not hasattr(self, "_tk_gain"):
             self._tk_gain, self._tk_zi = {}, {}
         d_old = self._tk_gain.get(key, d_new)
@@ -4792,11 +4828,71 @@ class Synthesizer:
         L, hm = 12.0, 1.2
         race = self.straight_cut or eng.exhaust_openness > 0.85
         hs = 0.55 if race else 0.33
-        a_tip = eng.exhaust_radius_m * max(getattr(eng, "tip_scale", 1.0), 0.5)
+        a_tip = self._exhaust_outlet_radius()
         r1 = math.sqrt(x * x + L * L + (hm - hs) ** 2)
         # pipe axis points BACKWARD (-x); the mic is at (0, L, hm) from a car at
         # (x, 0, hs), so cos(theta) = x / r1: positive once the car is past.
-        return self._tk_beam(tail, x / r1, a_tip, "tail")
+        # ...and the sound leaves through the pipe's hot JET, which refracts
+        # its top end out of a cone round that axis (_tk_jet)
+        return self._tk_beam(tail, x / r1, a_tip, "tail", jet=self._tk_jet())
+
+    def _exhaust_outlet_radius(self):
+        """The outlet the exhaust jet leaves through: the preset tip, or --
+        if that could not pass the engine's flow -- the radius that passes
+        the peak flow at ~120 m/s (road outlets: ~100-150 m/s), at the tip
+        temperature flat out.  Constant per car (cached)."""
+        eng = self.sim.engine
+        a_tip = eng.exhaust_radius_m * max(getattr(eng, "tip_scale", 1.0), 0.5)
+        cached = getattr(self, "_outlet_a", None)
+        if cached is not None:
+            return cached
+        try:
+            t_valve = max(self.sim.exhaust_gas_temp(rpm=eng.redline_rpm,
+                                                    load=1.0), _TK_T_K)
+        except Exception:
+            t_valve = 1100.0
+        rho_in = P_ATM * (1.0 + max(eng.boost_bar, 0.0)) / (287.0 * _TK_T_K)
+        mdot = (rho_in * eng.total_displacement * eng.redline_rpm / 120.0
+                * eng.ve_max * (1.0 + 1.0 / 14.7)
+                / max(eng.exhaust_channels, 1))
+        q = mdot / (P_ATM / (287.0 * 0.9 * t_valve))   # the tip ~0.9 of the valve
+        self._outlet_a = max(a_tip, math.sqrt(q / (math.pi * 120.0)))
+        return self._outlet_a
+
+    def _tk_jet(self):
+        """(t_z, depth dB) of the exhaust jet's zone of relative silence.
+
+        Snell at the jet's edge: cos t_z = c_air / c_jet = sqrt(T_air / T_tip).
+        T_tip: the cycle's exhaust temperature at the valve, cooled along the
+        pipes -- the gas gives heat through the wall (U ~ 50 W/m^2 K: forced
+        convection inside, the car's airflow outside) over the pipes' and the
+        box's surface, T_tip = T_air + (T_valve - T_air) exp(-U A / mdot cp).
+        Flat out ~1100 K (t_z ~ 60 deg); at idle the trickle cools to near
+        ambient and the zone closes.  Its depth follows the jet's speed (a
+        slow plume mixes before it can bend anything), full from ~60 m/s."""
+        sim = self.sim
+        eng = sim.engine
+        try:
+            map_f = sim._manifold_pressure() / P_ATM
+            ve = sim._volumetric_efficiency(map_f)
+        except Exception:
+            return None
+        t_air = _TK_T_K
+        t_valve = max(sim.exhaust_gas_temp(), t_air)
+        rho = P_ATM * map_f / (287.0 * t_air)             # the charge drawn in
+        mdot = (rho * eng.total_displacement * max(sim.rpm, 0.0) / 120.0 * ve
+                * (1.0 + 1.0 / 14.7) / max(eng.exhaust_channels, 1))
+        if mdot < 1e-4:
+            return None
+        r = max(eng.exhaust_radius_m, 0.01)
+        area = (2.0 * math.pi * r * max(eng.exhaust_total_m, 0.3)
+                + 6.0 * max(eng.muffler_volume_m3, 0.0) ** (2.0 / 3.0))
+        t_tip = t_air + (t_valve - t_air) * math.exp(-50.0 * area
+                                                     / (mdot * 1150.0))
+        tz = math.acos(min(math.sqrt(t_air / t_tip), 1.0))
+        a_tip = self._exhaust_outlet_radius()
+        u_jet = mdot / (P_ATM / (287.0 * t_tip) * math.pi * a_tip * a_tip)
+        return tz, _TK_JET_DB * min(u_jet / 60.0, 1.0)
 
     def _intake_mouth_radius(self):
         """The intake mouth, sized to pass peak airflow at ~35 m/s:
