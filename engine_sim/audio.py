@@ -929,6 +929,7 @@ class _TrackSide:
 # tarmac (the ground bounce), a barrier across the track, and the diffuse field
 # of the whole place.  The place is a design choice, like the 12 m post; every
 # effect of it is physics.
+VALVE_HOLD_S = 5.0                 # the exhaust flap's hold on a lift (s)
 _TK_T_K, _TK_RH = 293.15, 60.0     # a 20 C, 60 % RH race day
 _TK_WALL_M = 15.0                  # far-side barrier, this far beyond the line
 _TK_WALL_R = 0.7                   # concrete, but only ~1 m of it faces the car
@@ -936,6 +937,17 @@ _TK_WALL_H = 1.0                   #   ...its height (m)
 _TK_NEAR_M = 5.0                   # a facade behind the mic, this far behind it
 _TK_NEAR_R = 0.6                   #   pressure reflection (openings, people)
 _TK_NEAR_H = 4.0                   #   ...its height (m)
+_TK_CAR_LEN = 4.4                  # the body ahead of its tailpipes (m)
+_TK_HALF_W = 0.95                  # the body's half width at the tail (m)
+_TK_PIPE_Y = 0.45                  # the near tailpipe, off the centreline (m)
+_TK_SHIELD_MAX_DB = 12.0           # most the body can take off the pipes: the
+                                   #   gap under the floor and over the roof
+                                   #   leak round it
+_TK_WIND_Z = 0.6                   # the aero sources' mean height (m): mirrors
+                                   #   and A-pillars ~1 m, wheel wakes ~0.3
+_TK_WIND_REAR_DB = 5.0             # aero dipoles radiate this much more to the
+                                   #   rear than the front (vortex strikes on the
+                                   #   panels; the wake)
 _TK_TYRE_DB = -12.0                # tyre/road noise at 270 km/h, re the auto-
 _TK_WIND_DB = -16.0                # level's target; wind the same.  Together
                                    #   ~-22 dB of the whole at the pass, full
@@ -1008,6 +1020,37 @@ class _AirFIR:
                 y = y0 + np.linspace(0.0, 1.0, len(x)) * (y - y0)
             self._h = h
             self._rq = rq
+        self._hist = xe[-(self.M - 1):]
+        return y
+
+
+class _MagFIR:
+    """A linear-phase FIR re-designed every block from a magnitude curve
+    ``mag(f)`` (f an array, Hz) keyed by ``key`` -- the _AirFIR machinery for
+    any slowly moving response: same 128 taps and 64-sample latency, designs
+    cross-faded across the block so a moving key never zippers."""
+
+    M = 128
+
+    def __init__(self, sr):
+        self._f = np.fft.rfftfreq(self.M, 1.0 / sr)
+        self._win = np.hanning(self.M + 1)[:self.M]
+        self._hist = np.zeros(self.M - 1)
+        self._h = None
+        self._key = None
+
+    def process(self, x, key, mag):
+        xe = np.concatenate((self._hist, x))
+        if self._h is not None and key == self._key:
+            y = np.convolve(xe, self._h, mode="valid")
+        else:
+            h = np.roll(np.fft.irfft(mag(self._f), self.M), self.M // 2) * self._win
+            y = np.convolve(xe, h, mode="valid")
+            if self._h is not None:
+                y0 = np.convolve(xe, self._h, mode="valid")
+                y = y0 + np.linspace(0.0, 1.0, len(x)) * (y - y0)
+            self._h = h
+            self._key = key
         self._hist = xe[-(self.M - 1):]
         return y
 
@@ -2013,7 +2056,15 @@ class Synthesizer:
         # and many stay OPEN on decel (the burble path).  0.30 throttle weight
         # slammed a whole brightness step shut on every lift (Leo's "是不是
         # 某个阀门关闭" — yes, this one, partially).
-        drive = min(rpm_frac + 0.15 * min(max(self.sim.throttle, 0.0), 1.0), 1.0)
+        # ...and the pedal term LATCHES: it opens with the pedal, and on a
+        # lift decays over VALVE_HOLD_S instead of shutting a step at once --
+        # the sport-mode flap that stays open on the overrun (Leo, twice:
+        # "阀门关闭之后...声音就变小了")
+        thr_ = min(max(self.sim.throttle, 0.0), 1.0)
+        dt_ = getattr(self, "_blk_dt", BLOCK / float(self.sample_rate))
+        self._thr_latch = max(thr_, getattr(self, "_thr_latch", thr_)
+                              * math.exp(-dt_ / VALVE_HOLD_S))
+        drive = min(rpm_frac + 0.15 * self._thr_latch, 1.0)
         valve = min(max((drive - 0.28) / 0.45, 0.0), 1.0)
         # NONLINEAR opening curve (was linear): a real flap/gas-path brightens
         # slowly off idle then rushes open up top — and loudness perception is
@@ -2515,6 +2566,7 @@ class Synthesizer:
         else:
             self._cold = min(1.0, self._cold + dt_blk / 40.0)
 
+        self._blk_dt = dt_blk
         D1, D2, D3, g1, g2, g3, lp_a, f_helm = self._resonance_params()
         # audit stash: the Swift port reproduces one block in isolation, and
         # these are the only values it cannot recompute from the sim state
@@ -4189,7 +4241,12 @@ class Synthesizer:
             # mids to a first notch near 1.6 kHz at the pass, and back up as the
             # car leaves.  That moving notch is the "whoosh" on a TV pass.
             v = abs(float(getattr(sim.drivetrain, "v", 0.0)))
-            L, hm = 12.0, 1.2                     # mic: 12 m off, 1.2 m up
+            # mic: L off the line (the pad's near/far: 12 m by default), 1.2 m up
+            L_t = self._tk_L_target()
+            L0 = getattr(self, "_tk_L", L_t)
+            step = 5.0 * frames / float(self.sample_rate)
+            self._tk_L = L = L0 + min(max(L_t - L0, -step), step)
+            hm = 1.2
             sr = self.sample_rate
             # RETARDED time: the sound arriving now left the car when it was
             # further back, and c*tau is the distance from THERE -- the moving
@@ -4342,7 +4399,14 @@ class Synthesizer:
             # QUIETER — the old fixed x6 ceiling let the AGC pump the residual
             # noise floors (fizz/ticks/injector band) up to fill the hole,
             # which was Leo's lift-off "white noise" amplifier.
-            gmax = 2.2 + 3.8 * getattr(self, "_comb_load", 1.0)
+            # ...but the lift must not CUT it either: the ceiling holds the
+            # gain the engine had while it fired, so the overrun keeps its own
+            # level under it (a sealed cockpit runs at ~4.5x flat out; a fixed
+            # 2.2 took another 6 dB off every lift)
+            cl_ = min(max(getattr(self, "_comb_load", 1.0), 0.0), 1.0)
+            if cl_ > 0.5:
+                self._gain_fired = self._gain
+            gmax = max(2.2 + 3.8 * cl_, min(getattr(self, "_gain_fired", 2.2), 6.0))
             gain = min(0.22 / (self._level + 1e-6), gmax)
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
             self._gain += (gain - self._gain) * rate
@@ -4351,6 +4415,8 @@ class Synthesizer:
             sig *= 3.5
         # --- spatial distance: far away = darker + quieter (the pad's Y axis) -
         d = 1.0 - self.params["spatial_y"]      # 0 near .. 1 far
+        if self.pov == "trackside":
+            d = 0.0                             # (the post's distance is physical)
         if _HAVE_SCIPY and d > 0.02:
             sr = self.sample_rate
             cut = min(max(14000.0 - 11500.0 * d, 600.0), sr * 0.45)
@@ -5407,9 +5473,10 @@ class Synthesizer:
         ``key`` names the opening: each keeps its own filter and its own last
         gain, which the next block ramps from.
 
-        ``jet`` = (t_z, depth dB): the zone of silence the opening's own hot
-        jet refracts round its axis (see _tk_jet).  The pattern is
-        re-normalised with it, so the zone's energy reappears off-axis.
+        ``jet`` = (t_z, depth dB, f_jet): the zone of silence the opening's
+        own hot jet refracts round its axis (see _tk_jet), above f_jet only
+        -- where the jet is acoustically large.  The pattern is re-normalised
+        with it, so the zone's energy reappears off-axis.
         """
         sr = self.sample_rate
         fc = min(343.0 / (2.0 * math.pi * max(a_mouth, 0.005)), sr * 0.45)
@@ -5417,8 +5484,11 @@ class Synthesizer:
         A, B = 1.0 - 0.5 * b, 0.5 * b
         norm = 1.0 / math.sqrt(A * A + B * B / 3.0)
         d_new = norm * (A + B * cos_t)
+        z_new = 1.0                   # the zone's own factor, above f_jet
+        f_jet = None
         if jet is not None and jet[0] > 1e-3 and jet[1] > 0.0:
-            tz, dep = jet
+            tz, dep = jet[0], jet[1]
+            f_jet = min(jet[2], sr * 0.45) if len(jet) > 2 else None
             w_lobe = math.radians(12.0)
 
             def zone(th):
@@ -5446,12 +5516,16 @@ class Synthesizer:
                     self._tk_lobe_g = {}
                 self._tk_lobe_g[gkey] = G
             th = math.acos(min(max(cos_t, -1.0), 1.0))
-            d_new = norm * (A + B * cos_t) * float(zone(th)) \
-                * (1.0 + G * float(lobe(th)))
+            z_new = float(zone(th)) * (1.0 + G * float(lobe(th)))
+            if f_jet is None:
+                d_new = d_new * z_new
+                z_new = 1.0
         if not hasattr(self, "_tk_gain"):
             self._tk_gain, self._tk_zi = {}, {}
         d_old = self._tk_gain.get(key, d_new)
         self._tk_gain[key] = d_new
+        z_old = self._tk_gain.get(key + "_z", z_new)
+        self._tk_gain[key + "_z"] = z_new
         if not _HAVE_SCIPY:
             return sig
         bL, aL = self._bw(1, fc)
@@ -5463,6 +5537,16 @@ class Synthesizer:
         # ramped across the block: the angle swings fast at the pass, and a
         # step per block would zipper
         g = np.linspace(d_old, d_new, len(sig))
+        if f_jet is not None and f_jet > fc:
+            # the zone of silence acts above f_jet only: split the beamed band
+            bJ, aJ = self._bw(1, 2.0 ** (round(12.0 * math.log2(f_jet)) / 12.0))
+            zj = self._tk_zi.get(key + "_j")
+            if zj is None:
+                zj = np.zeros(1)
+            mid, self._tk_zi[key + "_j"] = lfilter(bJ, aJ, high, zi=zj)
+            top = high - mid
+            gz = np.linspace(z_old, z_new, len(sig))
+            return low + g * (mid + gz * top)
         return low + g * high
 
     def _tk_directivity(self, tail, x):
@@ -5474,7 +5558,7 @@ class Synthesizer:
         and the rasp arrives all at once.
         """
         eng = self.sim.engine
-        L, hm = 12.0, 1.2
+        L, hm = getattr(self, "_tk_L", 12.0), 1.2
         race = self.straight_cut or eng.exhaust_openness > 0.85
         hs = 0.55 if race else 0.33
         a_tip = self._exhaust_outlet_radius()
@@ -5487,7 +5571,56 @@ class Synthesizer:
         if n_ % 8 == 0 or getattr(self, "_tk_jet_v", None) is None:
             self._tk_jet_v = self._tk_jet()         # slow: load, temperature
         self._tk_jet_n = n_ + 1
-        return self._tk_beam(tail, x / r1, a_tip, "tail", jet=self._tk_jet_v)
+        out = self._tk_beam(tail, x / r1, a_tip, "tail", jet=self._tk_jet_v)
+        return self._tk_body_shield(out, x)
+
+    def _tk_body_shield(self, sig, x_p):
+        """The car's body between its tailpipes and a mic still ahead of them.
+
+        ``x_p``: the pipes' exit along the track relative to the mic (< 0:
+        the tail has not reached the mic).  The line from the near pipe
+        (_TK_PIPE_Y off the centreline) to the mic, L to the side, then runs
+        through the body: the sound gets there diffracted round the body's
+        rear side edge (_TK_HALF_W), a detour delta.  Maekawa's barrier
+        attenuation A = 10 lg(3 + 20 N), N = 2 delta f / c, faded in from 0 at
+        the shadow boundary (A -> 10 lg(1 + 20N/3) + 4.8 (1 - exp(-N/0.3)):
+        within 0.2 dB of Maekawa for N >= 1) and capped at
+        _TK_SHIELD_MAX_DB.  Behind the tail the line is clear: nothing."""
+        L = getattr(self, "_tk_L", 12.0)
+        open_c = getattr(self.sim.engine, "open_cockpit", False)
+        w = 0.45 if open_c else _TK_HALF_W
+        yp = 0.2 if open_c else _TK_PIPE_Y
+        delta = 0.0
+        if x_p < 0.0:
+            # where the pipe -> mic line crosses the body's side
+            xc = x_p + (-x_p) * (w - yp) / (L - yp)
+            if xc < x_p + _TK_CAR_LEN:
+                delta = ((w - yp) + math.hypot(-x_p, L - w)
+                         - math.hypot(-x_p, L - yp))
+        delta = max(delta, 0.0)
+        if getattr(self, "_tk_shield", None) is None:
+            self._tk_shield = _MagFIR(self.sample_rate)
+        # 2 mm buckets: inside one the curve moves < 0.3 dB
+        key = round(delta * 500.0)
+        if key == 0 and self._tk_shield._key in (None, 0):
+            self._tk_shield._key = 0
+            self._tk_shield._hist = np.concatenate(
+                (self._tk_shield._hist, sig))[-(_MagFIR.M - 1):]
+            # no shadow: a pure 64-sample delay, as the filter's latency
+            d = np.concatenate((getattr(self, "_tk_sh_d", np.zeros(_MagFIR.M // 2)), sig))
+            self._tk_sh_d = d[-(_MagFIR.M // 2):]
+            return d[:len(sig)]
+        dq = key / 500.0
+
+        def mag(f):
+            N = 2.0 * dq * f / 343.0
+            a = 10.0 * np.log10(1.0 + 20.0 * N / 3.0) \
+                + 4.8 * (1.0 - np.exp(-N / 0.3))
+            return 10.0 ** (-np.minimum(a, _TK_SHIELD_MAX_DB) / 20.0)
+        y = self._tk_shield.process(sig, key, mag)
+        self._tk_sh_d = np.concatenate((getattr(self, "_tk_sh_d", np.zeros(_MagFIR.M // 2)),
+                                        sig))[-(_MagFIR.M // 2):]
+        return y
 
     def _exhaust_outlet_radius(self):
         """The outlet the exhaust jet leaves through: the preset tip, or --
@@ -5545,7 +5678,10 @@ class Synthesizer:
         tz = math.acos(min(math.sqrt(t_air / t_tip), 1.0))
         a_tip = self._exhaust_outlet_radius()
         u_jet = mdot / (P_ATM / (287.0 * t_tip) * math.pi * a_tip * a_tip)
-        return tz, _TK_JET_DB * min(u_jet / 60.0, 1.0)
+        # ...and it bends only what it is not compact to: from ka_jet = 1 (the
+        # first-order split rolls the zone in, full by ka_jet ~ pi)
+        f_jet = math.sqrt(1.4 * 287.0 * t_tip) / (2.0 * math.pi * a_tip)
+        return tz, _TK_JET_DB * min(u_jet / 60.0, 1.0), f_jet
 
     def _intake_mouth_radius(self):
         """The intake mouth, sized to pass peak airflow at ~35 m/s:
@@ -5555,6 +5691,15 @@ class Synthesizer:
         q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
              * (1.0 + max(eng.boost_bar, 0.0)))
         return math.sqrt(q / (math.pi * 35.0))
+
+    def _tk_L_target(self):
+        """The post's distance off the racing line (m) from the spatial pad's
+        near/far axis: 12 m at its default (0.85), 4 m at the barrier (1),
+        40 m up the grandstand (0), geometric in between."""
+        y = min(max(float(self.params.get("spatial_y", 0.85)), 0.0), 1.0)
+        if y <= 0.85:
+            return 12.0 * (40.0 / 12.0) ** ((0.85 - y) / 0.85)
+        return 12.0 * (4.0 / 12.0) ** ((y - 0.85) / 0.15)
 
     def _tk_sources(self):
         """Where each radiator sits on the car, (dx, height) in metres, dx
@@ -5650,12 +5795,15 @@ class Synthesizer:
 
         Tyres: a band round the 1 kHz octave (tread impact and air pumping),
         ~32 dB per decade of speed (tyre/road noise grows as the 3rd-4th power
-        of speed).  Wind: a mid band (A-pillars, mirrors, wheel arches), a
-        dipole -- the 6th power, 60 dB per decade -- so it overtakes the tyres
-        only at the very top.  At 270 km/h they sit _TK_TYRE_DB and
-        _TK_WIND_DB under the engine at full load (the auto-level's target);
-        under 150 km/h they are gone.  They leave from the axles: each with
-        its own retarded time, 1/r, convective amplification, and the air."""
+        of speed), from the axles -- monopoles on the road.  Wind: the car's
+        aerodynamic noise (A-pillars, mirrors, wheel wakes), a dipole -- the
+        6th power, 60 dB per decade -- so it overtakes the tyres only at the
+        very top; from mid-body height (_TK_WIND_Z), a dipole's convective
+        amplification (1 - M_r)^-3, ~_TK_WIND_REAR_DB more to the rear, and
+        its tarmac image (the moving comb: the jet fly-over's whoosh).  At
+        270 km/h they sit _TK_TYRE_DB and _TK_WIND_DB under the engine at full
+        load (the auto-level's target); under 150 km/h they are gone.  Each
+        path its own retarded time, 1/r, and the air."""
         sr = self.sample_rate
         v, ((tf, xf), (tr, xr)) = self._tk_tire_geo
         if v < 5.0:
@@ -5663,7 +5811,9 @@ class Synthesizer:
         if getattr(self, "_tk_roll", None) is None:
             self._tk_roll = dict(taps=_MovingTaps(int(3.0 * sr), 2),
                                  air=_AirFIR(sr), zt=np.zeros(2),
-                                 zw1=np.zeros(1), zw2=np.zeros(1))
+                                 zw1=np.zeros(1), zw2=np.zeros(1),
+                                 wtaps=_MovingTaps(int(3.0 * sr), 2),
+                                 wair=_AirFIR(sr), zg=np.zeros(1))
         st = self._tk_roll
         u = v / 75.0
         a_t = 0.22 * 10.0 ** (_TK_TYRE_DB / 20.0) * u ** 1.6
@@ -5680,15 +5830,41 @@ class Synthesizer:
             bW2, aW2 = self._bw(1, 2500.0)
             wind, st["zw2"] = lfilter(bW2, aW2, wind, zi=st["zw2"])
             # unit rms for the band-passes (Q 0.8: ~0.55; 150-2500 Hz: ~0.37)
-            src = a_t * tyre / 0.55 + a_w * wind / 0.37
+            src = a_t * tyre / 0.55
+            wsrc = a_w * wind / 0.37
         else:
-            src = (a_t + a_w) * n1 * 0.5
+            src = a_t * n1 * 0.5
+            wsrc = a_w * n1 * 0.5
         M = min(v, 0.8 * 343.0) / 343.0
         df, dr = st["taps"].process(src, (tf * sr, tr * sr))
         rf, rr = 343.0 * tf, 343.0 * tr
-        out = 0.5 * (df * (12.0 / rf) * (1.0 + M * xf / rf) ** -2
-                     + dr * (12.0 / rr) * (1.0 + M * xr / rr) ** -2)
-        return st["air"].process(out, 0.5 * (rf + rr))
+        L_ = getattr(self, "_tk_L", 12.0)
+        out = 0.5 * (df * (L_ / rf) * (1.0 + M * xf / rf) ** -2
+                     + dr * (L_ / rr) * (1.0 + M * xr / rr) ** -2)
+        out = st["air"].process(out, 0.5 * (rf + rr))
+        # the wind: mid-body, direct and off the tarmac
+        L, hm, zw = getattr(self, "_tk_L", 12.0), 1.2, _TK_WIND_Z
+        t_d, x_d = self._track.retarded(v, L * L + (hm - zw) ** 2)
+        t_g, x_g = self._track.retarded(v, L * L + (hm + zw) ** 2)
+        wd, wg = st["wtaps"].process(wsrc, (t_d * sr, t_g * sr))
+        r_d, r_g = 343.0 * t_d, 343.0 * t_g
+
+        def pattern(x, r):
+            # cos of the angle from the car's travel to the mic when the sound
+            # left: -1 behind the car (x > 0: the car has passed) .. +1 ahead
+            c = -x / max(r, 1e-3)
+            return 10.0 ** (-_TK_WIND_REAR_DB / 20.0 * 0.5 * (1.0 + c))
+        g_d = (L / r_d) * (1.0 + M * x_d / r_d) ** -3 * pattern(x_d, r_d)
+        g_g = 0.9 * (L / r_g) * (1.0 + M * x_g / r_g) ** -3 * pattern(x_g, r_g)
+        if _HAVE_SCIPY:
+            # the bounce's coherence, as the engine's (the sources spread over
+            # the body decorrelate it with range)
+            fcoh = min(max(9000.0 * L / r_g, 1500.0), sr * 0.45)
+            fcoh = 2.0 ** (round(12.0 * math.log2(fcoh)) / 12.0)
+            bG, aG = self._bw(1, fcoh)
+            wg, st["zg"] = lfilter(bG, aG, wg, zi=st["zg"])
+        wout = st["wair"].process(wd * g_d + wg * g_g, 0.5 * (r_d + r_g))
+        return out + wout
 
     def _tk_intake(self, mouth, x):
         """The intake mouth beams too -- the OTHER way.
@@ -5711,7 +5887,7 @@ class Synthesizer:
         comes at you, the rasp goes away from you.
         """
         eng = self.sim.engine
-        L, hm = 12.0, 1.2
+        L, hm = getattr(self, "_tk_L", 12.0), 1.2
         race = self.straight_cut or eng.exhaust_openness > 0.85
         hi = 0.90 if race else 0.60          # roll-hoop airbox / grille snorkel
         a_in = self._intake_mouth_radius()

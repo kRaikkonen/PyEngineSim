@@ -586,6 +586,54 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - 手机：烘焙每车 PC +~0.5 s → SD845 约 +2–3 s；可做磁盘缓存（发动机参数 + 源码哈希作键）。
 - 逐车满增压转速（真正的 spool 修正）、上限车的增压值；Swift 没有移植这些。
 
+## 13. 松油门、飞驰的车身遮挡、观众距离（2026-09-24，Leo）
+
+### 13.1 "加速有一段使不上劲" = Slip 开着
+- 真实 App 循环（无窗口、按住油门、真实时的音频线程）里所有车都正常加速，自动/手动、追车/赛道边都一样；
+  原因是 Slip（轮胎滑移）开着。Slip 模型对所有车都只给 80% 的重量在驱动轮上（不分前驱/后驱/四驱），
+  700 hp 的 Aventador 三挡 120 km/h 还在打滑、转速顶在断油。以后可以按驱动形式分。
+- 顺带查出（未应用，存在 `_claude_scratch/turbo_matching_wip.diff`）：A3 实际增压 1.3–1.9 bar（目标
+  1.0，废气门面积固定 0.7×涡轮不够）；大多数涡轮车满增压在 ~0.6×红线（真车 1500–2500 rpm）；压气机喘振线
+  形状（Leufvén & Eriksson 2013 图 7–8：W_ZSL ∝ N^2.02、Π_ZSL − 1 ∝ N^2.29 → 喘振线 Π − 1 ∝ W^1.13，
+  近似直线；我们的常数流量系数给出 ∝ W^2.2，低速太陡）。
+
+### 13.2 驾驶舱松油门声音变小（"阀门关闭之后发动机的声音就变小了，不要这样"）
+- 两件事叠加：
+  - 自动电平在不点火时把增益上限压到固定 2.2（防止它把倒拖的底噪抽上来）；驾驶舱密封后全油门增益是
+    ~4.5，所以每次松油门额外 −6 dB。改成：上限**保持点火时的增益**——不抽也不压。
+  - 可变排气阀门 = rpm + 0.15×油门，松油门就关一截。改成油门项**锁存**：跟着油门开，松油门后
+    `VALVE_HOLD_S` = 5 s 慢慢关（运动模式常开的阀门）。
+- 驾驶舱松油门（~5000 rpm）：A3 −25…−30 → −13…−21 dB；Golf VR6 −14 → −6…−8 dB；Aventador −9 → −5…−8 dB。
+  追车视角几乎不变（它全油门增益本来就低）。golden：只有两个带松油门的用例变了，所有全油门拉升逐样本不变。
+
+### 13.3 飞驰：排气从车屁股出来（"会面之前排气管背对观众，声音先逆向传播再到耳朵；会面之后直接对着观众"）
+- **车身遮挡**：车还在观众前面时，排气管到观众的直线穿过车身，声音只能绕过车尾侧棱衍射过来。
+  Maekawa 绕射 A = 10 lg(3 + 20N)，N = 2δf/c，δ 是绕过车尾侧棱多走的路（车离得远时 ~0.5 m：
+  300 Hz −13 dB、1 kHz −18 dB），在阴影边界从 0 平滑淡入，上限 `_TK_SHIELD_MAX_DB` = 12 dB
+  （车底缝和车顶漏过去的）；车尾过了观众就没有遮挡。每块重新设计的线性相位 FIR（`_MagFIR`）。
+- **热射流静音锥**只作用在射流“声学上不小”的频段：ka_jet ≥ 1（一阶分频，~π 时完全）——
+  4.8 cm 的出口在 1100 K 约 2.2 kHz 起；以下是管口自己的指向性（ka = 1 约 1.1 kHz）直接对着身后的观众。
+- 对 Leo 的真实录音（手机，按通过时刻对齐，300 Hz 以上电平）：真实“会面前一刻变小（−5.5 dB）、会面后最大”；
+  旧模型是会面前最大；新模型会面前 −4.7、会面后 0 dB——形状对上了。手机的自动增益把整段压平了，所以
+  绝对电平不可信；远离段真实更暗（质心 784 Hz vs 我们 ~1250 Hz）——试过把出口放到 8 cm 也只到 1188 Hz，
+  不再追手机录音。
+- **风噪**：车身高度（0.6 m）的偶极子，对流放大 (1 − M_r)^-3，向后多 5 dB，加地面镜像（扫频梳状 =
+  喷气式飞过的“嗖”）。物理上它在全油门时比大排量发动机低 ~15–20 dB，所以只在收油时听得到。
+- **观众距离 = 近/远 pad**：默认 12 m，贴护栏 4 m（通过 ±0.05 s，多普勒和地面梳状最剧烈），
+  看台 40 m；5 m/s 平滑。赛道边不再叠加通用的“远 = 调暗”低通——距离是物理的（1/r、空气、墙、场地混响）。
+- 已知：换柱（车走到两根观众柱中点时听者换到下一根）会有一个电平跳变，旧版也有。
+
+### 13.4 远处为什么变闷
+- 几何扩散所有频率一样；变闷的是**空气吸收**（ISO 9613-1，~f²）。模型用 20 °C/60%（`_TK_T_K`,
+  `_TK_RH`）：1 kHz 4.8、2 kHz 9.3、4 kHz 25.6、8 kHz 88.9 dB/km → 300 m 处 8 kHz −26.7 dB、
+  4 kHz −7.7 dB、1 kHz −1.4 dB（公式对过 ISO 9613-2 表 2 的 20 °C/70%：1 kHz 5.0、4 kHz 22.9、
+  8 kHz 76.6）。模型里每条传播路径都有。
+- 还没有的：赛道和观众之间的**草地**（软地面效应，几百 Hz 的干涉凹陷 + 多吃中高频）。
+
+### 13.5 参考
+- Maekawa 屏障绕射（1968）；Leufvén & Eriksson 2013（见 §10 参考）；Assetto Corsa 用 FMOD、录音采样，
+  对每个车外声源算多普勒和距离曲线（见参考资料）。
+
 ---
 
 ## 9. 参考资料
@@ -630,6 +678,9 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - 舱内 <200 Hz 噪声 60% 以上是结构传声：<https://www.sciencedirect.com/science/article/pii/S2090447924003320>；舱内第一纵向模态 57–69 Hz：<https://www.sciencedirect.com/topics/engineering/interior-noise>；跑车全油门舱内 77–82 dBA（Car and Driver）：<https://rennlist.com/forums/991-gt3-gt3rs-gt2rs-and-911r/1212903-decibels-levels-sports-super-cars.html>
 - 叶轮尺寸：GTX3582R Gen II（66/82 mm、130 krpm）<https://www.garrettmotion.com/racing-and-performance/performance-catalog/turbo/gtx3582r-gen-ii/>；GT2860RS（47.2/60.1 mm）<https://turbochargerspecs.blogspot.com/2013/02/garrett-gt28rs-gt2860rs-62-trim-360-hp.html>
 - 孔板声阻 ∝ 偏流马赫数 / Cd²、准稳态模型适用到斯特劳哈尔数 ~0.1–0.2：Quasi-steady acoustic response of wall perforations subject to a grazing-bias flow combination, JSV 2013 <https://www.sciencedirect.com/science/article/abs/pii/S0022460X12009182>；孔板声阻抗理论（NASA 1976）<https://ntrs.nasa.gov/api/citations/19760014339/downloads/19760014339.pdf>
+- 压气机谱数据库（零斜率线 W_ZSL ∝ N^2.02、Π_ZSL − 1 ∝ N^2.29）：Leufvén & Eriksson, Control Eng. Practice 2013 <https://liu.diva-portal.org/smash/get/diva2:620108/FULLTEXT01>；轻度喘振在系统亥姆霍兹频率、深度喘振低于它：<https://mae.osu.edu/sites/default/files/2021-11/J82.pdf>；ported shroud 扩稳约 10%：<https://mae.osu.edu/sites/default/files/2021-12/J99.pdf>
+- Assetto Corsa 音频（FMOD、录音循环、每个车外声源的多普勒与距离曲线）：<https://www.scribd.com/document/418191320/AC-Audio-Pipeline-1-9>
+- 车辆气动噪声指向性（向后比向前高 ~5 dB）：<https://pmc.ncbi.nlm.nih.gov/articles/PMC12937624/>；随车速变化的指向性：<https://pubs.aip.org/asa/jasa/article/157/4/2735/3343690/Speed-dependent-directivity-patterns-of-road>
 
 ---
 
