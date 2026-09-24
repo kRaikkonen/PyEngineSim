@@ -228,6 +228,8 @@ class Engine:
                                      #   for turbo_full_rpm
     charge_air_l: float = 0.0        # the charge pipes + intercooler (litres):
                                      #   the surge's plenum; 0 -> 2 x displacement
+    pod_pipe_m: float = 0.0          # a pod filter's pipe, throttle / compressor
+                                     #   to the cone (m); 0 -> 0.25 m
     intake_filter: str = "airbox"    # the inlet the engine (or its compressor)
                                      #   breathes through: "airbox" (OEM box +
                                      #   duct: a Helmholtz low-pass, quiet) |

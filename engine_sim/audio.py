@@ -4616,12 +4616,21 @@ class Synthesizer:
                                   #   by ear (Leo 2026-09-25: the other turbo
                                   #   cars "still a bit small")
     _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
-    _TB_TCN = 0.030               # tip-clearance narrowband
+    _TB_TCN = 1.0                 # tip-clearance noise, per the blade-pass
+                                  #   line's power: at subsonic tip speeds it
+                                  #   DOMINATES a radial compressor's noise
+                                  #   (Raitor & Neise 2008) -- equal power is
+                                  #   the conservative reading (was 0.030 by
+                                  #   ear, 30-42 dB under the line, so a small
+                                  #   turbo, whose blade-pass is above hearing,
+                                  #   had no whistle at all)
+    _TB_TCN_Q = 20.0              # ...narrow-band: the real 2JZ's lift blob is
+                                  #   ~300 Hz wide at 6.4 kHz (s.17)
     _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
     # SURGE (plan doc s.14): every part in ONE unit, the flow W / W_r (W_r
     # the wheel's zero-slope flow at its rated speed); only _TB_SURGE is set
     # by ear-free anchoring, the rest is physics or cited
-    _TB_SURGE = 32.0              # the surge's level, the one anchor: a
+    _TB_SURGE = 25.0              # the surge's level, the one anchor: a
                                   #   flutter at equal distance ~5 dB under the
                                   #   WOT exhaust (s.14: the stalled wheel's
                                   #   dipole ~110 dB at 1 m, the thump's flip
@@ -4642,8 +4651,11 @@ class Synthesizer:
                                   #   impingement 0.1-0.3: an estimate)
     _TB_ST = 0.2                  # jet-noise peak Strouhal number
     _TB_HISS_Q = 0.7              # ...a hump ~1.4 octaves wide
-    _TB_SW_CF = 0.1               # the stalled wheel: fluctuating force
-                                  #   coefficient of a stalled blade (0.1-0.3)
+    _TB_SW_CF = 0.3               # the stalled wheel: fluctuating force
+                                  #   coefficient of a stalled blade (0.1-0.3):
+                                  #   the top -- a real 2JZ's bursts are all
+                                  #   highs, next to which the flow's own thump
+                                  #   (exact, the monopole) was the drum (s.17)
     _TB_SW_ST = 0.1               # ...separated-flow noise Strouhal on the chord
                                   #   (stall noise peaks below the attached
                                   #   boundary layer's ~0.2)
@@ -4786,15 +4798,20 @@ class Synthesizer:
                 out += tv * self._TB_BUZZ * over * fwd * bz
             if noise is None:
                 noise = self._rng.standard_normal(frames)
-            # tip-clearance noise (subsonic): a narrow band near half the BPF
+            # tip-clearance noise (subsonic): the leakage over the blade tips
+            # goes unstable (rotating instability) and sings a narrow band at
+            # about half the blade-pass, rising with speed -- the whistle of a
+            # small turbo, whose blade-pass is above hearing; it takes the
+            # blade-pass line's measured anchor (pod / airbox), the flow gate
+            # chops it with every surge reversal (a whistle in each 'tu'), and
+            # it hands over to the blade tones as the inducer goes supersonic
             sub_ = np.clip((1.05 - m_rel) / 0.15, 0.0, 1.0)
             f_t = min(0.5 * z * f_s, nyq)
             if f_t > 200.0:
-                bT, aT = _bandpass(2.0 ** (round(24.0 * math.log2(f_t)) / 24.0), 4.0, sr)
-                key = ("tcn", j)
-                nb, self._tw_zi[key] = lfilter(bT, aT, noise,
-                                               zi=self._tw_zi.get(key, np.zeros(2)))
-                out += tv * self._TB_TCN * m_u ** 2 * fwd * sub_ * nb
+                nb = self._tw_band(noise, f_t, self._TB_TCN_Q, ("tcn", j))
+                a_bp = (self._TB_TONE_POD if getattr(self, "pod_filter", False)
+                        else self._TB_TONE) * m_u ** 2.5 * (1.0 / math.sqrt(2.0))
+                out += tv * self._TB_TCN * a_bp * fwd * sub_ * nb
             # whoosh: broadband from the inlet duct's (1,0) cut-on (the duct
             # ~1.2 x the inducer) to ~0.8 x BPF, worst at low-to-mid flow
             f_lo = 1.8412 * a01 / (math.pi * 1.2 * c.d1s)
@@ -4922,18 +4939,21 @@ class Synthesizer:
                                         / (f_sw / self._TB_SW_Q))
                         nr = self._tw_band(noise, f10, self._TB_DUCT_Q, ("duct", j))
                         surge += tv * self._TB_SURGE * g_r * amp_w * nr
-                # (4) ROTATING STALL at every breakdown and recovery: a narrow
-                # band at ~0.7 x the shaft frequency (Zhang et al., the low-
-                # flow tone; Dehner & Selamet 2019 measured diffuser cells at
-                # 0.19 / 0.54), riding an 8 ms envelope on |dW/dt| -- so each
-                # cycle is a 'stu' with quiet between.
-                dw = np.diff(wj, prepend=wj[0]) * sr          # kg/s^2
+                # (4) ROTATING STALL: a narrow band at ~0.7 x the shaft
+                # frequency (Zhang et al., the low-flow tone; Dehner & Selamet
+                # 2019 measured diffuser cells at 0.19 / 0.54) -- cells that
+                # turn with the wheel while the flow still goes FORWARD, below
+                # the surge line.  Deep surge is a global breakdown, the whole
+                # annulus reverses at once and no cells survive it: the band
+                # follows the time spent in forward stall (0 < phi < phi_z),
+                # so a flutter only brushes it on each recovery (it had been
+                # riding every flip -- the 'tum' in the drum, s.17).
                 key = ("tr", j)
                 bE, aE = self._bw(1, 20.0)
+                in_st = ((phi > 0.0) & (phi < phi_z)).astype(np.float64)
                 trans, self._tw_zi[key] = lfilter(
-                    bE, aE, np.abs(dw) * (0.005 / w_r),
-                    zi=self._tw_zi.get(key, np.zeros(1)))
-                trans = np.clip(trans, 0.0, 2.0)
+                    bE, aE, in_st, zi=self._tw_zi.get(key, np.zeros(1)))
+                trans = np.clip(trans, 0.0, 1.0)
                 f_rs = self._TB_RS_F * f_s
                 if float(trans.max()) > 1e-3 and 100.0 < f_rs < nyq:
                     ns = self._tw_band(noise, f_rs, self._TB_RS_Q, ("st", j))
@@ -5551,7 +5571,10 @@ class Synthesizer:
             if wg is None:
                 wg = self._inl_zi[key + "_wg"] = ExhaustWaveguide(
                     int(0.02 * sr) + 8)
-            L_ = _POD_DUCT_M + 0.61 * a_m
+            # the build's own pipe when it states one (a JDM big single's cone
+            # sits on the compressor cover); its quarter-wave is the 'boom'
+            # every surge reversal strikes (25 cm: ~300 Hz)
+            L_ = (float(getattr(eng, "pod_pipe_m", 0.0) or 0.0) or _POD_DUCT_M) + 0.61 * a_m
             # the cone end reflects inverted, the wheel/throttle end not; a
             # smooth pipe and an open mesh lose ~12 % a round trip (|R| of an
             # open end ~0.9 at ka << 1) -- and the end lets go of the top: an

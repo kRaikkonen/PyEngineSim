@@ -462,6 +462,10 @@ def toyota_2jz_supra_single() -> Engine:
         # 2.5-inch pipe (~5 L) -- 10 L; identified from the recording's
         # flutter (10-13 Hz: the deep-surge period ~ plenum / compressor flow)
         charge_air_l=10.0,
+        # the cone on a 10 cm coupler right on the compressor cover (the
+        # classic big-single look): its pipe rings a short ~620 Hz 'tok', not
+        # the 25 cm pipe's ~300 Hz boom -- the recording has no boom
+        pod_pipe_m=0.10,
         bov_flutter=True, has_cat=False,
         # a tubular top-mount 6-into-1: runners within ~6 cm of each other
         # (the auto class gives a road car a cast log -- 0.43 m of spread --
