@@ -4468,13 +4468,6 @@ class Synthesizer:
                 self._gain_fired = self._gain
             gmax = max(2.2 + 3.8 * cl_, min(getattr(self, "_gain_fired", 2.2), 6.0))
             gain = min(0.22 / (self._level + 1e-6), gmax)
-            # ...and never under a flutter or a blow-off: the event dies by
-            # itself (the shaft runs down, the plenum empties) and a level
-            # rising under it pumped the fading 'tu-tu' back to full, up to
-            # +17 dB in chase (Leo: "flutter doesn't stop after the pressure
-            # is released").  The physical voice already holds on a lift.
-            if gain > self._gain and getattr(self, "_bov_env", 0.0) > 0.02:
-                gain = self._gain
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
@@ -4630,7 +4623,7 @@ class Synthesizer:
     # SURGE (plan doc s.14): every part in ONE unit, the flow W / W_r (W_r
     # the wheel's zero-slope flow at its rated speed); only _TB_SURGE is set
     # by ear-free anchoring, the rest is physics or cited
-    _TB_SURGE = 25.0              # the surge's level, the one anchor: a
+    _TB_SURGE = 60.0              # the surge's level, the one anchor: a
                                   #   flutter at equal distance ~5 dB under the
                                   #   WOT exhaust (s.14: the stalled wheel's
                                   #   dipole ~110 dB at 1 m, the thump's flip
@@ -4651,11 +4644,11 @@ class Synthesizer:
                                   #   impingement 0.1-0.3: an estimate)
     _TB_ST = 0.2                  # jet-noise peak Strouhal number
     _TB_HISS_Q = 0.7              # ...a hump ~1.4 octaves wide
-    _TB_SW_CF = 0.3               # the stalled wheel: fluctuating force
-                                  #   coefficient of a stalled blade (0.1-0.3):
-                                  #   the top -- a real 2JZ's bursts are all
-                                  #   highs, next to which the flow's own thump
-                                  #   (exact, the monopole) was the drum (s.17)
+    _TB_SW_CF = 0.1               # the stalled wheel: fluctuating force
+                                  #   coefficient of a stalled blade (0.1-0.3);
+                                  #   its noise lands at 2-4 kHz, where a real
+                                  #   2JZ's bursts are modest (their brightness
+                                  #   is the whistle's band, s.17)
     _TB_SW_ST = 0.1               # ...separated-flow noise Strouhal on the chord
                                   #   (stall noise peaks below the attached
                                   #   boundary layer's ~0.2)
@@ -4811,7 +4804,15 @@ class Synthesizer:
                 nb = self._tw_band(noise, f_t, self._TB_TCN_Q, ("tcn", j))
                 a_bp = (self._TB_TONE_POD if getattr(self, "pod_filter", False)
                         else self._TB_TONE) * m_u ** 2.5 * (1.0 / math.sqrt(2.0))
-                out += tv * self._TB_TCN * a_bp * fwd * sub_ * nb
+                # ...a rotating instability of a steady near-stall forward
+                # flow: in deep surge the flow is either reversed or rushing
+                # back in far right of the surge line, and it never forms (as
+                # the rotating-stall cells) -- a flutter's whistle is the
+                # blade-pass of the slowing shaft (a real 2JZ's lift: a band
+                # at ~0.85 x the whistle's pitch, nothing at half of it)
+                sg0 = self._tw_gate[j]
+                sg = sg0 + (min(tw.busy / 8.0, 1.0) - sg0) * (xi + 1.0) / frames
+                out += tv * self._TB_TCN * a_bp * fwd * sub_ * (1.0 - sg) * nb
             # whoosh: broadband from the inlet duct's (1,0) cut-on (the duct
             # ~1.2 x the inducer) to ~0.8 x BPF, worst at low-to-mid flow
             f_lo = 1.8412 * a01 / (math.pi * 1.2 * c.d1s)
@@ -4930,7 +4931,17 @@ class Synthesizer:
                     # f10).  The duct is the compressor's inlet bore, ~1.2 x
                     # the inducer (as the whoosh's cut-on above): a big wheel
                     # rings a deeper 'chu', a small one a higher 'tsi'.
-                    if f10 < nyq:
+                    # ...a ring needs a DUCT to ring in: Pai's was a long straight
+                    # one; a cone on a coupler about as long as it is wide (on
+                    # the compressor cover) has none -- and a real 2JZ single
+                    # shows no ring (s.17).  Full from two diameters of pipe.
+                    d_duct = 1.2 * c.d1s
+                    if getattr(self, "pod_filter", False):
+                        l_pipe = float(getattr(eng, "pod_pipe_m", 0.0) or 0.0) or _POD_DUCT_M
+                        g_duct = min(max((l_pipe - d_duct) / d_duct, 0.0), 1.0)
+                    else:
+                        g_duct = 1.0
+                    if f10 < nyq and g_duct > 0.0:
                         h2 = 1.0 / (1.0 + self._TB_SW_Q ** 2
                                     * (f10 / f_sw - f_sw / f10) ** 2)
                         s2 = abs(1.0 - k_pw / (1.0 + 1.0j)) ** 2
@@ -4938,7 +4949,7 @@ class Synthesizer:
                                         * (f10 / self._TB_DUCT_Q)
                                         / (f_sw / self._TB_SW_Q))
                         nr = self._tw_band(noise, f10, self._TB_DUCT_Q, ("duct", j))
-                        surge += tv * self._TB_SURGE * g_r * amp_w * nr
+                        surge += tv * self._TB_SURGE * g_duct * g_r * amp_w * nr
                 # (4) ROTATING STALL: a narrow band at ~0.7 x the shaft
                 # frequency (Zhang et al., the low-flow tone; Dehner & Selamet
                 # 2019 measured diffuser cells at 0.19 / 0.54) -- cells that
@@ -5013,6 +5024,20 @@ class Synthesizer:
         # the lift duck follows the valve's and the surge's real activity
         self._tw_env += (min(env_t * 1.6, 1.0) - self._tw_env) * min(frames / (sr * 0.05), 1.0)
         self._bov_env = self._tw_env
+        # On a lift the AGC lifts the ENGINE back up (Leo: the lift must not
+        # go quiet) -- but the turbo's events are the machine running down,
+        # and a gain rising under them pumped a fading whistle and flutter
+        # back to full.  So this layer keeps the gain the engine had while it
+        # fired (the previous block's), letting go of it over ~3 s.
+        g = float(getattr(self, "_gain", 1.0)) if self.agc_enabled else 1.0
+        g_ref = getattr(self, "_tl_gref", g)
+        if getattr(self, "_comb_load", 1.0) > 0.5 or g_ref > g:
+            g_ref = g
+        else:
+            g_ref += (g - g_ref) * min(frames / (sr * 3.0), 1.0)
+        self._tl_gref = g_ref
+        if g > 1e-9 and g_ref < g:
+            out *= g_ref / g
         return out
 
     def _induction_audio(self, frames):
