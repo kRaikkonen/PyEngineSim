@@ -319,6 +319,8 @@ class Engine:
     straight_cut: bool = False       # straight-cut (dog-box) gearbox -> whine on by default
     wall_material: str = "steel"     # exhaust pipe material: titanium / steel /
                                      #   aluminium / iron -> wall-resonance pitch
+    wall_thickness_mm: float = 0.0   # its gauge (mm); 0 = the material's usual
+                                     #   (audio._GAUGE_MM: steel 1.6, Ti 1.0 ...)
     # STRUCTURE-BORNE radiation: the combustion is sealed in the block+head, so
     # what the listener hears is radiated THROUGH the casting — CONTAINED by its
     # mass (mass-law low-pass) and rung at its structural resonances (~sqrt(E/rho),

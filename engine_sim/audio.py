@@ -574,6 +574,42 @@ _MATERIAL = {
     "magnesium": (45.0, 1800.0, 0.0010), "mag": (45.0, 1800.0, 0.0010),
 }
 _MAT_REF = (5.048, 7850.0, 0.0016)     # steel sqrt(E/rho), rho, loss (references)
+# The usual exhaust gauge per material (mm): mild steel tube 16 ga (1.6),
+# stainless 1.5 (OEM 1.2-1.5, aftermarket 16 ga), titanium systems 0.8-1.2
+# (1.0), motorsport Inconel 0.7-1.0 (0.9), cast-iron manifolds ~4.5.
+_GAUGE_MM = {
+    "steel": 1.6, "mild_steel": 1.6, "stainless": 1.5, "304": 1.5, "321": 1.5,
+    "321ss": 1.5, "ss": 1.5, "321ti": 1.2, "titanium": 1.0, "ti": 1.0,
+    "inconel": 0.9, "aluminium": 2.0, "aluminum": 2.0, "iron": 4.5,
+    "cast_iron": 4.5, "ceramic": 1.6, "ceramic_coated": 1.6, "cgi": 4.5,
+    "magnesium": 2.5, "mag": 2.5,
+}
+_ETA_JOINT = 0.005     # a built-up exhaust's structural loss factor beyond the
+                       #   metal's own: flanges, slip joints, rubber hangers
+                       #   (built-up structures 0.005-0.01)
+
+
+def _shell_amp(name, h_mm=0.0):
+    """The pipe shell's ring, relative to a 1.6 mm mild-steel wall (= 1.0):
+    the amplitude it radiates for the same gas pulses (statistical energy
+    analysis, a fixed pressure drive): band velocity ~ 1 / (m sqrt(eta)) x
+    sqrt(modal density), modal density ~ 1 / (h c_L), radiation efficiency
+    below coincidence ~ sqrt(f / f_c) ~ sqrt(h c_L), so
+        A = (m_s / m) sqrt(eta_s / eta) (h_s c_Ls / (h c_L))^(1/4),
+    m = rho h the wall's mass per area, eta the metal's loss + the joints'.
+    A thin light wall rings far more: titanium at 1 mm ~3.5 x (+11 dB)."""
+    E, rho, loss = _MATERIAL.get(name, _MATERIAL["steel"])
+    h = (h_mm if h_mm and h_mm > 0.0 else _GAUGE_MM.get(name, 1.6)) * 1e-3
+    Es, rhos, losss = _MATERIAL["steel"]
+    hs = 1.6e-3
+    if name in ("steel", "mild_steel") and abs(h - hs) < 1e-9:
+        return 1.0
+    nu2 = 1.0 - 0.3 * 0.3
+    cl = math.sqrt(E * 1e9 / (rho * nu2))
+    cls = math.sqrt(Es * 1e9 / (rhos * nu2))
+    return ((rhos * hs) / (rho * h)
+            * math.sqrt((losss + _ETA_JOINT) / (loss + _ETA_JOINT))
+            * ((hs * cls) / (h * cl)) ** 0.25)
 
 
 def _material_acoustics(name):
@@ -1896,9 +1932,15 @@ class Synthesizer:
             # DERIVED from the wall material's real E / density / damping (see
             # _material_acoustics) — titanium sings (light + low-loss), cast iron
             # thuds (heavy + high-loss), steel is the reference.
-            mf, ring, qf = _material_acoustics(getattr(eng, "wall_material", "steel"))
+            mat = getattr(eng, "wall_material", "steel")
+            mf, ring, qf = _material_acoustics(mat)
             self._wall_ring = ring
             self._wall_q = qf
+            # the shell's ring strength from its gauge, mass and damping
+            # (_shell_amp; 1.0 = a 1.6 mm mild-steel wall).  The ring sits
+            # where the shell starts to radiate, ka ~ 1 (c / 2 pi a = 2275 Hz
+            # at 24 mm -- the 2300 x 0.024 / r below; mf ~ 1 for every metal)
+            self._wall_amp = _shell_amp(mat, getattr(eng, "wall_thickness_mm", 0.0))
             self._wall_f1 = min(max(2300.0 * (0.024 / r) * mf, 1300.0), 4200.0)
             self._wall_f2 = min(self._wall_f1 * 1.85, sr * 0.42)
             self._wallpk1_zi = np.zeros(2)
@@ -3411,7 +3453,9 @@ class Synthesizer:
                 a_tp = math.pi * (max(sim.engine.exhaust_radius_m, 0.012)
                                   * max(getattr(sim.engine, "tip_scale", 1.0),
                                         0.5)) ** 2
-                l_nk = 0.45 + 0.61 * math.sqrt(a_tp / math.pi)  # + end corr
+                # the tailpipe neck and BOTH its end corrections: flanged
+                # into the box (0.85 a), unflanged into the air (0.61 a)
+                l_nk = 0.45 + (0.85 + 0.61) * math.sqrt(a_tp / math.pi)
                 f_sys = (c_runner / (2.0 * math.pi)) * math.sqrt(
                     a_tp / (v_mf * l_nk))
                 f_sys = min(max(f_sys, 45.0), 240.0)
@@ -3760,11 +3804,21 @@ class Synthesizer:
             # Q from the material damping: a low-loss wall (titanium) rings
             # sharper/longer; cast iron is broad and dead.
             _sq2 = 0.6 + 0.7 * getattr(self, "_sysq", 0.6)   # unified damping
-            bp1, ap1 = self._pk(f1, min(3.4 * qf * _sq2, 12.0),
-                                (4.3 - 1.4 * wt) * ring)
+            # the peaks' height: a 1.6 mm mild-steel wall's (the reference
+            # voicing) raised by the shell's own ring (_wall_amp): the shell
+            # adds A x the steel wall's excess amplitude.  Steel is exactly
+            # the old formula.
+            amp = getattr(self, "_wall_amp", 1.0)
+            g1 = 4.3 - 1.4 * wt
+            g2 = 3.2 - 1.6 * wt
+            if amp != 1.0:
+                g1 = 20.0 * math.log10(max(1.0 + amp * (10.0 ** (g1 / 20.0) - 1.0), 1e-3))
+                g2 = 20.0 * math.log10(max(1.0 + amp * (10.0 ** (g2 / 20.0) - 1.0), 1e-3))
+            else:
+                g1, g2 = g1 * ring, g2 * ring
+            bp1, ap1 = self._pk(f1, min(3.4 * qf * _sq2, 12.0), g1)
             sig, self._wallpk1_zi = lfilter(bp1, ap1, sig, zi=self._wallpk1_zi)
-            bp2, ap2 = self._pk(f2, min(4.2 * qf * _sq2, 14.0),
-                                (3.2 - 1.6 * wt) * ring)
+            bp2, ap2 = self._pk(f2, min(4.2 * qf * _sq2, 14.0), g2)
             sig, self._wallpk2_zi = lfilter(bp2, ap2, sig, zi=self._wallpk2_zi)
         sig = self._tap("metal ring", sig)    # stainless wall-resonance formants
         # --- MEGAPHONE / exit-horn bark: the powerful mid formant a diverging
