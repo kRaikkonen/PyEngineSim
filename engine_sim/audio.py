@@ -4541,10 +4541,49 @@ class Synthesizer:
     _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
     _TB_TCN = 0.030               # tip-clearance narrowband
     _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
-    _TB_THUMP = 0.90              # surge volume pulse (dW/dt at the inlet)
-    _TB_JET = 0.30                # the blow-back jet out of the eye, per (W/W_z)^3
-    _TB_STALL = 0.40              # stalled wheel's broadband
+    # SURGE (plan doc s.14): every part in ONE unit, the flow W / W_r (W_r
+    # the wheel's zero-slope flow at its rated speed); only _TB_SURGE is set
+    # by ear-free anchoring, the rest is physics or cited
+    _TB_SURGE = 10.0              # the surge's level, the one anchor: a
+                                  #   flutter at equal distance ~5 dB under the
+                                  #   WOT exhaust (s.14: the stalled wheel's
+                                  #   dipole ~110 dB at 1 m, the thump's flip
+                                  #   ~120 dB peak, a sporty exhaust at WOT
+                                  #   ~105-110 dB).  Set on the S15 lifting from
+                                  #   0.93 bar / 5800 rpm, chase view (-5.5 dB)
+    _TB_W_HP = 3.0                # the engine's slow draw taken off the surge
+                                  #   flow (Hz): under the deep-surge rate
+                                  #   (12-25 Hz)
+    _TB_CF = 0.2                  # fluctuating blade-force coefficient of the
+                                  #   blow-back jet on the wheel (turbulent
+                                  #   impingement 0.1-0.3: an estimate)
+    _TB_ST = 0.2                  # jet-noise peak Strouhal number
+    _TB_HISS_Q = 0.7              # ...a hump ~1.4 octaves wide
+    _TB_SW_CF = 0.1               # the stalled wheel: fluctuating force
+                                  #   coefficient of a stalled blade (0.1-0.3)
+    _TB_SW_ST = 0.1               # ...separated-flow noise Strouhal on the chord
+                                  #   (stall noise peaks below the attached
+                                  #   boundary layer's ~0.2)
+    _TB_SW_CHORD = 0.4            # ...inducer blade chord / inducer diameter
+    _TB_SW_LC = 0.1               # ...span-wise correlation length / span
+    _TB_SW_Q = 0.6                # ...a hump ~2 octaves wide
+    _TB_RS_F = 0.7                # rotating stall / shaft frequency (a
+                                  #   turbocharger's low-flow tone at ~70 %:
+                                  #   Zhang et al., in Dehner & Selamet 2019)
+    _TB_RS_Q = 5.0                # ...narrow
+    _TB_RS = 0.25                 # ...its level at the rated tip speed: ~-4 dB
+                                  #   under the blow-back's power (an estimate)
     _TB_BOV = 4.0                 # blow-off jet per (u/c)^4
+
+    def _tw_band(self, noise, f0, q, key):
+        """White ``noise`` through a band-pass at f0 (1/24-octave steps, its
+        state kept under ``key``), scaled to unit rms: the RBJ band-pass passes
+        ~(pi/2) f0/Q of the band."""
+        sr = self.sample_rate
+        f0 = 2.0 ** (round(24.0 * math.log2(f0)) / 24.0)
+        b, a = _bandpass(f0, q, sr)
+        y, self._tw_zi[key] = lfilter(b, a, noise, zi=self._tw_zi.get(key, np.zeros(2)))
+        return y * math.sqrt(0.5 * sr / min(0.5 * math.pi * f0 / q, 0.5 * sr))
 
     def _turbo_audio(self, frames, rpm, sv):
         """The turbocharger, heard from the machine (turbo.py).
@@ -4570,6 +4609,21 @@ class Synthesizer:
             self._tw_ph = [0.0 for _ in ts.units]
             self._tw_zi = {}
             self._tw_env = 0.0
+            # the surge's fixed flow unit: each wheel's zero-slope flow at its
+            # RATED speed (build(): omega_max = 1.15 x rated)
+            om_r = getattr(ts, "omega_max", 0.0) / 1.15
+            self._tw_u2r, self._tw_wref = [], []
+            for u in ts.units:
+                if om_r > 0.0:
+                    u2r = om_r * 0.5 * u.comp.d2
+                    wr = u.comp.line(u2r, ts.p01, turbo_mod.T_AMB)["w_z"]
+                else:
+                    u2r = 400.0
+                    wr = 0.46 * getattr(ts, "w_air_rated", 0.2) / len(ts.units)
+                self._tw_u2r.append(max(u2r, 1.0))
+                self._tw_wref.append(max(wr, 1e-3))
+            self._tw_gate = [0.0 for _ in ts.units]
+            self._tw_tail = 0
             rs = np.random.RandomState(7)
             self._tw_buzz = [(rs.uniform(0.3, 1.0, 12), rs.uniform(0, 6.283, 12))
                              for _ in ts.units]
@@ -4661,44 +4715,106 @@ class Synthesizer:
                                                zi=self._tw_zi.get(key, np.zeros(2)))
                 g = np.exp(-((phi - 0.060) / 0.025) ** 2) * (phi > 0.0)
                 out += tv * self._TB_WHOOSH * m_u ** 3 * g * nw
-            # SURGE: the reversals themselves -- each an impulse at the
-            # compressor's inlet, the reversed flow a jet out of its eye --
-            # gathered here and sent out through the car's inlet below
-            if busy:
+            # SURGE (plan doc s.14), gathered here and sent out through the
+            # car's inlet below (the pipe, the filter or the box, the mouth).
+            # One unit for all of it, the flow W / W_r -- W_r FIXED (the rated
+            # zero-slope flow), so the flutter fades as the shaft runs down;
+            # the old per-speed scaling held it at full strength for seconds.
+            w_r = self._tw_wref[j]
+            key = ("wlp", j)
+            bL, aL = self._bw(1, self._TB_W_HP)
+            zl = self._tw_zi.get(key)
+            if zl is None:
+                zl = np.array([(bL[1] - aL[1]) * wj[0]])
+            wlp, self._tw_zi[key] = lfilter(bL, aL, wj, zi=zl)
+            g0, g1 = self._tw_gate[j], min(tw.busy / 8.0, 1.0)
+            self._tw_gate[j] = g1
+            if busy or g0 > 0.0:
+                # (1) THE FLOW ITSELF.  The pipe to the inlet is short against
+                # the surge's wavelengths, so the compressor's inlet flow IS the
+                # mouth's, and the mouth radiates its change: a monopole -- the
+                # piston high-pass in _intake_radiate differentiates it (the
+                # sub-millisecond flips are the 't').  The engine's slow draw
+                # comes off first (a 3 Hz high-pass run every block), and a
+                # ramp over the twin's 8-block hold fades it in and out, so
+                # nothing steps when a surge starts or ends.
+                gate = g0 + (g1 - g0) * (xi + 1.0) / frames
+                surge += tv * self._TB_SURGE * gate * (wj - wlp) / w_r
+                # (2) THE BLOW-BACK.  The plenum empties backwards through the
+                # spinning wheel: a jet chopped by its blades ('like blowing
+                # through a fan') -- a DIPOLE on them (Curle),
+                #     p(1 m) = C_F rho U^3 A St / (4 c D),
+                # U = W / (rho_p A) through the wheel's lumped reverse area
+                # A = C_REV A_eye taken as one jet (D = sqrt(4 A / pi)),
+                # peaking at f = St U / D: ~2 kHz and down (near the surge
+                # line the inlet's noise is broadband below 3 kHz).  In
+                # the flow's units: 1 = W_r w_a / 4 pi Pa at 1 m, w_a = c / a
+                # the mouth's piston corner.  U is highest just after each
+                # flip and falls as that cycle's plenum empties, so every burst
+                # is a short 'ch' sweeping DOWN (~U^3), and the whole flutter
+                # fades as the shaft slows.
+                rev = np.maximum(-wj, 0.0)
+                if float(rev.max()) > 1e-5:
+                    a_rev = turbo_mod.C_REV * c.a_eye
+                    rho_p = p_arr / (turbo_mod.R_AIR * max(ts.t_p, 250.0))
+                    u_rev = rev / (rho_p * a_rev)
+                    d_h = math.sqrt(4.0 * a_rev / math.pi)
+                    w_a = 343.0 / max(self._intake_mouth_radius(), 0.01)
+                    pa_unit = w_r * w_a / (4.0 * math.pi)     # Pa at 1 m per unit
+                    amp = (self._TB_CF * self._TB_ST * a_rev / (4.0 * 343.0 * d_h)
+                           / pa_unit) * rho_p * u_rev ** 3
+                    u_m = float((u_rev * rev).sum() / max(float(rev.sum()), 1e-12))
+                    f_pk = min(max(self._TB_ST * u_m / d_h, 200.0), nyq)
+                    nh = self._tw_band(noise, f_pk, self._TB_HISS_Q, ("hiss", j))
+                    surge += tv * self._TB_SURGE * amp * nh
+                    # (3) THE STALLED WHEEL.  Through each reversal the inducer
+                    # blades slice their own stalled, reversed flow at the TIP
+                    # speed: a dipole again, now on U_t -- the patches along
+                    # the span incoherent (correlation length l):
+                    #   p(1 m) = C_F St rho U_t^3 s sqrt(Z l / s) / (4 c),
+                    # s the span, peaking at f = St U_t / chord -- the band that
+                    # dominates the inlet near the surge line (Dehner et al.
+                    # 2017: broadband below ~3 kHz).  By this estimate ~110 dB
+                    # at 1 m at a road turbo's surge speed, the loudest part of
+                    # a flutter: the 'ch'.  Its depth follows the reversed flow
+                    # (the blades cut the most of it just after each flip), its
+                    # level ~U_t^3 with the shaft.
+                    u_t = om * (0.5 * c.d1s)
+                    span = 0.5 * (c.d1s - c.d1h)
+                    depth = np.minimum(rev / max(ln["w_z"], 1e-4), 1.0)
+                    amp_w = (self._TB_SW_CF * self._TB_SW_ST * span
+                             * math.sqrt(c.z_main * self._TB_SW_LC) / (4.0 * 343.0)
+                             / pa_unit) * rho_p * u_t ** 3 * depth
+                    f_sw = min(max(self._TB_SW_ST * float(u_t.mean())
+                                   / (self._TB_SW_CHORD * c.d1s), 200.0), nyq)
+                    nw = self._tw_band(noise, f_sw, self._TB_SW_Q, ("sw", j))
+                    surge += tv * self._TB_SURGE * amp_w * nw
+                # (4) ROTATING STALL at every breakdown and recovery: a narrow
+                # band at ~0.7 x the shaft frequency (Zhang et al., the low-
+                # flow tone; Dehner & Selamet 2019 measured diffuser cells at
+                # 0.19 / 0.54), riding an 8 ms envelope on |dW/dt| -- so each
+                # cycle is a 'stu' with quiet between.
                 dw = np.diff(wj, prepend=wj[0]) * sr          # kg/s^2
-                w_ref = max(ln["w_z"], 1e-3)
-                thump = dw * (0.005 / w_ref)                  # ~1 over a 5 ms flip
-                surge += tv * self._TB_THUMP * np.clip(thump, -3.0, 3.0)
-                # the blow-back jet: the plenum emptying through the wheel
-                # (flow noise, amplitude ~ u^3 -- a dipole on the blades and
-                # the filter mesh), strongest as the reversal peaks
-                rev = np.clip(-wj / w_ref, 0.0, 2.0)
-                if float(rev.max()) > 1e-3:
-                    if noise is None:
-                        noise = self._rng.standard_normal(frames)
-                    surge += tv * self._TB_JET * rev ** 3 * noise
-                # the stalled wheel's broadband comes with the TRANSITIONS --
-                # the rotor losing the flow and taking it back -- not the whole
-                # reversed phase: an envelope on |dW/dt| (8 ms), so each cycle
-                # is a 'stu' with quiet between
-                if noise is None:
-                    noise = self._rng.standard_normal(frames)
                 key = ("tr", j)
                 bE, aE = self._bw(1, 20.0)
                 trans, self._tw_zi[key] = lfilter(
-                    bE, aE, np.abs(thump), zi=self._tw_zi.get(key, np.zeros(1)))
+                    bE, aE, np.abs(dw) * (0.005 / w_r),
+                    zi=self._tw_zi.get(key, np.zeros(1)))
                 trans = np.clip(trans, 0.0, 2.0)
-                stall = np.clip((phi_z - phi) / phi_z, 0.0, 1.5)
-                if float(trans.max()) > 1e-3:
-                    fs2 = min(max(2.0 * f_s, 300.0), nyq)
-                    bS, aS = _bandpass(2.0 ** (round(12.0 * math.log2(fs2)) / 12.0),
-                                       1.2, sr)
-                    key = ("st", j)
-                    ns, self._tw_zi[key] = lfilter(bS, aS, noise,
-                                                   zi=self._tw_zi.get(key, np.zeros(2)))
-                    surge += tv * self._TB_STALL * m_u ** 2 * trans * ns
-                env_t = max(env_t, float(stall.mean()))
+                f_rs = self._TB_RS_F * f_s
+                if float(trans.max()) > 1e-3 and 100.0 < f_rs < nyq:
+                    ns = self._tw_band(noise, f_rs, self._TB_RS_Q, ("st", j))
+                    surge += (tv * self._TB_SURGE * self._TB_RS
+                              * (u2 / self._tw_u2r[j]) ** 3 * trans * ns)
+                if busy:
+                    stall = np.clip((phi_z - phi) / phi_z, 0.0, 1.5)
+                    env_t = max(env_t, float(stall.mean()))
         if busy or float(np.abs(surge).max()) > 0.0:
+            self._tw_tail = 8
+            out += self._intake_radiate(surge, "surge")
+        elif self._tw_tail > 0:
+            # the pipe and the box ring out before the chain rests
+            self._tw_tail -= 1
             out += self._intake_radiate(surge, "surge")
         # BLOW-OFF: the jet through the valve throat at the plenum's pressure
         wbm = float(wb.mean()) if len(wb) else 0.0
@@ -5303,11 +5419,17 @@ class Synthesizer:
                 wg = self._inl_zi[key + "_wg"] = ExhaustWaveguide(
                     int(0.02 * sr) + 8)
             L_ = _POD_DUCT_M + 0.61 * a_m
-            d = max(int(round(2.0 * L_ / 343.0 * sr)), 4)
             # the cone end reflects inverted, the wheel/throttle end not; a
             # smooth pipe and an open mesh lose ~12 % a round trip (|R| of an
-            # open end ~0.9 at ka << 1), more up high where the end radiates
-            x = wg.process(x, d, 0.88, -1.0, math.exp(-2.0 * math.pi * 4000.0 / sr))
+            # open end ~0.9 at ka << 1) -- and the end lets go of the top: an
+            # unflanged pipe's |R| ~ exp(-(ka)^2 / 2) (Levine & Schwinger:
+            # 0.61 at ka = 1, 0.14 at ka = 2), a one-pole in the loop matched
+            # at ka = 1 (corner 0.765 c / 2 pi a).  Its low-frequency delay
+            # (lp / (1 - lp) samples) comes off the pipe's, so the quarter-
+            # wave rings stay where the pipe puts them.
+            lp_ = math.exp(-2.0 * math.pi * 0.765 * 343.0 / (2.0 * math.pi * a_m) / sr)
+            d = max(int(round(2.0 * L_ / 343.0 * sr - lp_ / (1.0 - lp_))), 4)
+            x = wg.process(x, d, 0.88, -1.0, lp_)
         else:
             L_eff = _AIRBOX_DUCT_M + (0.61 + 0.85) * a_m
             w_H = 343.0 * math.sqrt(A_m / (_AIRBOX_VOL_X * vd * L_eff))

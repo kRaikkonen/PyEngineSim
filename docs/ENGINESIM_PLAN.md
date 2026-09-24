@@ -634,6 +634,64 @@ F2004/F2007，并已对真车录音验证）。从零重建的正确架构就是
 - Maekawa 屏障绕射（1968）；Leufvén & Eriksson 2013（见 §10 参考）；Assetto Corsa 用 FMOD、录音采样，
   对每个车外声源算多普勒和距离曲线（见参考资料）。
 
+## 14. 泄压的“stu-tu-tu”：喘振声从物理重做（2026-09-24，Leo）
+
+Leo：“我们现在的涡轮 flutter 声也完全不像极品飞车里那些 JDM 的夸张涡轮泄压声。”
+
+### 14.1 旧的问题（S15，三挡 0.93 bar / 5800 rpm 松油门，追车视角，AGC 之前、A 计权）
+- 每一项都按**当前转速**的零斜率流量归一：涡轮转慢了，喘振还是一样强，响了几秒都不衰减。
+- “砰”用的是 dW/dt，再过进气口的活塞高通——等于微分了两次；喷流是白噪声 × rev³；2 × 轴频的“失速宽带”没有出处。
+- 结果：喘振能量 64% 在 200–500 Hz（蘑菇头管子 313 Hz 的四分之一波长共振），比 WOT 低 21 dB，
+  跟松油门后的发动机差不多一样大——“埋”在里面，又闷又没有节奏。
+
+### 14.2 现在：全部用一个单位（压气机流量 W / W_r），W_r = 额定转速下的零斜率流量（固定）
+1. **流量本身（单极子）**：管子相对喘振波长很短，压气机进口流量就是进气口的流量；进气口辐射它的变化
+   （`_intake_radiate` 的活塞高通就是这个微分）。亚毫秒的流量翻转就是“t”（~120 dB 峰值 @1 m）。
+   发动机的慢吸气先用 3 Hz 高通去掉，Twin 的 8 块保持时间里淡入淡出，喘振开始/结束不会“咔”。
+2. **回喷射流（偶极子，Curle）**：气室倒着从旋转的叶轮里喷出来（“像对着风扇吹”），
+   p(1 m) = C_F ρ U³ A St / (4 c D)，U = W / (ρ_p C_REV A_eye)，A 当作一股射流，峰值 f = St U / D ≈ 2 kHz。
+   每个周期刚翻转时 U 最大、随着气室排空下降——每一下都是一个**往下扫**的短“ch”，整体随轴速 ~U³ 衰减。
+3. **失速的叶轮（偶极子，按叶尖速度）**：倒流期间诱导轮叶片以叶尖速度（122 krpm 时 ~310 m/s）切割自己失速的倒流，
+   p(1 m) = C_F St ρ U_t³ s √(Z l/s) / (4 c)（沿叶展的块互不相干，l = 0.1 s），峰值 f = St U_t / 弦长 ≈ 1.6 kHz
+   （St = 0.1，分离流噪声）。频段有实测：靠近喘振线时进气噪声以 **3 kHz 以下宽带**为主（Dehner 等 2017；
+   那是稳定工作点，总声级比中流量的 4–12 kHz whoosh 低）。电平是这里的 Curle 估算（C_F = 0.1）：~110 dB @1 m，
+   深喘振倒流时 flutter 里最响的部分；深度跟着倒流量走（每次翻转之后最强），整体 ~U_t³ 随轴速衰减。
+4. **旋转失速窄带**：~0.7 × 轴频（Zhang 等，低流量时的窄带音；Dehner & Selamet 2019 测到扩压器失速
+   0.19 / 0.54 × 轴频），只在每次翻转的 8 ms 包络里出现（代替了没出处的 2 × 轴频）。
+5. **蘑菇头管子的开口端**：|R| 随 ka 下降（Levine & Schwinger：|R| ≈ exp(−(ka)²/2)，ka = 1 时 0.61），
+   环路一阶低通在 ka = 1 处匹配（0.765 c / 2πa），低频延时从管长里扣掉，共振频率不动。高频不再在管子里“嗡”。
+6. **唯一的标定常数** `_TB_SURGE` = 10：同距离下 flutter 比 WOT 排气低 ~5 dB（失速叶轮 ~110 dB、
+   “t” ~120 dB 峰值，运动排气 WOT ~105–110 dB @1 m）；在 S15 追车视角上定（−5.5 dB）。
+
+### 14.3 结果（同一个 S15 松油门）
+| | 旧 | 新 |
+|---|---|---|
+| 松油门 0–0.5 s，比 WOT（A 计权，AGC 前） | −21.4 dB | −11.4 dB |
+| 比松油门后的发动机 | +0.7 dB | **+10.8 dB** |
+| 1.5–2.5 s | −26.7 dB（不衰减） | −24.9 dB（随轴速衰减） |
+| A 计权能量 >1 kHz | 54% | 55%（旧的是白噪声，新的是 1–3 kHz 的“ch”） |
+| 节奏 | 12–18 Hz，峰谷 20 dB | 12.6 → 18 Hz（越来越快），峰谷 17–24 dB |
+| 每一下的质心 | 固定 | 1.6 kHz → 1.0 kHz（往下扫），后面的更暗 |
+
+- 驾驶舱同样 +10 dB（经 26 dB 泄漏进来）。输出峰值不变（0.736），限幅器没有多压。
+- **原厂空滤盒会把它闷掉**（盒子的亥姆霍兹低通在 1–3 kHz 是 −50 dB）：Supra/Evo 这类带进气盒的车，
+  打开 Flutter 之后还要开 **Pod filter（蘑菇头）** 才是 JDM 那个声音——这是物理，不是 bug。
+  还没有：进气盒塑料壁的质量定律透射（~−25 dB @1.5 kHz），会让原厂盒子的 flutter 稍微亮一点。
+- golden：只有 rs3 追车拉升变了（最差 +0.02 dB；起涡时压气机在喘振线附近，Twin 在忙）。
+
+### 14.4 参考
+- Dehner, Selamet 等，*Generation Mechanism of Broadband Whoosh Noise in an Automotive Turbocharger
+  Centrifugal Compressor*, J. Turbomach. 143 (2021) 121003：whoosh 4–13 kHz，转子–旋转不稳定相互作用，
+  进气管截止频率决定下限 <https://mae.osu.edu/sites/default/files/2021-12/J111.pdf>
+- Dehner, Selamet, *Three-Dimensional CFD Prediction of Turbocharger Centrifugal Compression System
+  Instabilities*, J. Turbomach. 141 (2019) 081004：扩压器旋转失速 0.19/0.54 × 轴频；引用 Zhang 等 0.7 × 轴频
+  窄带音 <https://mae.osu.edu/sites/default/files/2021-12/J105.pdf>
+- Dehner, Selamet, Steiger, Miazgowicz, Karim, *The Effect of Ported Shroud Recirculating Casing Treatment on
+  Turbocharger Centrifugal Compressor Acoustics*, SAE Int. J. Engines 10(4) 2017, doi:10.4271/2017-01-1796：靠近喘振线时
+  进气噪声以 3 kHz 以下宽带为主（总声级低于中流量的 4–12 kHz whoosh）<https://mae.osu.edu/sites/default/files/2021-12/J99.pdf>
+- Curle (1955) 偶极子；Levine & Schwinger (1948) 无法兰管口反射
+- 机理的通俗说法（倒流穿过叶轮“像对着风扇吹”）：<https://gfb.com.au/tech/tech-articles/11-the-truth-about-compressor-surge/>
+
 ---
 
 ## 9. 参考资料
