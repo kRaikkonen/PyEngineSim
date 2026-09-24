@@ -422,6 +422,57 @@ def toyota_2jz_supra() -> Engine:
     )
 
 
+def toyota_2jz_supra_single() -> Engine:
+    """Toyota Supra MK4 2JZ-GTE, big single-turbo JDM build.
+
+    The tuner conversion the lift-off 'stu-tu-tu' is famous for: the
+    sequential twins swapped for one big ball-bearing single -- a Precision
+    7675 Gen2 (76.7 mm inducer, 102.4 mm exducer: Precision's published
+    numbers) -- at ~1.5 bar on an external wastegate, a tubular top-mount
+    6-into-1 manifold, a cone filter on a short inlet pipe and NO blow-off
+    valve, a 3.5-inch straight-through exhaust, no cat.  The same 86 x 86 mm
+    iron block, firing 1-5-3-6-2-4, 8.5:1; revs to 7500 (valve springs),
+    ~510 hp at 1.5 bar on pump fuel (no ECU torque limit).  Checked against a
+    real recording of one (plan doc s.17): the whistle's pitch and level, the
+    late full boost, the flutter's rate.
+    """
+    offsets = _even_offsets(6, firing_order=[1, 5, 3, 6, 2, 4])
+    cylinders = [
+        Cylinder(bore=mm(86), stroke=mm(86), rod_length=mm(142),
+                 compression_ratio=8.5, cycle_offset_deg=offsets[i])
+        for i in range(6)
+    ]
+    return Engine(
+        name="Toyota Supra 2JZ-GTE Single Turbo (JDM)",
+        cylinders=cylinders,
+        flywheel_inertia=0.20, redline_rpm=7500, idle_rpm=900,
+        heat_release_k=1.7, ve_width_frac=0.75, closed_map_fraction=0.22,
+        ve_floor=0.72,
+        exhaust_tone=86.0,
+        exhaust_primary_m=0.45, exhaust_total_m=2.4, exhaust_radius_m=0.044,
+        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.002,
+        muffler_type="absorptive",
+        induction="turbo", boost_bar=1.5, turbo_lag=0.8,
+        # full boost (steady WOT, gates shut) at 5000: owners of the 7675 on a
+        # 0.96 A/R hot side report it "mid to high 5k" on the road -- our pull
+        # adds its transient ~900 rpm on top (the recording: ~6000 in 3rd)
+        turbo_full_rpm=5000.0, wastegate="external",
+        turbo_d2_mm=102.36,              # the 7675's compressor exducer
+        # the charge air: a JDM front-mount core (~5 L of air) and ~2 m of
+        # 2.5-inch pipe (~5 L) -- 10 L; identified from the recording's
+        # flutter (10-13 Hz: the deep-surge period ~ plenum / compressor flow)
+        charge_air_l=10.0,
+        bov_flutter=True, has_cat=False,
+        # a tubular top-mount 6-into-1: runners within ~6 cm of each other
+        # (the auto class gives a road car a cast log -- 0.43 m of spread --
+        # which alternates front / rear and makes a false 1.5th order)
+        header_equality=0.85,
+        gear_ratios=[3.83, 2.36, 1.69, 1.31, 1.00, 0.79], final_drive=3.13,
+        vehicle_mass=1500.0, wheel_radius=0.32, clutch_capacity=950.0,
+        gearbox_type="manual",
+    )
+
+
 def bmw_s58() -> Engine:
     """BMW S58 — 3.0 L twin-turbo inline-six (M3/M4 Competition).
 
@@ -3106,6 +3157,7 @@ PRESETS = [
     ("merlin", "Spitfire Merlin V12", spitfire_merlin_v12),
     ("ae86", "AE86 4A-GE", toyota_ae86_4age),
     ("9", "2JZ", toyota_2jz_supra),
+    ("2jzst", "2JZ single turbo", toyota_2jz_supra_single),
     ("t100", "Toyota T100 Baja V8", toyota_t100_baja),
     ("speed12", "TVR Cerbera Speed 12", tvr_cerbera_speed12),
     ("2", "EA888", vw_ea888_i4),
@@ -3126,7 +3178,7 @@ _VARIABLE_VALVE = {
     "0": "Valvetronic", "e60m5": "double-VANOS", "b48": "Valvetronic",
     "330i": "double-VANOS", "bmwv8": "Valvetronic",          # S63
     # Toyota / Lexus — VVT-i (phasing)
-    "9": "VVT-i", "5": "VVT-i",
+    "9": "VVT-i", "5": "VVT-i", "2jzst": "VVT-i",
     # Ferrari — VVT (phasing); F1 cars use pneumatic valves -> none
     "4": "F1-Trac VVT", "488": "VVT", "pista": "VVT", "lafe": "VVT",
     "enzo": "VVT", "fxxk": "VVT",
@@ -3190,10 +3242,10 @@ _TURBO_LAYOUT = {
 _SEQ_RPM = {"9": (3600.0, 4000.0), "rx7": (4500.0, 5500.0)}
 # Ball-bearing cartridges (half the bearing drag): Ferrari's F154 IHIs, the
 # M139's roller bearings, the S15's ball-bearing T28.
-_TURBO_BB = {"488", "pista", "a45", "s15"}
+_TURBO_BB = {"488", "pista", "a45", "s15", "2jzst"}
 # Open inlets: the rally cars' ram scoops and the JDM cars that ship here with
 # their dump valve gone (bov_flutter) wear a cone filter on a short pipe.
-_POD_INTAKE = {"s15", "gdb", "gv", "vt15r", "s1", "rs200", "hoonrs", "p205",
+_POD_INTAKE = {"s15", "2jzst", "gdb", "gv", "vt15r", "s1", "rs200", "hoonrs", "p205",
                "deltas4", "hoonitruck"}
 # Single-plane "flat" crank V8 screamers; all other 90-deg V8s are cross-plane.
 # (The AMG GT's M178 and the E92 M3's S65 are CROSS-plane -- only the GT Black
@@ -3255,7 +3307,7 @@ _INTAKE_RUNNER = {
     "r390": 0.26, "8": 0.34, "gt500": 0.32, "ct5v": 0.32, "ftype": 0.32,
     "boneshaker": 0.34, "f450": 0.42, "titan": 0.42,
     # --- I6: RB26/S50 short ITB stacks, 2JZ/N53 plenum, big-diesel truck long --
-    "r34": 0.15, "e36m3": 0.16, "9": 0.28, "330i": 0.30, "0": 0.26,
+    "r34": 0.15, "e36m3": 0.16, "9": 0.28, "2jzst": 0.28, "330i": 0.30, "0": 0.26,
     "actros": 0.50, "ironknight": 0.52, "pete": 0.55,
     "ae86": 0.13,          # 4A-GE 20-valve velocity stacks (Leo's example)
 }

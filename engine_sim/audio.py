@@ -881,6 +881,12 @@ _PHYS_MAKEUP = 100.0
 # orders reach the mouth 30-38 dB down either way) and its inlet duct's length.
 _AIRBOX_VOL_X = 3.0
 _AIRBOX_DUCT_M = 0.40
+# ...a lumped resonator only while the box is small against the wavelength:
+# past its first cross-mode (c / 2 L, L = V^(1/3)) it is an expansion chamber
+# and a filter element, and a compressor's noise gets through ~12 dB down --
+# the same OEM-intake loss as the blade-pass tone's (_TB_TONE vs _TB_TONE_POD).
+# Without it every airbox flutter car (the F40...) kept only its low thump.
+_AIRBOX_HF_TL_DB = 12.0
 # The classic chain's intake (every car) uses the same box.  A pod filter's
 # pipe -- throttle or compressor inlet to the cone -- and the intake-manifold
 # plenum an NA engine draws through before the throttle:
@@ -4462,6 +4468,13 @@ class Synthesizer:
                 self._gain_fired = self._gain
             gmax = max(2.2 + 3.8 * cl_, min(getattr(self, "_gain_fired", 2.2), 6.0))
             gain = min(0.22 / (self._level + 1e-6), gmax)
+            # ...and never under a flutter or a blow-off: the event dies by
+            # itself (the shaft runs down, the plenum empties) and a level
+            # rising under it pumped the fading 'tu-tu' back to full, up to
+            # +17 dB in chase (Leo: "flutter doesn't stop after the pressure
+            # is released").  The physical voice already holds on a lift.
+            if gain > self._gain and getattr(self, "_bov_env", 0.0) > 0.02:
+                gain = self._gain
             rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
@@ -4590,21 +4603,37 @@ class Synthesizer:
     # the turbocharger's sound sources: levels relative to the turbo_vol mix
     # knob, set so a WOT pull and a lift sit where the ear-approved old layer
     # sat (the pitch, timing and spectrum are now the machine's)
-    _TB_TONE = 0.160              # blade-pass tone per M_u2^2.5 (fan law: power
-                                  #   ~ U^5)
+    _TB_TONE_POD = 1.43           # blade-pass tone per M_u2^2.5 (fan law: power
+                                  #   ~ U^5) through a CONE FILTER, measured
+                                  #   (s.17): on a real 2JZ single (Leo's
+                                  #   recording) the blade-pass line sits ~-22
+                                  #   dB under the firing line at full boost
+    _TB_TONE = 0.36               # ...through an OEM airbox + filter: 12 dB
+                                  #   under the cone, the low end of the 10-26
+                                  #   dB an OEM intake takes off a compressor's
+                                  #   high-frequency noise (OSU: a dedicated
+                                  #   silencer's 26 dB at 8.6 kHz).  Was 0.160
+                                  #   by ear (Leo 2026-09-25: the other turbo
+                                  #   cars "still a bit small")
     _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
     _TB_TCN = 0.030               # tip-clearance narrowband
     _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
     # SURGE (plan doc s.14): every part in ONE unit, the flow W / W_r (W_r
     # the wheel's zero-slope flow at its rated speed); only _TB_SURGE is set
     # by ear-free anchoring, the rest is physics or cited
-    _TB_SURGE = 10.0              # the surge's level, the one anchor: a
+    _TB_SURGE = 32.0              # the surge's level, the one anchor: a
                                   #   flutter at equal distance ~5 dB under the
                                   #   WOT exhaust (s.14: the stalled wheel's
                                   #   dipole ~110 dB at 1 m, the thump's flip
                                   #   ~120 dB peak, a sporty exhaust at WOT
                                   #   ~105-110 dB).  Set on the S15 lifting from
-                                  #   0.93 bar / 5800 rpm, chase view (-5.5 dB)
+                                  #   0.93 bar / 5800 rpm, chase view: its first
+                                  #   0.5 s at -11 dB(A) under the WOT engine,
+                                  #   pre-AGC.  Re-solved (10 -> 32) when s.17
+                                  #   took the duct ring and the sub-cut-on
+                                  #   stall out of the mix -- which also puts a
+                                  #   2JZ single's first bursts where a real
+                                  #   one's are (~0 dB re its WOT 2-8 kHz)
     _TB_W_HP = 3.0                # the engine's slow draw taken off the surge
                                   #   flow (Hz): under the deep-surge rate
                                   #   (12-25 Hz)
@@ -4628,6 +4657,12 @@ class Synthesizer:
     _TB_RS = 0.25                 # ...its level at the rated tip speed: ~-4 dB
                                   #   under the blow-back's power (an estimate)
     _TB_BOV = 4.0                 # blow-off jet per (u/c)^4
+    _TB_DUCT_DB = 10.0            # the inlet duct's (1,0) ring: its PEAK over
+                                  #   the surge's broadband at the cut-on (Pai
+                                  #   2015: breaking that radial resonance took
+                                  #   up to 10 dB off there)
+    _TB_DUCT_Q = 12.0             # ...near cut-on the mode barely propagates
+                                  #   and rings (an estimate)
 
     def _tw_band(self, noise, f0, q, key):
         """White ``noise`` through a band-pass at f0 (1/24-octave steps, its
@@ -4724,8 +4759,13 @@ class Synthesizer:
             def fade(f):                 # no partial past the Nyquist guard
                 return min(max((nyq - f) / (0.05 * sr), 0.0), 1.0)
             a = tv * self._TB_TONE * m_u ** 2.5 * fwd
-            tone = (fade(z * f_s) * np.sin(z * ph)
-                    + 0.35 * fade(2 * z * f_s) * np.sin(2 * z * ph)
+            # the pod's measured anchor is the BLADE-PASS line's: the shaft's
+            # own orders stay put (a real 7675 through a cone shows no 1x
+            # line at all, s.17)
+            g_bp = (self._TB_TONE_POD / self._TB_TONE
+                    if getattr(self, "pod_filter", False) else 1.0)
+            tone = (g_bp * (fade(z * f_s) * np.sin(z * ph)
+                            + 0.35 * fade(2 * z * f_s) * np.sin(2 * z * ph))
                     + 0.5 * fade(f_s) * np.sin(ph)
                     + 0.2 * fade(2 * f_s) * np.sin(2 * ph))
             if self.o_chord:             # easter egg: the V7 on the 1st order
@@ -4842,7 +4882,46 @@ class Synthesizer:
                     f_sw = min(max(self._TB_SW_ST * float(u_t.mean())
                                    / (self._TB_SW_CHORD * c.d1s), 200.0), nyq)
                     nw = self._tw_band(noise, f_sw, self._TB_SW_Q, ("sw", j))
+                    # ...and it leaves through the DUCT: below the first
+                    # transverse mode's cut-on (f10, below) only the plane
+                    # wave propagates, and the blades' forces -- uncorrelated
+                    # blade to blade -- put 1/z of their power into it (the
+                    # rest into spinning modes, evanescent there).  So the
+                    # stall's low half is thinned by 1/sqrt(z), a first-order
+                    # split at f10, and the 'ch' lives above the cut-on --
+                    # where whoosh is measured (4-13 kHz on gasoline turbos,
+                    # its lower edge the first cut-on)
+                    f10 = 1.8412 * a01 / (math.pi * 1.2 * c.d1s)
+                    k_pw = 1.0 - 1.0 / math.sqrt(c.z_main)
+                    bS, aS = self._bw(1, min(f10, nyq))
+                    lo_, self._tw_zi[("swlp", j)] = lfilter(
+                        bS, aS, nw, zi=self._tw_zi.get(("swlp", j), np.zeros(1)))
+                    nw = nw - k_pw * lo_
                     surge += tv * self._TB_SURGE * amp_w * nw
+                    # (3b) THE DUCT'S OWN WHISTLE.  The inlet pipe's first
+                    # transverse (1,0) mode sits at its cut-on, f = 1.841 c /
+                    # 2 pi a (a the pipe's radius): there it barely propagates,
+                    # so the surge's broadband rings it like a bell -- the
+                    # 'chirp' in every 'tsu', pitched by the pipe, not the
+                    # shaft.  Measured on a turbo intake rig (Pai, Loughborough
+                    # 2015): surge noise carried a tone at 3250 Hz (a 62 mm
+                    # duct: 1.841 x 343 / (2 pi 0.031) = 3243 Hz), and a ribbed
+                    # pipe that broke that radial resonance took up to 10 dB
+                    # off there: a PEAK 10 dB over the broadband's spectrum at
+                    # f10 (both bands' densities: unit rms over (pi/2) f/Q,
+                    # the stall band's shape and the plane-wave split at
+                    # f10).  The duct is the compressor's inlet bore, ~1.2 x
+                    # the inducer (as the whoosh's cut-on above): a big wheel
+                    # rings a deeper 'chu', a small one a higher 'tsi'.
+                    if f10 < nyq:
+                        h2 = 1.0 / (1.0 + self._TB_SW_Q ** 2
+                                    * (f10 / f_sw - f_sw / f10) ** 2)
+                        s2 = abs(1.0 - k_pw / (1.0 + 1.0j)) ** 2
+                        g_r = math.sqrt(10.0 ** (self._TB_DUCT_DB / 10.0) * h2 * s2
+                                        * (f10 / self._TB_DUCT_Q)
+                                        / (f_sw / self._TB_SW_Q))
+                        nr = self._tw_band(noise, f10, self._TB_DUCT_Q, ("duct", j))
+                        surge += tv * self._TB_SURGE * g_r * amp_w * nr
                 # (4) ROTATING STALL at every breakdown and recovery: a narrow
                 # band at ~0.7 x the shaft frequency (Zhang et al., the low-
                 # flow tone; Dehner & Selamet 2019 measured diffuser cells at
@@ -5488,7 +5567,16 @@ class Synthesizer:
             L_eff = _AIRBOX_DUCT_M + (0.61 + 0.85) * a_m
             w_H = 343.0 * math.sqrt(A_m / (_AIRBOX_VOL_X * vd * L_eff))
             Q_H = min(max(w_H * L_eff / u, 0.5), 20.0)
-            x = biquad_lp(x, w_H, Q_H, key + "_box")
+            x_box = biquad_lp(x, w_H, Q_H, key + "_box")
+            if key == "surge":
+                # the compressor's surge noise above the box's cross-mode:
+                # through the chamber and the filter, _AIRBOX_HF_TL_DB down
+                f_x = 343.0 / (2.0 * (_AIRBOX_VOL_X * vd) ** (1.0 / 3.0))
+                b_x, a_x = self._bw(2, f_x, btype="high")
+                x_hf, zi[key + "_boxhf"] = lfilter(
+                    b_x, a_x, x, zi=zi.get(key + "_boxhf", np.zeros(2)))
+                x_box = x_box + 10.0 ** (-_AIRBOX_HF_TL_DB / 20.0) * x_hf
+            x = x_box
         f_a = min(343.0 / (2.0 * math.pi * a_m), sr * 0.45)
         b_i, a_i = self._bw(1, f_a, btype="high")
         y, zi[key + "_rad"] = lfilter(b_i, a_i, x, zi=zi.get(key + "_rad", np.zeros(1)))

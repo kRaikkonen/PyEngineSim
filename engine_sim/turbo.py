@@ -84,6 +84,19 @@ C_REV = 0.07                  # reverse-flow effective area / eye area: the
 C_OPEN = 0.9                  # a stopped / choked wheel's open-area factor
 C_DF = 4.0e-4                 # disk friction + windage: P = C_DF rho U2^3 D2^2
                               #   (Daily & Nece C_M ~ 3e-3, back face)
+C_RC = 0.026                  # RECIRCULATION (churning) at zero net flow:
+                              #   P = C_RC rho U2^3 D2^2, fading out by the
+                              #   surge line.  Below it the impeller keeps
+                              #   pumping the air round inside itself -- work
+                              #   that only heats it (a parasitic loss that
+                              #   grows as the flow falls: Harley et al.); a
+                              #   radial pump at shut-off draws 40-60 % of its
+                              #   best-efficiency power -- the low end here,
+                              #   0.4 x this stage's phi_opt psi_opt (0.064).
+                              #   Without it a surging wheel spent only its disk
+                              #   friction at W = 0 and fluttered for seconds;
+                              #   with it a 7675's flutter fades -7 dB by 0.5 s,
+                              #   within a real one's four lifts (-7..-18, s.17)
 
 # --- the turbine stage ------------------------------------------------------
 DT_OVER_D2 = 0.88             # turbine inducer / compressor exducer
@@ -222,12 +235,16 @@ class Compressor:
 
     def power(self, w, ln):
         """Shaft power absorbed (W): the Euler work on the through-flow (half
-        of it on a reversed flow the wheel churns), plus disk friction."""
+        of it on a reversed flow the wheel churns), plus disk friction, plus
+        the recirculation that takes over below the surge line."""
         u2 = ln["u2"]
         pdf = C_DF * ln["rho"] * u2 ** 3 * self.d2 ** 2
+        prc = C_RC * ln["rho"] * u2 ** 3 * self.d2 ** 2
         if w > 0.0:
-            return w * u2 * u2 * max(self.psi_e(w / ln["scale"]), 0.05) + pdf
-        return -w * u2 * u2 * 0.5 * self.sigma + pdf
+            s = max(1.0 - w / max(ln["w_z"], 1e-9), 0.0)
+            return (w * u2 * u2 * max(self.psi_e(w / ln["scale"]), 0.05) + pdf
+                    + prc * s * s)
+        return -w * u2 * u2 * 0.5 * self.sigma + pdf + prc
 
     def table(self, u2, p01, t01, n=97):
         """Tabulate p01 * Pi_hat and the power over W at this speed, for the
@@ -875,8 +892,17 @@ def build(eng, engine_flow, exhaust_temp, bov_mode="recirc", afr_fn=None,
         u2_d = min(u2_d, 600.0)                    # billet / titanium limit
         d2 *= math.sqrt(w_d / max(w_des, 1e-6))
         d2 = min(max(d2, 0.030), 0.140)
+    d2_named = float(getattr(eng, "turbo_d2_mm", 0.0) or 0.0) * 1.0e-3
+    if d2_named > 0.0:
+        # a NAMED turbo (a Precision 7675): its published exducer IS the
+        # compressor -- the same tip speed makes the boost, so it spins slower
+        # by d2 -- and its hot side (the tuner's A/R) is solved below for the
+        # build's full-boost rpm, like any match
+        d2 = min(max(d2_named, 0.030), 0.140)
     omega_max = 1.15 * 2.0 * u2_d / d2
     v_p = V_P_PER_VD * eng.total_displacement
+    if float(getattr(eng, "charge_air_l", 0.0) or 0.0) > 0.0:
+        v_p = float(eng.charge_air_l) * 1.0e-3     # the build's own pipes + core
     bov_cda = 0.6 * math.pi / 4.0 * (BOV_D_REF * math.sqrt(max(w_air_d, 0.02) / 0.20)) ** 2
     ext_wg = getattr(eng, "wastegate", "internal") == "external"
     ball = getattr(eng, "turbo_ball_bearing", False)
@@ -935,6 +961,8 @@ def build(eng, engine_flow, exhaust_temp, bov_mode="recirc", afr_fn=None,
     # x s -- flow capacities x s^2, the rotor's inertia x s^5.  Full boost then
     # moves (later for a big one) by physics, not by a setting.
     s = min(max(float(getattr(eng, "turbo_size", 1.0) or 1.0), 0.5), 2.0)
+    if d2_named > 0.0:
+        s = 1.0                                    # already the named wheel
     if abs(s - 1.0) > 1e-6:
         units = [TurboUnit(d2 * s, 1e-3, 1e-3, ball, name="turbo%d" % (i + 1))
                  for i in range(n)]
