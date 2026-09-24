@@ -353,7 +353,8 @@ class TruthCylinder:
     """One representative cylinder + its runner gas systems + flame model —
     the CombustionChamber port, driven by prescribed crank kinematics."""
 
-    def __init__(self, eng, spark_advance_fn=None, boost_bar=0.0, rpm=None):
+    def __init__(self, eng, spark_advance_fn=None, boost_bar=0.0, rpm=None,
+                 p_intake=None, t_intake=None, p_exh_back=None):
         cyl = eng.cylinders[0]
         self.bore = cyl.bore
         self.stroke = cyl.stroke
@@ -479,6 +480,16 @@ class TruthCylinder:
         # bit ABOVE boost (P3/P2 ~ 1.0-1.4).  Scale gently with boost.
         self.p_exh_back = (1.0 + 1.15 * self.boost_bar) * ATM if self.boost_bar > 0 \
             else ATM
+        # ...or the engine's OWN operating point, given from outside: the
+        # manifold pressure the runtime breathing solved (feed it through a
+        # wide-open plate), the charge temperature, the turbine's real
+        # back-pressure (cycle_flows)
+        if p_intake is not None:
+            self.p_intake = float(p_intake)
+        if t_intake is not None:
+            self.t_intake = float(t_intake)
+        if p_exh_back is not None:
+            self.p_exh_back = float(p_exh_back)
 
         # cylinder gas system
         self.gas = GasSystem(ATM, self.Vc + 0.5 * self.Vd, T_AMB, AIR_MIX,
@@ -869,16 +880,19 @@ def exhaust_pressure_pulse(eng, rf, throttle=1.0, dphi=1.0, N=128,
 
 def exhaust_pulse_with_amplitude(eng, rf, throttle=1.0, dphi=1.0, N=360,
                                  spark_advance_fn=None, warmup=6,
-                                 intake=False):
+                                 intake=False, boost_bar=None):
     """The exhaust-valve FLOW burst over one cycle (peak-normalised, as
     exhaust_pressure_pulse) AND the exhaust-runner pressure pulse's peak
     amplitude over its cycle mean, in pascals -- the wave's physical size,
     which sets how hard it steepens down the pipe.  (The lumped runner's own
     velocity is no use for that: a 0-D volume averages the density the wave
-    carries, so it reads supersonic; its PRESSURE is sound.)"""
+    carries, so it reads supersonic; its PRESSURE is sound.)  ``boost_bar``:
+    the boost there (a turbo machine's steady state); None: a spool guess."""
     rpm = max(rf * eng.redline_rpm, eng.idle_rpm)
     b_max = getattr(eng, "boost_bar", 0.0)
-    if b_max > 0.0 and throttle > 0.15:
+    if boost_bar is not None:
+        boost_bar = max(float(boost_bar), 0.0)
+    elif b_max > 0.0 and throttle > 0.15:
         spool = (rpm / max(eng.redline_rpm, 1.0)
                  - getattr(eng, "turbo_spool_frac", 0.12)) \
             / max(getattr(eng, "turbo_spool_width", 0.5), 1e-3)
@@ -919,6 +933,113 @@ def exhaust_pulse_with_amplitude(eng, rf, throttle=1.0, dphi=1.0, N=360,
         return ([v / peak for v in out], max(pres) - p_mean, p_mean,
                 [v / peak for v in resample(iflow)])
     return [v / peak for v in out], max(pres) - p_mean, p_mean
+
+
+PLATE_OPEN = 10.0       # the plate's conductance, held open (loss x 1/100)
+START_CYCLES = 2        # a fresh cylinder's firing cycles at ambient back-pressure
+
+
+def cycle_flows(eng, rpm, p_intake, t_intake=T_AMB, p_exh_back=ATM,
+                dphi=2.0, N=360, spark_advance_fn=None):
+    """One converged cycle at an operating point given from outside (see
+    cycle_flows_walk, of which this is the one-point case).
+
+    ``p_intake`` the manifold pressure the runtime breathing solved (a
+    part-throttle vacuum, or a turbo's plenum) -- the plate is held open, so
+    the plenum sits there; ``t_intake`` the charge temperature; ``p_exh_back``
+    the pressure the collector discharges into (a turbine's inlet, or the
+    exhaust system's).  Returns the intake- and exhaust-valve flows over the
+    cycle in ABSOLUTE units -- moles per crank degree, resampled to N points
+    (phi = 0 at intake TDC) -- with the exhaust runner's pressure swing (peak
+    over mean, Pa) and mean, and the plenum's mean pressure."""
+    return cycle_flows_walk(eng, rpm, [(p_intake, t_intake, p_exh_back)],
+                            dphi=dphi, N=N, spark_advance_fn=spark_advance_fn)[0]
+
+
+def cycle_flows_walk(eng, rpm, points, dphi=2.0, N=360, tol=0.02,
+                     min_cycles=3, max_cycles=16, spark_advance_fn=None):
+    """cycle_flows over several operating points at one rpm, walked in the
+    given order with the cylinder carried along (warm start).
+
+    ``points``: (p_intake, t_intake, p_exh_back) tuples.  The plate is held
+    open (its conductance x PLATE_OPEN): the manifold pressure given already
+    carries the throttle's loss.  A fresh cylinder first fires against the
+    ambient back-pressure until it runs -- started straight into a back-
+    pressure above its intake at high speed the solver latches onto a dead
+    state, the charge reversing through the ports; a running one carried
+    there stays physical (and a real engine's back-pressure is its own
+    flow's): START_CYCLES firing cycles do.  Each point runs until two
+    successive cycles each move the net intake and exhaust flows by less
+    than ``tol`` (after ``min_cycles``).
+    Returns one dict per point: the flows (moles/deg, N points), the exhaust
+    runner's swing ``dp`` and mean, the plenum's mean ``map``, the ``cycles``
+    run, and ``ok`` -- a running engine (both net flows positive, their
+    ratio within 30 % of the burn's mole gain)."""
+
+    def one_cycle(cyl, rec):
+        iflow, eflow, pres, plen = [], [], [], []
+        phi = 0.0
+        while phi < 720.0:
+            fi, fe = cyl.step(phi + dphi, dphi, rpm, 1.0)
+            if rec:
+                iflow.append(fi / dphi)
+                eflow.append(fe / dphi)
+                pres.append(cyl.exhaust_runner.pressure())
+                plen.append(cyl.plenum.pressure())
+            else:
+                iflow.append(fi)
+                eflow.append(fe)
+            phi += dphi
+        return iflow, eflow, pres, plen
+
+    def settle(cyl, rec):
+        last, calm, out = None, 0, None
+        for cyc in range(max_cycles):
+            out = one_cycle(cyl, rec)
+            si, se = sum(out[0]), sum(out[1])
+            if last is not None:
+                li, le = last
+                if (abs(si - li) <= tol * max(abs(si), 1e-12)
+                        and abs(se - le) <= tol * max(abs(se), 1e-12)):
+                    calm += 1
+                else:
+                    calm = 0
+                if calm >= 2 and cyc + 1 >= min_cycles:
+                    break
+            last = (si, se)
+        return out, cyc + 1
+
+    cyl = None
+    res = []
+    for p_in, t_in, p_back in points:
+        if cyl is None:
+            cyl = TruthCylinder(eng, spark_advance_fn, rpm=rpm, p_intake=p_in,
+                                t_intake=t_in, p_exh_back=ATM)
+            cyl.k_throttle *= PLATE_OPEN
+            # start-up: fire, then load it (1 or 2 cycles land on exactly the
+            # point a full settle does; none leaves an F2004 dead at 18.5k)
+            for _ in range(START_CYCLES):
+                one_cycle(cyl, False)
+        cyl.p_intake, cyl.t_intake, cyl.p_exh_back = p_in, t_in, p_back
+        (iflow, eflow, pres, plen), cycles = settle(cyl, True)
+        n = len(iflow)
+
+        def resample(tr):
+            r_ = []
+            for i in range(N):
+                x = i * (n - 1) / max(N - 1, 1)
+                i0 = int(x)
+                i1 = min(i0 + 1, n - 1)
+                r_.append(tr[i0] + (tr[i1] - tr[i0]) * (x - i0))
+            return r_
+        si, se = sum(iflow), sum(eflow)
+        ok = si > 0.0 and se > 0.0 and 0.75 < se / si < 1.4
+        p_mean = sum(pres) / max(len(pres), 1)
+        res.append({"intake": resample(iflow), "exhaust": resample(eflow),
+                    "dp": max(pres) - p_mean, "p_mean": p_mean,
+                    "map": sum(plen) / max(len(plen), 1), "cycles": cycles,
+                    "ok": ok})
+    return res
 
 
 def exhaust_pulse_lut(eng, rpms=(0.30, 0.55, 0.85), N=128, spark_advance_fn=None):

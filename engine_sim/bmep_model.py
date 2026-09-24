@@ -76,10 +76,13 @@ def charge_temp(eng, mapf, ic_soak=0.0):
     return t2 - eps * (t2 - T_AMB)                    # NA (mapf<=1) stays ambient
 
 
-def torque_target(eng, rpm, mapf, ve):
+def torque_target(eng, rpm, mapf, ve, pr_comp=None):
     """Physical cycle-mean crank torque (N*m) at manifold fraction ``mapf``
     (p_man/p_atm) with volumetric efficiency ``ve`` (from the P1 white-box
-    table).  Friction is NOT included — the sim subtracts its own loss model."""
+    table).  Friction is NOT included — the sim subtracts its own loss model.
+    ``pr_comp``: the compressor's pressure ratio, when a throttle sits between
+    it and the manifold (a turbo at part throttle: the charge was heated by
+    the plenum's compression, not the manifold's); None: mapf."""
     cr = eng.cylinders[0].compression_ratio
     eta_cyc = 1.0 - cr ** (1.0 - GAMMA_CYC)
     diesel = _is_diesel(eng)
@@ -92,7 +95,7 @@ def torque_target(eng, rpm, mapf, ve):
     # power than its boost pressure implies.  NA (mapf<=1) stays at ambient.
     # Computed FIRST because both the density AND the knock tendency depend on it.
     # (Shared charge_temp() — the same formula exhaust_gas_temp / knock read.)
-    t_man = charge_temp(eng, mapf)
+    t_man = charge_temp(eng, mapf if pr_comp is None else max(pr_comp, 1.0))
     rho = mapf * P_ATM / (R_AIR * t_man)
     # KNOCK (white-box, COUPLED to the real cycle — was boost alone): the end-gas
     # auto-ignites from the peak COMPRESSION STATE, so the knock index ~

@@ -500,6 +500,10 @@ class PortableRNG:
 
 
 from .engine import P_ATM
+try:                                    # the throttle plate's area law
+    from . import map_model as _map_model
+except Exception:                       # pragma: no cover
+    _map_model = None
 try:                                    # the turbocharger as a machine
     from . import turbo as turbo_mod
 except Exception:                       # pragma: no cover
@@ -2621,11 +2625,13 @@ class Synthesizer:
             phys = self.vx.get("phys_voice", False)
             gp = self._gas_pulse_at(sim.rpm, load) \
                 if (self.vx.get("gas_pulse") or phys) else None
-            # the solver's exhaust pulse the scale is taken from: the physical
-            # voice's, or -- for the classic chain's intake -- the baked one
-            r_ex = gp if gp is not None else self._inl_shape(sim.rpm, 1)
+            # THE INTAKE AT THIS OPERATING POINT (closed loop): the solver's
+            # intake- and exhaust-valve flows at the engine's own speed and
+            # manifold pressure (_bake_intake)
+            pt = self._inl_point(sim.rpm, sim._manifold_pressure() / P_ATM)
             self._inl_scale = None
-            if r_ex is not None:
+            self._inl_q = None
+            if gp is not None or pt is not None:
                 ref = np.arange(0.0, 720.0, 1.0)
                 rd = ref - VALVE_OPEN
                 rdd = np.clip(rd, 0.0, None)
@@ -2643,11 +2649,20 @@ class Synthesizer:
                 r_par = np.where(rin, ((0.78 + 0.22 * pk_) * r_blow
                                        + 0.7 * (1.22 - 0.22 * pk_) * r_disp)
                                  * r_cl, 0.0)
-                r_gas = np.interp(ref, self._inl_deg if gp is None
-                                  else self._gp_deg, r_ex, period=720.0)
-                gp_scale = math.sqrt(float(np.mean(r_par * r_par))
-                                     / max(float(np.mean(r_gas * r_gas)), 1e-18))
-                self._inl_scale = gp_scale * strength
+                e_par = float(np.mean(r_par * r_par))
+                if gp is not None:
+                    r_gas = np.interp(ref, self._gp_deg, gp, period=720.0)
+                    gp_scale = math.sqrt(e_par / max(float(np.mean(r_gas * r_gas)),
+                                                     1e-18))
+                if pt is not None:
+                    # the classic chain's pulses carry r_par's energy: the
+                    # solver's exhaust flow HERE is scaled to it and its intake
+                    # flow with it, so intake : exhaust is the cycle's own at
+                    # every speed and charge (absolute flows: moles/deg)
+                    r_pt = np.interp(ref, self._inl_deg, pt[0], period=720.0)
+                    self._inl_scale = math.sqrt(
+                        e_par / max(float(np.mean(r_pt * r_pt)), 1e-30)) * strength
+                    self._inl_q = pt[1]
             inflow = np.zeros(frames) if (gp is not None and phys) else None
             # (the physical voice weights each cylinder's own pulse on its
             # structural path: see _struct_gain)
@@ -2720,10 +2735,17 @@ class Synthesizer:
                         # its intake stroke, at its own phase (no header
                         # delay) -- and the same for every cylinder: the
                         # burn's scatter (amp_j) is not in the air it draws,
-                        # and the trumpets share one airbox
-                        inflow += np.interp(np.mod(crank + off, 720.0),
-                                            self._gp_deg, self._gp_intake,
-                                            period=720.0) * gp_scale
+                        # and the trumpets share one airbox.  The flow at this
+                        # operating point (scaled below), else the pulse
+                        # LUT's wide-open one
+                        if self._inl_q is not None:
+                            inflow += np.interp(np.mod(crank + off, 720.0),
+                                                self._inl_deg, self._inl_q,
+                                                period=720.0)
+                        else:
+                            inflow += np.interp(np.mod(crank + off, 720.0),
+                                                self._gp_deg, self._gp_intake,
+                                                period=720.0) * gp_scale
                 # per-cylinder runner HF damping (longer/thinner runner = duller)
                 if use_voice:
                     pulse = voice.damp(j, pulse)
@@ -2739,9 +2761,10 @@ class Synthesizer:
             # thing a reimplementation has to get right, and the tap it is
             # held to (tools/export_pulses.py)
             self._tap("pulses", chans[0])
-            self._phys_inflow = (inflow * strength) if (gp is not None and phys
-                                                       and inflow is not None) \
-                else None
+            self._phys_inflow = (
+                (inflow * self._inl_scale) if self._inl_q is not None
+                else inflow * strength) \
+                if (gp is not None and phys and inflow is not None) else None
             # what the block feels beyond the plain train: sum of (w - 1) x
             # each cylinder's pulse, at the scale the train reaches the bang
             self._phys_blk_dev = (blk_dev * (0.55 * strength)) \
@@ -3489,12 +3512,13 @@ class Synthesizer:
                 # other noise layer -- stays exactly where it was
                 self._rng.standard_normal(frames)
             if not phys_ and getattr(self, "_inl_scale", None) is not None:
-                q = self._inl_flow(crank, sim.rpm)
+                q = self._inl_flow(crank)
                 if q is not None:
                     t_ratio = 300.0 / max(sim.exhaust_gas_temp(), 300.0)
                     # (P["intake"] trims it; 0.11, its default, = as derived)
                     trim = P["intake"] / 0.11
-                    src = (0.55 * t_ratio * self._inl_scale * trim) * q
+                    src = (0.55 * t_ratio * self._inl_scale * trim
+                           * self._throttle_T()) * q
                     bayi = bayi + self._intake_radiate(src, "eng")
 
         # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
@@ -3518,8 +3542,13 @@ class Synthesizer:
             # screamers (the trumpets are short quarter-wave horns, they carry
             # their harmonics almost undiminished).
             scrm = sim.engine.redline_rpm >= 11000.0
+            # its level follows the air the trumpets draw: the intake flow
+            # at this charge over wide open's at this speed, through the
+            # plates (was 0.15 + 0.85 x pedal; wide open, as voiced)
+            draw = self._intake_draw()
             howl_gain = (0.38 if scrm else 0.16) \
-                * (0.15 + 0.85 * thr) * rpm_frac ** 1.5
+                * ((0.15 + 0.85 * thr) if draw is None else draw) \
+                * rpm_frac ** 1.5
             if howl_gain > 1e-4 and 20.0 < fire_hz < self.sample_rate * 0.4:
                 hset = ([(1, 1.0), (2, 0.9), (3, 0.8), (4, 0.68), (5, 0.55),
                          (6, 0.42), (8, 0.25), (10, 0.14)] if scrm else
@@ -3544,7 +3573,7 @@ class Synthesizer:
             f_a = min(343.0 / (2.0 * math.pi
                                * max(self._intake_mouth_radius(), 0.01)),
                       self.sample_rate * 0.45)
-            src_in = (0.55 * t_ratio) * q_in
+            src_in = (0.55 * t_ratio * self._throttle_T()) * q_in
             # THE AIRBOX: the trumpets draw from a plenum (volume V) fed
             # through the inlet duct (the mouth's area A, length L), so the
             # mouth's volume flow is theirs through a Helmholtz resonator --
@@ -4985,48 +5014,113 @@ class Synthesizer:
                 self.cylinder_light[i] = 1.0
 
     _INL_GRID = (0.15, 0.45, 0.75, 1.0)
+    _INL_MAP = (0.65, 0.35)     # part loads (manifold / atmosphere) under WOT
 
     def _bake_intake(self):
-        """The intake valve's flow over one cycle at four speeds, from the gas
-        solver (the physical voice's solver; 2-degree steps, ~0.15 s a car),
-        with the exhaust valve's for the same cycles -- the classic chain's
-        pulses are scaled to the latter, so the intake keeps the solver's own
-        ratio to them."""
+        """The intake and exhaust valves' flows over one cycle at the engine's
+        OWN operating points (closed loop): four speeds x the wide-open
+        manifold pressure -- the machine's steady boost through the plate --
+        and two part loads under it (a turbo car's atmospheric point too),
+        each at the charge temperature and the exhaust back-pressure the
+        runtime solves there (Simulator._air_from_map, exhaust_back_pressure:
+        the turbine's inlet, or the cat and muffler's).  The gas solver walks
+        one cylinder from point to point (gas_truth.cycle_flows_walk, 2-degree
+        steps, ~0.5 s a car); points where it is not a running engine are
+        dropped.  Absolute units (moles per crank degree): the live chain
+        scales the exhaust flow at its point to its pulses and the intake
+        with it.  Kept on the simulator -- a device change builds a new
+        synthesizer on the same engine and reuses it."""
+        sim = self.sim
+        self._inl_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
+        cache = getattr(sim, "_inl_bake", None)
+        if cache is not None and cache[0] == self._GP_N:
+            self._inl = cache[1]
+            return
+        for _ in range(2):              # (once more if it throws)
+            self._inl = self._bake_intake_rows()
+            if self._inl is not None:
+                sim._inl_bake = (self._GP_N, self._inl)
+                return
+
+    def _bake_intake_rows(self):
+        """The rows of _bake_intake: (rpm, MAPs, exhaust flows, intake flows)
+        per speed; None if the solver cannot run for this engine."""
+        sim = self.sim
         try:
-            from .gas_truth import exhaust_pulse_with_amplitude
-            eng = self.sim.engine
-            ex, inn = [], []
+            from .gas_truth import cycle_flows_walk
+            eng = sim.engine
+            ts = getattr(sim, "turbo", None)
+            rows = []
             for rf in self._INL_GRID:
-                sh, _dp, _pm, ish = exhaust_pulse_with_amplitude(
-                    eng, rf, dphi=2.0, N=self._GP_N, warmup=3, intake=True)
-                ex.append(np.asarray(sh, dtype=np.float64))
-                inn.append(np.asarray(ish, dtype=np.float64))
-            if not (np.isfinite(ex).all() and np.isfinite(inn).all()):
-                raise ValueError("non-finite solver output")
-            self._inl = (np.asarray(self._INL_GRID, dtype=np.float64),
-                         np.asarray(ex), np.asarray(inn))
-            self._inl_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
+                rpm = max(rf * eng.redline_rpm, eng.idle_rpm)
+                b = 0.0
+                if ts is not None:
+                    b, _ = ts.steady(rpm, 1.0, sim._turbo_flow, sim._turbo_t03,
+                                     wg_closed=False, w_iters=24)
+                    b = max(b, 0.0)
+                elif eng.induction != "na" and eng.boost_bar > 0.0:
+                    lut = sim._boost_table()
+                    b = (float(lut.eval2(rpm, 1.0)) if lut is not None
+                         else eng.boost_bar)
+                m_wot = sim._map_at(rpm, 1.0, b * 1.0e5,
+                                    True if ts is not None else None) / P_ATM
+                ms = [m_wot] + ([1.0] if ts is not None and m_wot > 1.05 else []) \
+                    + [m for m in self._INL_MAP if m < m_wot - 0.05]
+                pts = []
+                for m in ms:
+                    # (upstream of the plate -- a turbo's plenum: the manifold
+                    #  wide open, ~ambient throttled -- sets its charge heat)
+                    _, _, t_man, _ = sim._air_from_map(rpm, m * P_ATM,
+                                                       max(m, 1.0) * P_ATM)
+                    pts.append((m * P_ATM, t_man,
+                                sim.exhaust_back_pressure(rpm, m) * P_ATM))
+                res = cycle_flows_walk(eng, rpm, pts, dphi=2.0, N=self._GP_N)
+                good = sorted(((m, r) for m, r in zip(ms, res) if r["ok"]),
+                              key=lambda x: x[0])
+                if not good:
+                    continue
+                ex = np.asarray([r["exhaust"] for _, r in good], dtype=np.float64)
+                inn = np.asarray([r["intake"] for _, r in good], dtype=np.float64)
+                if np.isfinite(ex).all() and np.isfinite(inn).all():
+                    rows.append((rpm, np.asarray([m for m, _ in good]), ex, inn))
+            return rows or None
         except Exception:
-            self._inl = None
-
-    def _inl_shape(self, rpm, which):
-        """The baked exhaust (which=1) or intake (2) flow at this rpm."""
-        if self._inl is None:
             return None
-        grid = self._inl[0]
-        v = rpm / max(self.sim.engine.redline_rpm, 1.0)
-        tab = self._inl[which]
-        if v <= grid[0]:
-            return tab[0]
-        if v >= grid[-1]:
-            return tab[-1]
-        i = int(np.searchsorted(grid, v))
-        t = (v - grid[i - 1]) / (grid[i] - grid[i - 1])
-        return (1.0 - t) * tab[i - 1] + t * tab[i]
 
-    def _inl_flow(self, crank, rpm):
-        """The intake flow of every cylinder, each at its own phase."""
-        shape = self._inl_shape(rpm, 2)
+    def _inl_point(self, rpm, mapf):
+        """The baked (exhaust, intake) flows at this speed and manifold
+        pressure: across each speed's charges, then across speeds (held at
+        the ends).  None if the bake failed."""
+        rows = self._inl
+        if not rows:
+            return None
+
+        def at(row):
+            ms, ex, inn = row[1], row[2], row[3]
+            if mapf <= ms[0]:
+                return ex[0], inn[0]
+            if mapf >= ms[-1]:
+                return ex[-1], inn[-1]
+            j = int(np.searchsorted(ms, mapf))
+            u = (mapf - ms[j - 1]) / (ms[j] - ms[j - 1])
+            return ((1.0 - u) * ex[j - 1] + u * ex[j],
+                    (1.0 - u) * inn[j - 1] + u * inn[j])
+        if rpm <= rows[0][0]:
+            return at(rows[0])
+        if rpm >= rows[-1][0]:
+            return at(rows[-1])
+        i = 1
+        while rows[i][0] < rpm:
+            i += 1
+        t = (rpm - rows[i - 1][0]) / (rows[i][0] - rows[i - 1][0])
+        e0, q0 = at(rows[i - 1])
+        e1, q1 = at(rows[i])
+        return (1.0 - t) * e0 + t * e1, (1.0 - t) * q0 + t * q1
+
+    def _inl_flow(self, crank):
+        """The intake flow at this operating point, every cylinder at its own
+        phase."""
+        shape = getattr(self, "_inl_q", None)
         if shape is None:
             return None
         q = np.zeros(len(crank))
@@ -5034,6 +5128,55 @@ class Synthesizer:
             q += np.interp(np.mod(crank + off, 720.0), self._inl_deg, shape,
                            period=720.0)
         return q
+
+    def _intake_draw(self):
+        """The intake flow the valves draw at this operating point over wide
+        open's at this speed (RMS of the baked flows), through the throttle
+        plates: 1 wide open; None without a bake."""
+        q = getattr(self, "_inl_q", None)
+        if q is None:
+            return None
+        sim = self.sim
+        if sim._effective_throttle() >= 1.0:
+            return 1.0
+        fed = True if getattr(sim, "turbo", None) is not None else None
+        w = self._inl_point(sim.rpm, sim._map_at(sim.rpm, 1.0, sim.boost * 1.0e5,
+                                                 fed) / P_ATM)
+        if w is None:
+            return None
+        r = math.sqrt(float(np.mean(q * q))
+                      / max(float(np.mean(w[1] * w[1])), 1e-30))
+        return r * self._throttle_T()
+
+    def _throttle_T(self):
+        """The throttle plate's acoustic transmission, relative to wide open.
+
+        The valves' pulsation reaches the inlet through the plate: an orifice
+        of open-area fraction a (of its bore) carrying the jet its pressure
+        drop drives, at Mach M (isentropic; sonic below the critical ratio).
+        Linearised, the jet's dynamic head (d(rho U^2/2) = rho U dU, with
+        dU = du / a) is a series resistance zeta = M / a (specific), so a wave
+        crossing it keeps T = 1 / (1 + M/2a) of its pressure (equal ducts either
+        side).  Wide open (a = 1, M ~0.2): ~0.9; closed at idle (a ~0.03, the
+        jet sonic): ~2a, -25 dB.  Relative to wide open at this speed, from
+        the same upstream -- full throttle, where the fleet was voiced, is as
+        it was."""
+        sim = self.sim
+        t = sim._effective_throttle()
+        if _map_model is None or t >= 1.0:
+            return 1.0
+        fed = True if getattr(sim, "turbo", None) is not None else None
+        boost_pa = sim.boost * 1.0e5
+        p_up = max(P_ATM + boost_pa, 1.0)
+        p_w = sim._map_at(sim.rpm, 1.0, boost_pa, fed)
+        a = max(_map_model.throttle_area(t, sim._map_idle_area), 1e-3)
+
+        def mach(pr):
+            pr = min(max(pr, _map_model.CRIT), 1.0)
+            return math.sqrt(5.0 * (pr ** (-0.4 / 1.4) - 1.0))
+        T = 1.0 / (1.0 + mach(sim._manifold_pressure() / p_up) / (2.0 * a))
+        T_w = 1.0 / (1.0 + mach(p_w / p_up) / 2.0)
+        return min(T / T_w, 1.0)
 
     def _intake_radiate(self, src, key):
         """The car's inlet between a source and the air, then the mouth.
@@ -5124,9 +5267,17 @@ class Synthesizer:
                 eng = self.sim.engine
                 self._gp_deg = np.arange(self._GP_N) * (720.0 / self._GP_N)
                 lut, ilut = [], []
+                ts_ = getattr(self.sim, "turbo", None)
                 for rf in self._GP_GRID:
+                    b_ = None
+                    if ts_ is not None:
+                        # the machine's steady wide-open boost there
+                        b_, _ = ts_.steady(max(rf * eng.redline_rpm, eng.idle_rpm),
+                                           1.0, self.sim._turbo_flow,
+                                           self.sim._turbo_t03, wg_closed=False,
+                                           w_iters=24)
                     shape, dp, pm, ishape = exhaust_pulse_with_amplitude(
-                        eng, rf, N=self._GP_N, intake=True)
+                        eng, rf, N=self._GP_N, intake=True, boost_bar=b_)
                     shape = np.asarray(shape, dtype=np.float64)
                     ilut.append(np.asarray(ishape, dtype=np.float64))
                     r_ = max(rf * eng.redline_rpm, eng.idle_rpm)

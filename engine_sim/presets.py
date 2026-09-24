@@ -3298,37 +3298,43 @@ _HOT_CAM = frozenset({"4", "488", "pista", "f355", "nsx", "ek9", "ep3", "fk8",
 # Physically bounded to [0.82, 1.15] (a real head peaks ~1.05-1.15 with ram tuning;
 # rotaries a touch higher) so the numbers stay PHYSICAL — this is a measured peak-VE,
 # not a curve fudge.  Fleet lands median 1.00 / 108-of-130 within +-10% of spec.
+# RE-SOLVED 2026-09-24 on the closed-loop exhaust back-pressure (the VE's residual
+# term now reads the turbine's real inlet pressure -- gate open below boost, where
+# the old estimate choked the NA column -- and an NA car's cat-and-muffler law):
+# every car off the bounds is back on its level within 0.3 %; valhalla hit the cap
+# (-2 %); the capped high-boost turbos lost 2-6 % (mp44 s1 deltas4 rs200 hoonrs a45
+# hoonitruck sf25 one1 actros) -- their real fix is their boost, not this table.
 # NOT reached within the physical cap (genuinely high specific-output — F1, rotary,
 # extreme-boost race): atomv8 7 f2007 f50gt sf25 rs200 ek9 ep3 hoonrs one1 deltas4
 # 787b rx7 mp44 pro2 speed12.  Run OVER (torque-LIMITED turbos the open Otto+boost
 # model overshoots; real fix is a torque limiter): db11 z28 e63 sl65 930 9.
 _VE_MAX = {
-    '0': 0.971, '1': 0.888, '2': 1.03, '22b': 0.872, '250cal': 1.15, '3': 1.083,
-    '330i': 1.109, '4': 1.093, '488': 0.891, '5': 1.026, '6': 1.034, '7': 1.15,
-    '787b': 1.4, '8': 0.883, '9': 0.95, '917': 1.15, '918': 1.15, '930': 0.92,
-    '991rs': 1.148, '993gt2': 0.82, '996gt1': 0.957, '997rs4': 1.15, 'a45': 1.15,
-    'ab500': 0.929, 'actros': 1.15, 'ae86': 1.15, 'amggt': 0.824, 'atomv8': 1.15,
-    'audiv8': 1.028, 'aven': 1.004, 'b48': 0.878, 'bentss': 0.82, 'bmwv8': 0.82,
-    'boneshaker': 0.917, 'borav5': 1.027, 'c63bs': 0.931, 'c7': 0.953, 'cgt': 1.003,
-    'challenger': 0.988, 'charger': 0.903, 'chevyss': 0.883, 'clkgtr': 1.056,
-    'conti': 0.82, 'corradovr6': 0.914, 'countach': 1.002, 'crs27': 1.044,
-    'ct5v': 0.832, 'd8gto': 0.99, 'db11': 1.0, 'deltas4': 1.15, 'diablo': 0.967,
-    'e36m3': 1.15, 'e60m5': 0.975, 'e63': 1.0, 'e92m3': 1.047, 'ek9': 1.15,
-    'enzo': 1.033, 'ep3': 1.15, 'escrs': 0.82, 'evo7': 0.955, 'f2007': 1.15,
-    'f355': 1.122, 'f40': 0.921, 'f450': 0.9, 'f50gt': 1.15, 'fd370z': 0.999,
-    'fdviper': 0.992, 'fk8': 0.966, 'focus3': 1.041, 'fordgt': 1.058, 'ftype': 0.82,
-    'funco': 1.062, 'fxxk': 1.116, 'gdb': 0.917, 'giulia': 0.986, 'golfvr6': 0.872,
-    'gt2rs': 0.905, 'gt3': 1.15, 'gt350r': 1.027, 'gt40': 0.923, 'gt500': 0.973,
-    'gts': 1.002, 'gv': 0.861, 'hoonitruck': 1.15, 'hoonrs': 1.15, 'hura': 1.114,
-    'ironknight': 1.15, 'lafe': 1.082, 'm3gtr': 1.145, 'merlin': 0.938, 'mf1': 1.073,
-    'mp44': 1.15, 'nsx': 1.053, 'one1': 1.15, 'p1': 0.939, 'p205': 1.113,
-    'pete': 0.82, 'pista': 0.936, 'pro2': 1.15, 'r34': 0.82, 'r35': 0.93,
-    'r390': 0.941, 'raptor': 0.88, 'rs200': 1.15, 'rs3': 0.936, 'rs5': 0.882,
-    'rtr': 1.083, 'rx7': 1.4, 'rx7fc': 1.276, 's1': 1.15, 's15': 0.894,
-    'senna': 0.971, 'sf25': 1.15, 'singer': 1.15, 'sl65': 1.0, 'speed12': 1.15,
-    't100': 0.988, 'titan': 0.82, 'valhalla': 1.137, 'valk': 1.15, 'veyron': 0.936,
-    'viper': 1.037, 'vt15r': 0.942, 'vulcan': 1.15, 'w154': 1.089, 'wildcat': 0.82,
-    'xj220': 0.904, 'z28': 0.892, 'zonda': 1.062, 'zondar': 1.15,
+    '0': 1.002, '1': 0.885, '2': 1.062, '22b': 0.905, '250cal': 1.15, '3': 1.088,
+    '330i': 1.12, '4': 1.098, '488': 0.919, '5': 1.03, '6': 1.037, '7': 1.15,
+    '787b': 1.4, '8': 0.886, '9': 0.95, '917': 1.15, '918': 1.15, '930': 0.92,
+    '991rs': 1.15, '993gt2': 0.82, '996gt1': 1.005, '997rs4': 1.15, 'a45': 1.15,
+    'ab500': 0.943, 'actros': 1.15, 'ae86': 1.15, 'amggt': 0.847, 'atomv8': 1.15,
+    'audiv8': 1.03, 'aven': 1.005, 'b48': 0.902, 'bentss': 0.82, 'bmwv8': 0.82,
+    'boneshaker': 0.917, 'borav5': 1.038, 'c63bs': 0.934, 'c7': 0.964, 'cgt': 1.007,
+    'challenger': 0.995, 'charger': 0.913, 'chevyss': 0.89, 'clkgtr': 1.061,
+    'conti': 0.82, 'corradovr6': 0.923, 'countach': 1.004, 'crs27': 1.051,
+    'ct5v': 0.837, 'd8gto': 1.032, 'db11': 1.0, 'deltas4': 1.15, 'diablo': 0.973,
+    'e36m3': 1.15, 'e60m5': 0.979, 'e63': 1.0, 'e92m3': 1.054, 'ek9': 1.15,
+    'enzo': 1.037, 'ep3': 1.15, 'escrs': 0.82, 'evo7': 0.978, 'f2007': 1.15,
+    'f355': 1.123, 'f40': 0.954, 'f450': 0.913, 'f50gt': 1.15, 'fd370z': 1.004,
+    'fdviper': 0.997, 'fk8': 1.007, 'focus3': 1.054, 'fordgt': 1.092, 'ftype': 0.82,
+    'funco': 1.067, 'fxxk': 1.116, 'gdb': 0.941, 'giulia': 1.019, 'golfvr6': 0.881,
+    'gt2rs': 0.95, 'gt3': 1.15, 'gt350r': 1.032, 'gt40': 0.928, 'gt500': 0.973,
+    'gts': 1.008, 'gv': 0.89, 'hoonitruck': 1.15, 'hoonrs': 1.15, 'hura': 1.118,
+    'ironknight': 1.15, 'lafe': 1.083, 'm3gtr': 1.15, 'merlin': 0.932, 'mf1': 1.078,
+    'mp44': 1.15, 'nsx': 1.051, 'one1': 1.15, 'p1': 0.969, 'p205': 1.15, 'pete': 0.82,
+    'pista': 0.965, 'pro2': 1.15, 'r34': 0.82, 'r35': 0.952, 'r390': 0.982,
+    'raptor': 0.905, 'rs200': 1.15, 'rs3': 0.971, 'rs5': 0.917, 'rtr': 1.085,
+    'rx7': 1.4, 'rx7fc': 1.315, 's1': 1.15, 's15': 0.921, 'senna': 0.999, 'sf25': 1.15,
+    'singer': 1.15, 'sl65': 1.0, 'speed12': 1.15, 't100': 0.993, 'titan': 0.82,
+    'valhalla': 1.15, 'valk': 1.15, 'veyron': 0.962, 'viper': 1.044, 'vt15r': 0.98,
+    'vulcan': 1.15, 'w154': 1.098, 'wildcat': 0.82, 'xj220': 0.936, 'z28': 0.899,
+    'zonda': 1.071, 'zondar': 1.15,
 }
 
 # Physical ECU TORQUE/POWER envelope for the rated turbos whose open-loop Otto+boost

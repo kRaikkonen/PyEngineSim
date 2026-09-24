@@ -130,7 +130,15 @@ WG_OVERSPEED = 20.0           # gate opening per fraction over the speed limit
                               #   (the limit: 1.15 x the rated shaft speed)
 DT_FAST = 0.0005              # charge-air substep (s): the Helmholtz mode is
                               #   ~20-60 Hz, the surge transitions a few ms
-AFR_WOT, AFR_PART, AFR_DIESEL = 12.5, 14.7, 22.0
+AFR_WOT, AFR_PART, AFR_DIESEL = 12.5, 14.7, 25.0   # (only without afr_fn)
+
+
+def _afr_default(diesel):
+    def f(load, rpm=None):
+        if diesel:
+            return AFR_DIESEL
+        return AFR_PART - (AFR_PART - AFR_WOT) * min(max((load - 0.5) / 0.5, 0.0), 1.0)
+    return f
 
 
 def _smooth_min(a, b, p=4.0):
@@ -390,7 +398,7 @@ class TurboSystem:
     """All of an engine's turbochargers and their charge-air system.
 
     ``engine_flow(rpm, thr, p_p) -> (w_air, map_pa, t_man)`` and
-    ``exhaust_temp(rpm, load) -> T03`` come from the simulator, so the load
+    ``exhaust_temp(rpm, load, pr) -> T03`` come from the simulator, so the load
     line and the turbine's heat are the engine's own."""
 
     def __init__(self, units, layout, v_p, bov_cda, bov_mode, boost_bar,
@@ -420,6 +428,7 @@ class TurboSystem:
         self.w_bypass = 0.0               # anti-lag air around the throttle
         self.stepped = 0                  # frames the physics has advanced
         self.p_mguh = 0.0                 # MGU-H motor power into unit 0
+        self.afr_fn = _afr_default(diesel) # the ECU's mixture (the simulator's)
 
     # ------------------------------------------------------------- helpers
     @property
@@ -479,8 +488,8 @@ class TurboSystem:
         """Turbine inlet pressures, flows and powers for this frame."""
         n = len(self.units)
         shares = self._shares(rpm, thr, dt)
-        # the gas: the engine's air plus fuel; on a fuel cut it is cool air
-        afr = AFR_DIESEL if self.diesel else (AFR_WOT if thr > 0.8 else AFR_PART)
+        # the gas: the engine's air plus the ECU's fuel; a fuel cut, cool air
+        afr = self.afr_fn(min(self.map_pa / P_ATM, 1.0), rpm)
         w_ex = self.w_air * (1.0 + (0.0 if fuel_cut else 1.0 / afr))
         t03 = self.t03
         if self.anti_lag and thr < 0.2 and not fuel_cut:
@@ -553,8 +562,10 @@ class TurboSystem:
         self.w_air, self.map_pa, self.t_p = w_air, map_pa, t_man
         self.k_thr = w_air / max(p_p, 1.0)
         self.p01 = self._p01(rpm)
-        self.t03 = (exhaust_temp(rpm, max(thr, 0.05)) if not fuel_cut
-                    else max(t_man, T_AMB) + 150.0)
+        # the exhaust leaving THIS charge (manifold pressure), its intake heated
+        # by THIS compression (the plenum)
+        self.t03 = (exhaust_temp(rpm, min(map_pa / P_ATM, 1.0), p_p / P_ATM)
+                    if not fuel_cut else max(t_man, T_AMB) + 150.0)
         if self.anti_lag:
             w_wot, _, _ = engine_flow(rpm, 1.0, P_ATM + self.boost_bar * 1.0e5)
             self.w_bypass = (0.35 * w_wot if (thr < 0.2 and rpm > 0.35 * self.rpm_red
@@ -600,7 +611,6 @@ class TurboSystem:
         units = self.units[:n_act]
         u0 = units[0]
         p01 = self._p01(rpm)
-        afr = AFR_DIESEL if self.diesel else (AFR_WOT if thr > 0.8 else AFR_PART)
 
         def plenum_at(omega):
             ln = u0.comp.line(omega * u0.comp.d2 * 0.5, p01, T_AMB)
@@ -618,8 +628,10 @@ class TurboSystem:
 
         def surplus(omega):
             p_p, w, ln = plenum_at(omega)
-            w_ex = w * n_act * (1.0 + 1.0 / afr)
-            t03 = exhaust_temp(rpm, max(thr, 0.05))
+            _, map_pa, _ = engine_flow(rpm, thr, p_p)
+            m = min(map_pa / P_ATM, 1.0)
+            w_ex = w * n_act * (1.0 + 1.0 / self.afr_fn(m, rpm))
+            t03 = exhaust_temp(rpm, m, p_p / P_ATM)
             p04 = P_ATM + self.dp_down_k * w_ex * w_ex
             per = w_ex / n_act
             p03 = Turbine.inlet_pressure(per, t03, p04, u0.turb.a_eff)
@@ -636,7 +648,7 @@ class TurboSystem:
             if not wg_closed:
                 b = min(b, self.boost_bar * min(max(thr, 0.0), 1.0))
             return b, hi
-        for _ in range(40):
+        for _ in range(28):
             mid = math.sqrt(lo * hi)
             s, _ = surplus(mid)
             if s > 0.0:
@@ -649,6 +661,60 @@ class TurboSystem:
         if not wg_closed:
             b = min(b, self.boost_bar * min(max(thr, 0.0), 1.0))
         return b, omega
+
+    # ------------------------------------------------------- back-pressure
+    def back_pressure(self, rpm, w_air, t03, p_p, afr):
+        """Turbine inlet pressure (Pa) running steadily at an operating point:
+        the engine drawing ``w_air`` kg/s from a plenum at ``p_p``, its
+        exhaust at ``t03``.  The gate sits where the controller holds it --
+        the turbine just drives the compressor there (shut if even that
+        cannot; wide open once no boost is asked)."""
+        n_act = len(self.units) if self.layout != "sequential" else (
+            2 if rpm >= self.seq_rpm[1] else 1)
+        u0 = self.units[0]
+        p01 = self._p01(rpm)
+        w = w_air / n_act
+        w_ex = w_air * (1.0 + 1.0 / max(afr, 1.0))
+        per = w_ex / n_act
+        p04 = P_ATM + self.dp_down_k * w_ex * w_ex
+        pulse = 1.0 + (TWIN_SCROLL_GAIN * max(1.0 - rpm / max(self.rpm_red, 1.0), 0.0)
+                       if self.twin_scroll else 0.0)
+
+        def p03_at(x):
+            return Turbine.inlet_pressure(per, t03, p04,
+                                          u0.turb.a_eff + x * u0.a_wg)
+        if p_p <= p01 * 1.02:
+            return p03_at(1.0)            # no boost asked: the gate lies open
+        # the shaft speed that makes p_p at this flow on the compressor's line
+        lo, hi = 300.0, 1.5 * self.omega_max
+        for _ in range(28):
+            mid = 0.5 * (lo + hi)
+            ln = u0.comp.line(mid * u0.comp.d2 * 0.5, p01, T_AMB)
+            if p01 * u0.comp.pressure_ratio(max(w, ln["w_z"]), ln) < p_p:
+                lo = mid
+            else:
+                hi = mid
+        omega = 0.5 * (lo + hi)
+        ln = u0.comp.line(omega * u0.comp.d2 * 0.5, p01, T_AMB)
+        need = u0.comp.power(w, ln) + u0.c_fric * omega * omega
+
+        def surplus(x):
+            a_tot = u0.turb.a_eff + x * u0.a_wg
+            p03 = Turbine.inlet_pressure(per, t03, p04, a_tot)
+            w_t = per * u0.turb.a_eff / a_tot
+            return u0.turb.power(w_t, t03, p03, p04, omega, pulse) - need
+        if surplus(0.0) <= 0.0:
+            return p03_at(0.0)            # beyond what it can make: gate shut
+        if surplus(1.0) >= 0.0:
+            return p03_at(1.0)
+        lo, hi = 0.0, 1.0
+        for _ in range(22):
+            mid = 0.5 * (lo + hi)
+            if surplus(mid) > 0.0:
+                lo = mid
+            else:
+                hi = mid
+        return p03_at(0.5 * (lo + hi))
 
     # ------------------------------------------------------------- observer
     def follow(self, boost_bar_gauge, rpm, thr, dt, engine_flow):
@@ -772,7 +838,8 @@ class Twin:
         return rec
 
 
-def build(eng, engine_flow, exhaust_temp, bov_mode="recirc"):
+def build(eng, engine_flow, exhaust_temp, bov_mode="recirc", afr_fn=None,
+          dp_rated=0.25):
     """Size and build the TurboSystem for engine ``eng``.
 
     Compressor: the rated point (0.88 x redline, full boost) sits at phi = 0.08,
@@ -831,9 +898,12 @@ def build(eng, engine_flow, exhaust_temp, bov_mode="recirc"):
                      sc_pr=sc_pr, sc_rpm=sc_rpm)
     ts.rpm_red = red
     ts.omega_max = omega_max
-    # post-turbine system (cat, muffler): ~0.25 bar at the rated exhaust flow
-    w_ex_d = w_air_d * (1.0 + 1.0 / (AFR_DIESEL if diesel else AFR_WOT))
-    ts.dp_down_k = 0.25e5 / max(w_ex_d, 1e-3) ** 2
+    if afr_fn is not None:
+        ts.afr_fn = afr_fn
+    # post-turbine system (cat, muffler): the same law as an NA car's exhaust
+    # back-pressure -- dp_rated bar at the rated exhaust flow, ~ flow^2
+    w_ex_d = w_air_d * (1.0 + 1.0 / ts.afr_fn(1.0))
+    ts.dp_down_k = dp_rated * 1.0e5 / max(w_ex_d, 1e-3) ** 2
     # the turbine: full boost at the car's full-boost rpm, gates shut
     rpm_full = min(max((eng.turbo_spool_frac + eng.turbo_spool_width) * red,
                        0.25 * red), 0.90 * red)
@@ -854,11 +924,11 @@ def build(eng, engine_flow, exhaust_temp, bov_mode="recirc"):
     # the rated turbine pressure ratio (full boost arriving, gates shut) and
     # the rated air flow: the synthesizer's scales for the turbine's loading
     # and the blow-off valve's flow
-    afr_d = AFR_DIESEL if diesel else AFR_WOT
     w_f, _, _ = engine_flow(rpm_full, 1.0, p_d)
-    w_exf = w_f * (1.0 + 1.0 / afr_d)
+    w_exf = w_f * (1.0 + 1.0 / ts.afr_fn(1.0))
     p04f = P_ATM + ts.dp_down_k * w_exf * w_exf
-    p03f = Turbine.inlet_pressure(w_exf / n, exhaust_temp(rpm_full, 1.0), p04f, a_t)
+    p03f = Turbine.inlet_pressure(w_exf / n, exhaust_temp(rpm_full, 1.0, p_d / P_ATM),
+                                  p04f, a_t)
     ts.pit_rated = max(p03f / p04f, 1.1)
     ts.w_air_rated = w_air_d
     # a BIGGER or SMALLER turbo than the stock match (turbo_size): every length

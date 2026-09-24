@@ -82,6 +82,7 @@ class Simulator:
     def __init__(self, engine: Engine):
         self.engine = engine
         self.drivetrain = Drivetrain(engine)
+        self._vd = engine.total_displacement    # swept volume (m^3), fixed
 
         # --- live state ---
         self.crank_angle = 0.0          # rad, accumulates without wrapping
@@ -171,40 +172,59 @@ class Simulator:
         self._burn_C = None             # cycle-mean torque per unit (k-1)
         self._burn_T0 = None            # motoring (k=1) cycle-mean torque
         self._k_burn = 3.0              # live burn multiplier (solved per frame)
+        self.turbo = None
+        self._frac_cache = {}
+        self._map_memo = None
+        turbo_car = engine.induction == "turbo" and engine.boost_bar > 0.0
         if self.surrogate is not None:
             try:
-                self._ve_lut = build_ve_table(engine)
+                # the VE on the exhaust back-pressure its own flow meets (a
+                # turbo car's first pass on the old estimate: the machine it
+                # needs is sized just below)
+                self._ve_lut = build_ve_table(
+                    engine, p_exh_fn=None if turbo_car else self._exh_back_na)
                 self.surrogate.register("ve", self._ve_lut)
             except Exception:
                 self._ve_lut = None     # fall back to the legacy Gaussian
+        # THE TURBOCHARGER AS A MACHINE: compressor map, turbine, shaft inertia,
+        # wastegate, blow-off valve and the charge-air plenum, sized from this
+        # engine (turbo.py).  Its plenum pressure IS the boost; its steady state
+        # replaces the energy-balance table (built on first use).  CLOSED
+        # LOOP: sized once, the VE is rebuilt on the turbine's real back-
+        # pressure, and the machine resized on that VE.
+        if turbo_car and turbo_mod is not None and _HAVE_MAP_MODEL \
+                and self._ve_lut is not None:
+            try:
+                self.turbo = turbo_mod.build(engine, self._turbo_flow,
+                                             self._turbo_t03,
+                                             bov_mode=self.bov_mode_default(),
+                                             afr_fn=self.afr,
+                                             dp_rated=self._exh_dp_rated())
+                self._ve_lut = build_ve_table(
+                    engine, p_exh_fn=self.exhaust_back_pressure)
+                self.surrogate.register("ve", self._ve_lut)
+                self._frac_cache.clear()
+                self._map_memo = None
+                self.turbo = turbo_mod.build(engine, self._turbo_flow,
+                                             self._turbo_t03,
+                                             bov_mode=self.bov_mode_default(),
+                                             afr_fn=self.afr,
+                                             dp_rated=self._exh_dp_rated())
+            except Exception:
+                self.turbo = None
+        if self.surrogate is not None:
             try:
                 # calibrate the pulse model so k can be SOLVED against the
                 # physical BMEP target each frame (kills heat_release_k tuning)
                 self._calibrate_burn()
             except Exception:
                 self._burn_C = self._burn_T0 = None
-            if engine.induction == "turbo" and engine.boost_bar > 0.0 \
-                    and self._ve_lut is not None:
+            if turbo_car and self.turbo is None and self._ve_lut is not None:
                 try:
                     self._boost_lut = build_boost_table(engine, self._ve_lut)
                     self.surrogate.register("boost", self._boost_lut)
                 except Exception:
                     self._boost_lut = None
-        # THE TURBOCHARGER AS A MACHINE: compressor map, turbine, shaft inertia,
-        # wastegate, blow-off valve and the charge-air plenum, sized from this
-        # engine (turbo.py).  Its plenum pressure IS the boost; its steady state
-        # replaces the energy-balance table above (built on first use).
-        self.turbo = None
-        self._frac_cache = {}
-        if engine.induction == "turbo" and engine.boost_bar > 0.0 \
-                and turbo_mod is not None and _HAVE_MAP_MODEL:
-            try:
-                self.turbo = turbo_mod.build(engine, self._turbo_flow,
-                                             self._turbo_t03,
-                                             bov_mode=self.bov_mode_default())
-                self._boost_lut = None
-            except Exception:
-                self.turbo = None
 
         # Size the clutch so it can actually HOLD this engine.  A real clutch is
         # rated ABOVE peak torque; if the (boosted) engine makes more torque than
@@ -230,36 +250,169 @@ class Simulator:
         return "none" if getattr(eng, "bov_flutter", False) else "recirc"
 
     def _turbo_flow(self, rpm, thr, p_p):
-        """The air the engine draws from the turbo plenum at p_p (Pa): the
-        compressor-fed throttle (MAP = its WOT-relative orifice fraction x the
-        plenum), the cylinders' VE at that MAP, the charge temperature.
-        Returns (kg/s, MAP Pa, T_manifold K)."""
-        eng = self.engine
+        """The air the engine draws from the turbo plenum at p_p (Pa) -- the
+        breathing air_path gives, the plate's WOT-relative fraction memoised
+        per 25 rpm and 1/400 of pedal (the steady solves ask thousands of
+        times).  Returns (kg/s, MAP Pa, T_charge K)."""
         key = (int(rpm) // 25, int(thr * 400.0))
         fr = self._frac_cache.get(key)
         if fr is None:
-            r = max(rpm, 1.0)
-            f = map_model.solve_map_fraction(thr, r, eng.redline_rpm, 0.85,
-                                             self._map_idle_area)
-            fw = map_model.solve_map_fraction(1.0, r, eng.redline_rpm, 0.85,
-                                              self._map_idle_area)
-            fr = f / max(fw, 0.25)
+            fr = self._map_at(max(rpm, 1.0), thr, 0.0, True) / P_ATM
             if len(self._frac_cache) > 8192:
                 self._frac_cache.clear()
             self._frac_cache[key] = fr
-        map_pa = fr * p_p
+        w, map_pa, t_man, _ = self._air_from_map(rpm, fr * p_p, p_p)
+        return w, map_pa, t_man
+
+    def _turbo_t03(self, rpm, load, pr=None):
+        """Turbine inlet temperature: the cycle's exhaust at the valve, at
+        this charge (``load`` = manifold pressure / atmosphere) and this
+        compressor ratio ``pr`` (its intake heat)."""
+        return self.exhaust_gas_temp(rpm=rpm, load=load, pr=pr)
+
+    # --------------------------------------------- the engine's breathing
+    def _wot_mapf(self, rpm):
+        """An NA plate's wide-open manifold fraction at this speed (the plate's
+        own loss), memoised per 25 rpm at the bucket's centre."""
+        b = int(max(rpm, 1.0)) // 25
+        key = ("wot", b)
+        v = self._frac_cache.get(key)
+        if v is None:
+            v = max(self._map_at(b * 25.0 + 12.5, 1.0, 0.0) / P_ATM, 0.05)
+            if len(self._frac_cache) > 8192:
+                self._frac_cache.clear()
+            self._frac_cache[key] = v
+        return v
+
+    def _map_at(self, rpm, t, boost_pa, fed=None):
+        """Intake-manifold absolute pressure at (rpm, effective throttle t),
+        the plate fed from P_ATM + boost_pa.  ``fed`` True: a compressor feeds
+        the plate, so the plenum is upstream whatever it holds (a big turbo off
+        boost holds a slight vacuum); None: the old rule, only a positive boost
+        feeds it (belt-driven blowers, NA)."""
+        eng = self.engine
+        if not _HAVE_MAP_MODEL:                 # legacy fallback (stripped install)
+            ratio = max(eng.idle_rpm / max(rpm, eng.idle_rpm), 0.25) ** 0.5
+            idle_map = eng.closed_map_fraction * ratio * P_ATM
+            return idle_map + t * (P_ATM - idle_map) + boost_pa
+        # WHITE-BOX MAP: steady-state balance of throttle-orifice inflow against
+        # cylinder pumping (see map_model).  No tuned exponent — the part-throttle
+        # vacuum and its rpm-deepening fall out of the orifice physics.  A nominal
+        # VE keeps the solve one-way (MAP -> VE -> torque, no circularity).
+        # (A real diesel is unthrottled — fuel-metered — but our combustion tracks
+        #  air, so we keep the throttle->MAP path for all engines: the diesel's
+        #  pedal then meters charge exactly as the old model did, idle anchored by
+        #  closed_map_fraction.  Modelling fuel-limited diesel load is a P3 job.)
+        # COUPLE breathing <-> intake: solve the MAP with the ACTUAL VE (ve_model),
+        # not a fixed nominal — better breathing draws more air, pulling the manifold
+        # DOWN at a given throttle, so intake and breathing now co-determine each
+        # other (one fixed-point pass: nominal -> VE at that MAP -> re-solve).  Blend
+        # toward nominal near idle so the closed_map_fraction idle anchor is preserved
+        # (the coupling matters up top, where VE deviates most from 0.85).
+        ve = 0.85
+        if self._ve_lut is not None:
+            m0 = map_model.solve_map_fraction(
+                t, rpm, eng.redline_rpm, 0.85, self._map_idle_area)
+            ve_act = self._ve_lut.eval2(rpm, m0)
+            w = min(max((rpm - eng.idle_rpm * 1.5) / 2500.0, 0.0), 1.0)
+            ve = 0.85 + (ve_act - 0.85) * w
+        frac = map_model.solve_map_fraction(
+            t, rpm, eng.redline_rpm, ve, self._map_idle_area)
+        if fed or (fed is None and boost_pa > 0.0):
+            # COMPRESSOR-FED THROTTLE (white-box turbo / supercharger / twin-turbo
+            # intake): the plate draws from the compressor OUTLET (P_ATM + boost),
+            # NOT the atmosphere.  So the same orifice fraction scales the BOOSTED
+            # upstream — at WOT the manifold reaches full boost, at part throttle it
+            # falls toward vacuum while the compressor outlet stays high (the surge /
+            # blow-off condition), instead of the old additive 'frac·atm + boost'
+            # that wrongly kept the manifold boosted with the pedal lifted.  Anchored
+            # to the WOT fraction so the rated (WOT) boost is preserved exactly.
+            frac_wot = map_model.solve_map_fraction(
+                1.0, rpm, eng.redline_rpm, ve, self._map_idle_area)
+            return (frac / max(frac_wot, 0.25)) * (P_ATM + boost_pa)
+        return frac * P_ATM
+
+    def _air_from_map(self, rpm, map_pa, p_up):
+        """Air mass flow at a manifold pressure: (kg/s, MAP, T_charge, VE).
+        The charge temperature is the compressor's (its outlet p_up, then the
+        intercooler) -- a throttle downstream only drops the pressure."""
+        eng = self.engine
         mapf = map_pa / P_ATM
         ve = (self._ve_lut.eval2(rpm, mapf) if self._ve_lut is not None
               else 0.85)
-        t_man = (charge_temp(eng, max(mapf, 1.0), self.ic_soak)
+        pr = max(p_up / P_ATM, mapf, 1.0) if eng.induction == "turbo" \
+            else max(mapf, 1.0)
+        t_man = (charge_temp(eng, pr, self.ic_soak)
                  if _HAVE_SURROGATE else 300.0)
-        w = (map_pa / (287.0 * t_man) * eng.total_displacement
+        w = (map_pa / (287.0 * t_man) * self._vd
              * max(rpm, 0.0) / 120.0 * max(ve, 0.0))
-        return w, map_pa, t_man
+        return w, map_pa, t_man, ve
 
-    def _turbo_t03(self, rpm, load):
-        """Turbine inlet temperature: the cycle's exhaust at the valve."""
-        return self.exhaust_gas_temp(rpm=rpm, load=load)
+    def air_path(self, rpm=None, thr=None, p_up=None):
+        """THE engine's breathing at an operating point: (air kg/s, MAP Pa,
+        charge temperature K, VE).  What the torque burns, what the turbo
+        supplies and is driven by, what the intake valves draw -- one
+        function.  Defaults: the live state; ``p_up`` the pressure upstream
+        of the plate (a turbo's plenum)."""
+        rpm = self.rpm if rpm is None else rpm
+        thr = self._effective_throttle() if thr is None else thr
+        turbo = getattr(self, "turbo", None) is not None
+        if p_up is None:
+            p_up = (self.turbo.air.p_p if turbo
+                    else P_ATM + max(self.boost, 0.0) * 1.0e5)
+        map_pa = self._map_at(rpm, thr, p_up - P_ATM, True if turbo else None)
+        return self._air_from_map(rpm, map_pa, p_up)
+
+    def afr(self, load=None, rpm=None):
+        """The mixture the ECU runs: stoichiometric through part load,
+        enriched toward 12.5 at full charge (knock, component protection); a
+        diesel lean at its rated fuelling (bmep_model's 25).  ``load`` =
+        manifold pressure / atmosphere (None: the live one), read as the ECU
+        does, relative to a wide-open plate's at this speed (_charge_rel)."""
+        if self._map_diesel:
+            return 25.0
+        if load is None:
+            load = self._manifold_pressure() / P_ATM
+        x = self._charge_rel(load, rpm)
+        return 14.7 - 2.2 * min(max((x - 0.5) / 0.5, 0.0), 1.0)
+
+    def _charge_rel(self, mapf, rpm=None):
+        """The charge as a fraction of a wide-open plate's at this speed (an
+        ECU's relative load): the manifold fraction over an NA plate's
+        wide-open fraction there, clipped to [0, 1] (boost is a full
+        charge)."""
+        return min(max(mapf / self._wot_mapf(self.rpm if rpm is None else rpm),
+                       0.0), 1.0)
+
+    def _exh_dp_rated(self):
+        """The exhaust system's back-pressure at the rated flow (bar): its
+        flow's dynamic head through the cat and the muffler -- ~0.08 bar for
+        an open race system to ~0.30 bar for a packed road box."""
+        o = min(max(getattr(self.engine, "exhaust_openness", 0.85), 0.0), 1.0)
+        return 0.08 + 0.22 * (1.0 - o)
+
+    def _exh_back_na(self, rpm, mapf):
+        """The cat and muffler's back-pressure (atm) at (rpm, MAP): the rated
+        head x (flow / rated flow)^2, the flow ~ rpm x charge."""
+        q = (rpm / max(0.88 * self.engine.redline_rpm, 1.0)) * max(mapf, 0.0)
+        return 1.0 + self._exh_dp_rated() * q * q / 1.01325
+
+    def exhaust_back_pressure(self, rpm, mapf):
+        """The back-pressure the exhaust flow meets (atm) at (rpm, MAP): a
+        turbo engine's turbine inlet -- from the machine, the gate where the
+        controller holds it -- else the cat and muffler's."""
+        ts = getattr(self, "turbo", None)
+        if ts is None:
+            return self._exh_back_na(rpm, mapf)
+        # at WOT the plenum is the manifold; below atmosphere the plate is
+        # throttling a plenum near ambient
+        p_p = max(mapf, 1.0) * P_ATM
+        w_air, map_pa, t_man, _ = self._air_from_map(rpm, mapf * P_ATM, p_p)
+        t03 = self.exhaust_gas_temp(rpm=rpm, load=min(mapf, 1.0),
+                                    pr=p_p / P_ATM)
+        return ts.back_pressure(rpm, w_air, t03, p_p,
+                                self.afr(min(mapf, 1.0), rpm)) / P_ATM
+
 
     def _boost_table(self):
         """Steady boost (bar) over rpm x pedal: the energy-balance table, or --
@@ -286,7 +439,8 @@ class Simulator:
         """Car / telemetry mode: the REAL boost is known.  Set it, and keep the
         turbo machine (shaft speeds, plenum) on it so the synthesizer's turbo
         sounds follow your car."""
-        self.boost = max(float(bar), 0.0)
+        self.boost = max(float(bar), 0.0) if self.turbo is None \
+            else max(float(bar), -0.9)
         if self.turbo is not None:
             self.turbo.follow(bar, self.rpm, self._effective_throttle(), dt,
                               self._turbo_flow)
@@ -408,7 +562,10 @@ class Simulator:
             ve = (float(self._ve_lut.eval2(r, mapf)) if self._ve_lut is not None
                   else 0.85)
             if _HAVE_SURROGATE:
-                t_gas = torque_target(eng, r, mapf, ve)
+                t_gas = torque_target(
+                    eng, r, mapf, ve,
+                    pr_comp=(1.0 + max(boost, 0.0))
+                    if getattr(self, "turbo", None) is not None else None)
             else:
                 t_gas = (eng.heat_release_k * mapf * ve
                          * eng.total_displacement * 1.0e5 / (4.0 * math.pi))
@@ -441,7 +598,11 @@ class Simulator:
         if self._burn_C is None or self._burn_T0 is None:
             return 1.0 + self.engine.heat_release_k * mapf * ve   # legacy
         eng = self.engine
-        t_tgt = torque_target(eng, rpm, mapf, ve)
+        # a turbo's charge was heated by the PLENUM's compression, whatever the
+        # plate then drops it to
+        pr_c = (1.0 + max(self.boost, 0.0)) \
+            if getattr(self, "turbo", None) is not None else None
+        t_tgt = torque_target(eng, rpm, mapf, ve, pr_comp=pr_c)
         if eng.torque_limit_nm > 0.0 or eng.power_limit_kw > 0.0:
             w = rpm * TWO_PI / 60.0
             cap = eng.torque_limit_nm if eng.torque_limit_nm > 0.0 else float("inf")
@@ -478,49 +639,19 @@ class Simulator:
         is why a real overrun shows 25+ inHg and why an engine can't sustain
         2000 rpm against a closed plate.
         """
-        eng = self.engine
+        # (the arithmetic lives in _map_at -- the turbo, the gas-solver bake and
+        #  the back-pressure call it at other operating points; memoised on the
+        #  exact state, the audio thread asks several times a block)
         t = self._effective_throttle()
         boost_pa = self.boost * 1.0e5
-        if not _HAVE_MAP_MODEL:                 # legacy fallback (stripped install)
-            ratio = max(eng.idle_rpm / max(self.rpm, eng.idle_rpm), 0.25) ** 0.5
-            idle_map = eng.closed_map_fraction * ratio * P_ATM
-            return idle_map + t * (P_ATM - idle_map) + boost_pa
-        # WHITE-BOX MAP: steady-state balance of throttle-orifice inflow against
-        # cylinder pumping (see map_model).  No tuned exponent — the part-throttle
-        # vacuum and its rpm-deepening fall out of the orifice physics.  A nominal
-        # VE keeps the solve one-way (MAP -> VE -> torque, no circularity).
-        # (A real diesel is unthrottled — fuel-metered — but our combustion tracks
-        #  air, so we keep the throttle->MAP path for all engines: the diesel's
-        #  pedal then meters charge exactly as the old model did, idle anchored by
-        #  closed_map_fraction.  Modelling fuel-limited diesel load is a P3 job.)
-        # COUPLE breathing <-> intake: solve the MAP with the ACTUAL VE (ve_model),
-        # not a fixed nominal — better breathing draws more air, pulling the manifold
-        # DOWN at a given throttle, so intake and breathing now co-determine each
-        # other (one fixed-point pass: nominal -> VE at that MAP -> re-solve).  Blend
-        # toward nominal near idle so the closed_map_fraction idle anchor is preserved
-        # (the coupling matters up top, where VE deviates most from 0.85).
-        ve = 0.85
-        if self._ve_lut is not None:
-            m0 = map_model.solve_map_fraction(
-                t, self.rpm, eng.redline_rpm, 0.85, self._map_idle_area)
-            ve_act = self._ve_lut.eval2(self.rpm, m0)
-            w = min(max((self.rpm - eng.idle_rpm * 1.5) / 2500.0, 0.0), 1.0)
-            ve = 0.85 + (ve_act - 0.85) * w
-        frac = map_model.solve_map_fraction(
-            t, self.rpm, eng.redline_rpm, ve, self._map_idle_area)
-        if boost_pa > 0.0:
-            # COMPRESSOR-FED THROTTLE (white-box turbo / supercharger / twin-turbo
-            # intake): the plate draws from the compressor OUTLET (P_ATM + boost),
-            # NOT the atmosphere.  So the same orifice fraction scales the BOOSTED
-            # upstream — at WOT the manifold reaches full boost, at part throttle it
-            # falls toward vacuum while the compressor outlet stays high (the surge /
-            # blow-off condition), instead of the old additive 'frac·atm + boost'
-            # that wrongly kept the manifold boosted with the pedal lifted.  Anchored
-            # to the WOT fraction so the rated (WOT) boost is preserved exactly.
-            frac_wot = map_model.solve_map_fraction(
-                1.0, self.rpm, eng.redline_rpm, ve, self._map_idle_area)
-            return (frac / max(frac_wot, 0.25)) * (P_ATM + boost_pa)
-        return frac * P_ATM
+        fed = True if getattr(self, "turbo", None) is not None else None
+        key = (self.omega, t, boost_pa, fed)
+        memo = self._map_memo
+        if memo is not None and memo[0] == key:
+            return memo[1]
+        v = self._map_at(self.rpm, t, boost_pa, fed)
+        self._map_memo = (key, v)
+        return v
 
     def _update_boost(self, dt: float):
         """Advance the forced-induction boost (bar) for the current engine."""
@@ -581,7 +712,9 @@ class Simulator:
                 self.turbo.step(dt, self.rpm, thr, self._turbo_flow,
                                 self._turbo_t03, fuel_cut=self._fuel_cut,
                                 mguh_w=mguh)
-                self.boost = max(self.turbo.boost, 0.0)
+                # the plenum's gauge -- a slight vacuum off boost is real (the
+                # plate is fed from it: _map_at)
+                self.boost = max(self.turbo.boost, -0.9)
                 return
             if self._boost_lut is not None:
                 # steady target from the offline turbine/compressor energy
@@ -1018,7 +1151,7 @@ class Simulator:
         v_open = cyl.volume(theta)
         return p_peak * (v_tdc / v_open) ** GAMMA
 
-    def exhaust_gas_temp(self, rpm=None, load=None) -> float:
+    def exhaust_gas_temp(self, rpm=None, load=None, pr=None) -> float:
         """WHITE-BOX exhaust-gas temperature (K) at the exhaust valve — from the
         REAL cycle thermodynamics, not a fitted line: charge temp -> adiabatic
         COMPRESSION -> combustion heat release -> EXPANSION to the exhaust valve ->
@@ -1030,14 +1163,27 @@ class Simulator:
         # (rpm / load may be given to ask "what would it be there" -- the
         # physical voice bakes its pulses over an rpm x load grid)
         load_q = load
-        load = self._effective_throttle() if load is None else load
+        # the LOAD is the charge, not the pedal (a light pedal at low rpm fills
+        # nearly a full charge; the same pedal at high rpm a thin one): the
+        # manifold pressure over what a WIDE-OPEN plate gives at this speed --
+        # live, from the same upstream (so full throttle, boosted or not, is a
+        # full charge exactly); asked at a manifold fraction ``load``, over an
+        # NA plate's wide-open fraction there (boost clips to a full charge)
+        if load is None:
+            t_ = self._effective_throttle()
+            fed = True if getattr(self, "turbo", None) is not None else None
+            p_w = self._map_at(self.rpm, 1.0, self.boost * 1.0e5, fed)
+            load = self._manifold_pressure() / max(p_w, 1.0) if t_ < 1.0 else 1.0
+        else:
+            load = self._charge_rel(load, rpm)
+        load = min(max(load, 0.0), 1.0)
         rpm_frac = min((self.rpm if rpm is None else rpm)
                        / max(eng.redline_rpm, 1.0), 1.0)
         # 1) charge temp entering compression — the SHARED white-box charge_temp
         #    (compressor heat + intercooler + flow + heat-soak), so this MATCHES the
         #    torque/knock models exactly.  A heat-soaked charge is hotter -> hotter
         #    exhaust -> the note pitch shifts, all from one source of truth.
-        mapf = 1.0 + max(self.boost, 0.0)
+        mapf = 1.0 + max(self.boost, 0.0) if pr is None else max(pr, 1.0)
         if _HAVE_SURROGATE:
             t_charge = charge_temp(eng, mapf, self.ic_soak)
         else:
@@ -1046,7 +1192,9 @@ class Simulator:
         t_comp = t_charge * cr ** (GAMMA - 1.0)
         # 3) combustion heat release (q/cv rise), scaled by fuelling completeness —
         #    more complete + less residual-diluted at higher load.  This IS the peak.
-        t_peak = t_comp + _COMB_DT * (0.42 + 0.58 * load)
+        # (re-anchored with the load now the charge: a quarter-charge idle
+        #  gives the 0.50 the old pedal-load did at idle, a full charge 1.0)
+        t_peak = t_comp + _COMB_DT * (0.333 + 0.667 * load)
         if rpm is None and load_q is None:
             self._t_peak = t_peak          # live state only, not a "what if"
         # 4) expansion TDC -> exhaust valve extracts work and cools; a HIGH
@@ -1097,8 +1245,8 @@ class Simulator:
         """Live physical readouts (the gauges the original game shows)."""
         map_pa = self._manifold_pressure()
         ve = self._volumetric_efficiency(map_pa / P_ATM)
-        # Air-fuel ratio: ~stoich light, enriching toward ~12.5 at full load.
-        afr = 14.7 - 2.2 * min(max(self.throttle, 0.0), 1.0)
+        # Air-fuel ratio: the ECU's mixture at this charge (afr())
+        afr = self.afr(map_pa / P_ATM)
         lam = afr / 14.7
         # Volumetric airflow -> standard cubic feet per minute (4-stroke: one
         # intake stroke every two revolutions).

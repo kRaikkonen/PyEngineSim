@@ -108,9 +108,11 @@ def _cam_params(eng, rpm):
     return _CAM.get(getattr(eng, "cam_profile", "stock"), _CAM["stock"])
 
 
-def ve_truth(eng, rpm, mapf):
+def ve_truth(eng, rpm, mapf, p_exh=None):
     """Volumetric efficiency (unnormalised) at ``rpm`` and manifold-pressure
-    fraction ``mapf`` (p_man / p_atm; > 1 under boost)."""
+    fraction ``mapf`` (p_man / p_atm; > 1 under boost).  ``p_exh``: the
+    exhaust back-pressure there (atm) -- the turbine's or the exhaust
+    system's, from the simulator (closed loop); None: the old estimate."""
     a_p, a_v, stroke, n_tuned, cr = _geometry(eng)
     rpm = max(rpm, 1.0)
     cam_knee, cam_pen, cam_fade = _cam_params(eng, rpm)
@@ -139,6 +141,7 @@ def ve_truth(eng, rpm, mapf):
     #    pressure ratio ~ tracking the compressor to spin) -> more trapped residual,
     #    worse scavenging at overlap, and the real VE penalty a turbo pays vs an NA
     #    or belt-supercharged engine at the SAME manifold pressure.
+    p_exh_given = p_exh
     p_exh = 1.08
     if getattr(eng, "induction", "na") == "turbo":
         bp = min(max(getattr(eng, "backpressure_coupling", 0.55), 0.0), 1.2)
@@ -148,6 +151,10 @@ def ve_truth(eng, rpm, mapf):
         # and scavenging stays good — exactly the real turbo behaviour.
         rf = min(rpm / max(eng.redline_rpm, 1.0), 1.0)
         p_exh = 1.08 + bp * rf * max(mapf, 0.30)
+    if p_exh_given is not None:
+        # CLOSED LOOP: the back-pressure the exhaust flow really meets -- a
+        # turbine's inlet (the turbo machine) or the cat and muffler's
+        p_exh = p_exh_given
     pr = p_exh / max(mapf, 0.15)                      # exhaust/manifold pressure
     x_r = pr ** (1.0 / GAMMA_EX) / cr
     x_r0 = 1.08 ** (1.0 / GAMMA_EX) / cr              # residual at NA full throttle
@@ -159,9 +166,10 @@ def ve_truth(eng, rpm, mapf):
     return max(roll * bump * res * pen, 0.10)
 
 
-def build_ve_table(eng, n_rpm=22, n_map=12):
+def build_ve_table(eng, n_rpm=22, n_map=12, p_exh_fn=None):
     """Bake VE(rpm, map) for one engine into a LUT, peak-anchored to the
-    preset's old ``ve_max`` so per-car torque calibration is preserved."""
+    preset's old ``ve_max`` so per-car torque calibration is preserved.
+    ``p_exh_fn(rpm, mapf)``: the exhaust back-pressure (atm) at each point."""
     top = eng.redline_rpm + 600.0
     rpm_grid = np.linspace(300.0, top, n_rpm)
     map_hi = max(1.05, 1.0 + getattr(eng, "boost_bar", 0.0) + 0.15)
@@ -170,7 +178,9 @@ def build_ve_table(eng, n_rpm=22, n_map=12):
     values = np.empty((n_rpm, n_map), dtype=np.float64)
     for i, r in enumerate(rpm_grid):
         for j, m in enumerate(map_grid):
-            values[i, j] = ve_truth(eng, float(r), float(m))
+            values[i, j] = ve_truth(
+                eng, float(r), float(m),
+                None if p_exh_fn is None else p_exh_fn(float(r), float(m)))
 
     # normalise: best naturally-aspirated point (map <= ~1) -> old ve_max
     na_cols = map_grid <= 1.051
