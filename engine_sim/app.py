@@ -145,7 +145,7 @@ TR_ZH = {
     "mute / quit": "静音/退出",
     # mixer panel
     "AUDIO MIXER": "混音台",
-    "drag the sliders  ·  C or ✕ to close": "拖动滑块  ·  C 或 ✕ 关闭",
+    "drag the sliders  ·  C or X to close": "拖动滑块  ·  C 或 X 关闭",
     "SPATIAL  (drag)": "空间音频 (拖动)", "far": "远", "near": "近",
     "FIRE TONE  (drag)": "点火音色 (拖动)", "thin": "薄", "fat": "厚",
     "coarse": "粗", "smooth": "顺",
@@ -456,7 +456,7 @@ class App:
                  lambda: setattr(self, "forza_ultra", False), lambda: True, 0,
                  ultra_col),
             ]
-        return [
+        defs = [
             # row 0 — car + sound toggles (part 1)
             (f"{T('Demo cars')} {arr}", self._menu_demo, None, 0),
             (T("Auto") if dt.auto else T("Manual"),
@@ -499,7 +499,9 @@ class App:
             ("mph" if self.speed_mph else "km/h",
              lambda: setattr(self, "speed_mph", not self.speed_mph),
              lambda: self.speed_mph, 1),
-            ("Language", self.toggle_lang, None, 1, ((255, 120, 180), (224, 78, 146))),
+            # the language to switch TO, in a face that has its glyphs
+            ("中文" if self.lang == "en" else "EN", self.toggle_lang, None, 1,
+             ((255, 120, 180), (224, 78, 146)), "cjk"),
             # row 2 — output / device / view
             (f"{T('Out:')} {dev} {arr}", self._menu_device, None, 2),
             (f"{rate // 1000}.{(rate % 1000)//100}kHz", self.toggle_rate, None, 2),
@@ -515,6 +517,16 @@ class App:
             (T("Scope"), lambda: setattr(self, "scope_open", not self.scope_open),
              lambda: self.scope_open, 2),
         ]
+        # switches for hardware this car doesn't have are left off the bar
+        # (the mixer does the same with its sliders): surge and the dump
+        # valve need a turbo, the hybrid switch a hybrid
+        eng = self.sim.engine
+        hide = set()
+        if getattr(eng, "induction", "na") != "turbo":
+            hide |= {T("Flutter"), T("SSQV")}
+        if getattr(eng, "hybrid_kw", 0.0) <= 0.0:
+            hide.add(T("Hybrid"))
+        return [d for d in defs if d[0] not in hide]
 
     def toggle_slow(self):
         steps = [1.0, 0.1, 0.01, 0.001]              # 1x, 10x, 100x, 1000x slow
@@ -526,24 +538,165 @@ class App:
                     + (f"{int(round(1/self.slow_mo))}x" if self.slow_mo < 1
                        else self.tr("off")))
 
+    # ------------------------------------------------ label placement
+    def _place_text(self, surf, spots, force=False):
+        """Blit a text ``surf`` at the first of ``spots`` (top-left points)
+        where it doesn't sit on a label already placed this frame, and remember
+        it.  None of them free: ``force`` draws at the first anyway (a label
+        that must show), else it is skipped (a cylinder number on a crowded
+        bank).  The engine panel clears the list each frame."""
+        placed = self.__dict__.setdefault("_label_rects", [])
+        w, h = surf.get_width(), surf.get_height()
+        for x, y in spots:
+            r = pygame.Rect(int(x), int(y), w, h)
+            ink = r.inflate(-2, -max(2, h // 4))   # the glyphs, not the leading
+            if not any(ink.colliderect(o) for o in placed):
+                self.screen.blit(surf, r.topleft)
+                placed.append(ink)
+                return r
+        if force:
+            x, y = spots[0]
+            r = pygame.Rect(int(x), int(y), w, h)
+            self.screen.blit(surf, r.topleft)
+            placed.append(r.inflate(-2, -max(2, h // 4)))
+            return r
+        return None
+
+    def _bay_caption(self, eng):
+        """The induction layout for the bay's title line (after 'Engine Bay'),
+        or None where the part is labelled where it sits (a single turbo, a
+        twin-scroll, an inline parallel twin).  Placed before the engine is
+        drawn, so a cylinder number gives way to it, not the other way round."""
+        ind = eng.induction
+        if ind == "roots":
+            return "Supercharger"
+        if ind == "centrifugal":
+            return "Centrifugal SC"
+        if ind != "turbo":
+            return None
+        cyl = eng.cylinders
+        has_banks = (any(c.bank_angle_deg < -0.1 for c in cyl)
+                     and any(c.bank_angle_deg > 0.1 for c in cyl))
+        sub = getattr(eng, "induction_subtype", "").lower()
+        if sub == "twincharge":
+            return "Twincharge · Supercharger + Turbo"
+        if sub == "sequential":
+            return "Sequential Twin-turbo · Small + Big"
+        if sub == "twin_scroll":
+            return None
+        if getattr(eng, "is_w", False):
+            return "Quad-turbo"
+        if has_banks:
+            return ("Hot-V Twin-turbo · In the Valley" if getattr(eng, "hot_v", False)
+                    else "Twin-turbo · Outboard (Cold-V)")
+        return None
+
+    def _cyl_num(self, i, lx, ly):
+        """Cylinder i's number past the end of its bore -- left out where it
+        would land on a neighbour's (a tight V12 / W16 then reads 1, 3, 5 ...)."""
+        lab = self.font_small.render(f"{i + 1}", True, DIM)
+        self._place_text(lab, [(int(lx) - lab.get_width() // 2, int(ly) - 6)])
+
+    def _sized_font(self, size):
+        """The UI face of the current language at ``size`` px (cached)."""
+        cache = self.__dict__.setdefault("_font_by_size", {})
+        key = (self.lang, size)
+        f = cache.get(key)
+        if f is None:
+            f = cache[key] = (self._cjk_font(size) if self.lang == "zh"
+                              else self._eng_font(size))
+        return f
+
+    def _fit_line(self, text, sizes, max_w):
+        """(font, text) drawing ``text`` within ``max_w``: the largest of
+        ``sizes`` (px) that fits; failing all, the smallest with its tail cut."""
+        for sz in sizes:
+            f = self._sized_font(sz)
+            if f.size(text)[0] <= max_w:
+                return f, text
+        f = self._sized_font(sizes[-1])
+        while len(text) > 1 and f.size(text + "...")[0] > max_w:
+            text = text[:-1]
+        return f, text.rstrip() + "..."
+
+    def _tach_step(self, r_lab, span, max_rpm):
+        """Label every n-thousand rpm so neighbouring numbers never touch: the
+        arc between two labels must clear the widest label."""
+        wmax = self.font.size(str(int(max_rpm) // 1000))[0] + 6
+        for step in (1, 2, 3, 5):
+            if r_lab * span * step * 1000.0 / max(max_rpm, 1.0) >= wmax:
+                return step
+        return 5
+
+    def _draw_status_toast(self):
+        """The transient status line (language, saves, modes) as a toast over
+        the top of the engine bay, on its own backing -- it used to sit in the
+        bay's title line."""
+        bay = getattr(self, "_bay_box", None)
+        if self._status_t <= 0.0 or not self._status or bay is None:
+            return
+        t = self.font_small.render(self._status, True, ACCENT)
+        r = pygame.Rect(0, 0, t.get_width() + 20, t.get_height() + 8)
+        r.midtop = (bay.centerx, bay.y + 30)
+        pr = getattr(self, "_prompt_rect", None)
+        if pr is not None and pr.colliderect(r):
+            r.top = pr.bottom + 6                 # under the engine-off prompt
+        s = pygame.Surface(r.size, pygame.SRCALPHA)
+        pygame.draw.rect(s, (14, 16, 20, 235), s.get_rect(), border_radius=8)
+        pygame.draw.rect(s, (70, 76, 90, 255), s.get_rect(), width=1, border_radius=8)
+        self.screen.blit(s, r.topleft)
+        self.screen.blit(t, (r.x + 10, r.y + 4))
+
+    # toolbar metrics: a button is its label + padding; rows 32 px apart
+    _TB_PAD, _TB_GAP, _TB_ROW, _TB_H = 16, 5, 32, 26
+
+    def _btn_font(self, key=None):
+        """A button's face: the UI's, or a CJK one for a label the UI's
+        current face can't draw (the gothic English face has no hanzi)."""
+        if key == "cjk":
+            f = getattr(self, "_font_cjk_small", None)
+            if f is None:
+                f = self._font_cjk_small = self._cjk_font(14)
+            return f
+        return self.font_small
+
+    def _touch_corner(self, panel):
+        """The big Touch toggle: the panel's top-right corner over the first
+        two toolbar rows, as wide as its words."""
+        w = max(self.font.size(self.tr(t))[0] for t in ("Touch", "ON", "OFF")) + 28
+        return pygame.Rect(panel.right - 16 - w, panel.y + 12, w,
+                           2 * self._TB_ROW - 6)
+
     def _rebuild_toolbar(self, panel):
+        """Flow the buttons left to right and wrap at the panel's edge -- in the
+        first two rows at the Touch toggle -- so no button is ever hidden
+        under it or clipped off the panel, in either language, on any car."""
         defs = self._toolbar_defs()
-        rows = {}
-        for entry in defs:
-            label, cb, active, row = entry[0], entry[1], entry[2], entry[3]
-            color = entry[4] if len(entry) > 4 else None
-            rows.setdefault(row, []).append((label, cb, active, color))
+        touch = None if self.forza_ultra else self._touch_corner(panel)
+        x0 = panel.x + 26                     # clear the top-left corner screw
+        x, y = x0, panel.y + 12
         self._buttons = []
-        y = panel.y + 12
-        for ri in sorted(rows):
-            x = panel.x + 26                  # clear the top-left corner screw
-            for label, cb, active, color in rows[ri]:
-                w = self.font_small.size(label)[0] + 20
-                self._buttons.append({"label": label, "cb": cb, "active": active,
-                                      "rect": pygame.Rect(x, y, w, 26), "color": color})
-                x += w + 6
-            y += 32
-        self._toolbar_bottom = y
+        for entry in defs:
+            label, cb, active = entry[0], entry[1], entry[2]
+            color = entry[4] if len(entry) > 4 else None
+            font = self._btn_font(entry[5] if len(entry) > 5 else None)
+            text = label
+            caret = 0
+            if text.endswith("▾") or text.endswith("▼"):   # a DRAWN caret
+                text, caret = text[:-1].rstrip(), 12
+            w = font.size(text)[0] + caret + self._TB_PAD
+            while x > x0:
+                right = panel.right - 16
+                if touch is not None and y < touch.bottom:
+                    right = touch.x - 6
+                if x + w <= right:
+                    break
+                x, y = x0, y + self._TB_ROW
+            self._buttons.append({"label": label, "cb": cb, "active": active,
+                                  "rect": pygame.Rect(x, y, w, self._TB_H),
+                                  "color": color, "font": font})
+            x += w + self._TB_GAP
+        self._toolbar_bottom = y + self._TB_ROW
 
     def _menu_demo(self):
         items = [(label, (lambda k=key: self.load_engine(k)))
@@ -859,19 +1012,30 @@ class App:
     def _build_mixer(self):
         """Lay out the audio-mixer slider tracks + the spatial XY pad."""
         panel = pygame.Rect(24, 24, 620, 632)
-        x = panel.x + 196
-        w = (panel.x + 400) - x          # shorter tracks -> room for the pad
-        y = panel.y + 38                 # clear the title/hint row
-        self._sliders = []
-        for key, label, vmin, vmax in SLIDER_DEFS:
-            self._sliders.append({
-                "key": key, "label": label, "min": vmin, "max": vmax,
-                "track": pygame.Rect(x, y + 4, w, 6), "row_y": y,
-            })
-            y += 17                       # tight rows so all fit one column
+        self._layout_mixer()
         self._pad_rect = pygame.Rect(panel.x + 462, panel.y + 88, 152, 152)
         # 2-D fire/bang tone IR pad (drag to morph the firing timbre)
         self._fire_pad_rect = pygame.Rect(panel.x + 462, panel.y + 320, 152, 152)
+
+    def _layout_mixer(self):
+        """One row per slider that APPLIES to this car (a turbo slider on an
+        NA car is left out rather than greyed), spread over the panel's height;
+        each row's click band is the row itself, so neighbours never overlap."""
+        panel = pygame.Rect(24, 24, 620, 632)
+        x = panel.x + 196
+        w = (panel.x + 400) - x          # shorter tracks -> room for the pad
+        top, bottom = panel.y + 40, panel.bottom - 12   # under the title/hint row
+        defs = [d for d in SLIDER_DEFS if self._slider_active(d[0])]
+        step = min(22, (bottom - top) // max(len(defs), 1))
+        self._sliders = []
+        y = top
+        for key, label, vmin, vmax in defs:
+            self._sliders.append({
+                "key": key, "label": label, "min": vmin, "max": vmax,
+                "track": pygame.Rect(x, y + 4, w, 6), "row_y": y,
+                "hit": pygame.Rect(x - 8, y + 7 - step // 2, w + 16, step),
+            })
+            y += step
 
     def _set_pad(self, pos):
         r = self._pad_rect
@@ -1132,7 +1296,7 @@ class App:
                 self._set_fire_pad(mpos)
             else:
                 for s in self._sliders:
-                    if s["track"].inflate(12, 26).collidepoint(mpos):
+                    if s["hit"].collidepoint(mpos):
                         self._drag = s
                         self._set_slider(s, mpos[0])
                         break
@@ -1504,6 +1668,7 @@ class App:
     def _draw_engine_off_prompt(self):
         """Engine not running: a red prompt in the (otherwise blank) top-centre of
         the engine bay telling the player to switch on the ignition and crank it."""
+        self._prompt_rect = None
         bay = getattr(self, "_bay_rect", None)
         if bay is None or self.sim.rpm >= 200.0:
             return
@@ -1517,7 +1682,8 @@ class App:
         pw = max(s1.get_width(), s2.get_width()) + 28
         ph = s1.get_height() + s2.get_height() + 18
         bx = bay.centerx - pw // 2
-        by = bay.y + 18
+        by = bay.y + 28                             # under the bay's title line
+        self._prompt_rect = pygame.Rect(bx, by, pw, ph)
         panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
         panel.fill((10, 10, 12, 185))
         pygame.draw.rect(panel, (255, 90, 80), panel.get_rect(), 2, border_radius=8)
@@ -1568,6 +1734,7 @@ class App:
         else:
             self._draw_engine_panel(left)
             self._draw_engine_off_prompt()
+            self._draw_status_toast()
         self._draw_gauges(pygame.Rect(664, 24, 412, 632))
         # the exhaust-path stage scopes only sample audio while the overlay is up;
         # in low-quality mode they're suppressed entirely (only the TOTAL EXHAUST
@@ -1789,7 +1956,7 @@ class App:
         caret = text.endswith("▾") or text.endswith("▼")
         if caret:
             text = text[:-1].rstrip()
-        lbl = self.font_small.render(text, True, txt)
+        lbl = (b.get("font") or self.font_small).render(text, True, txt)
         lw = lbl.get_width()
         block = lw + (12 if caret else 0)
         lx = r.centerx - block // 2
@@ -1816,20 +1983,21 @@ class App:
         in the same iOS-glass style as the toolbar — GREEN glass when on, ORANGE
         glass when off."""
         on = self.touch_mode
-        # only span the TOP TWO toolbar rows, so the (wide) bottom row — Forza /
-        # Low Q / Scope — sits clear BELOW the toggle instead of under it
-        h = (self._toolbar_bottom - 32) - (rect.y + 14) - 4
-        r = pygame.Rect(rect.right - 102, rect.y + 14, 86, max(46, h))
+        # the corner the toolbar flows around (_touch_corner): the top two
+        # rows, so no button is ever under it
+        r = self._touch_corner(rect)
         self._touch_toggle_rect = r
         c1, c2 = ((104, 200, 126), (30, 138, 66)) if on \
             else ((244, 186, 86), (196, 120, 26))
         self._ios_button(r, c1, c2, radius=8)
         t1 = self.font.render(self.tr("Touch"), True, (255, 255, 255))
-        self.screen.blit(t1, (r.centerx - t1.get_width() // 2, r.y + 8))
         s2 = self.font.render(self.tr("ON") if on else self.tr("OFF"),
                               True, (255, 255, 255))
-        self.screen.blit(s2, (r.centerx - s2.get_width() // 2,
-                              r.bottom - s2.get_height() - 7))
+        # the two words as one block, centred (a CJK face is taller: they
+        # overlapped when pinned to the top and bottom edges)
+        top = r.centery - (t1.get_height() + s2.get_height()) // 2
+        self.screen.blit(t1, (r.centerx - t1.get_width() // 2, top))
+        self.screen.blit(s2, (r.centerx - s2.get_width() // 2, top + t1.get_height()))
 
     def _draw_menu(self):
         m = self._open_menu
@@ -1886,11 +2054,12 @@ class App:
         return True
 
     def _draw_mixer(self, rect):
+        self._layout_mixer()             # this car's sliders (cheap: rects)
         self._panel(rect, screws=False)
         self.screen.blit(self.font.render(self.tr("AUDIO MIXER"), True, INK),
                          (rect.x + 18, rect.y + 18))
         self.screen.blit(self.font_small.render(
-            self.tr("drag the sliders  ·  C or ✕ to close"),
+            self.tr("drag the sliders  ·  C or X to close"),
             True, DIM), (rect.x + 150, rect.y + 24))
         # a mouse-clickable close box (so you never need the keyboard)
         self._mixer_close_rect = pygame.Rect(rect.right - 42, rect.y + 14, 28, 24)
@@ -1987,9 +2156,41 @@ class App:
         self._draw_toolbar()
         self._draw_touch_toggle(rect)
         ty = self._toolbar_bottom + 4
+        self._label_rects = []            # this frame's placed labels (_place_text)
 
-        title = self.font.render(eng.name, True, INK)
-        self.screen.blit(title, (rect.x + 18, ty))
+        # the key hints first (right-aligned, top-right corner): the lines on
+        # the left then FIT the room they leave -- shrunk (or, past that, cut)
+        # rather than overdrawn; Chinese spec lines and long names ran into them.
+        # Control-key hints in【key】function form, yellow, upshift/downshift on
+        # the first line.  A dedicated smaller font (smaller still in Chinese).
+        zh = self.lang == "zh"
+        lb, rb = ("【", "】") if zh else ("[", "]")
+        hint_rows = [
+            [("X", "Upshift"), ("Z", "Downshift"), ("T", "Auto/Manual")],
+            [("Up/Dn", "Gas"), ("Shift", "Clutch"), ("A", "Ign"), ("S", "Start")],
+            [("C", "Mixer"), ("E", "Scope"), ("M", "Mute"), ("Esc", "Exit")],
+        ]
+        hf = self.font_hint
+        lh = hf.get_height() + 3
+        hints = []
+        for li, row in enumerate(hint_rows):
+            line = "  ".join(f"{lb}{k}{rb}{self.tr(fn)}" for k, fn in row)
+            ht = hf.render(line, True, (255, 200, 60))
+            hints.append((ht, pygame.Rect(rect.right - 14 - ht.get_width(),
+                                          ty + li * lh, ht.get_width(), ht.get_height())))
+        x_l = rect.x + 18
+
+        def room(y, h):
+            """Width left of the hints for a line spanning y .. y + h."""
+            edge = rect.right - 14
+            for _, hr in hints:
+                if hr.y < y + h and y < hr.bottom:
+                    edge = min(edge, hr.x - 12)
+            return edge - x_l
+
+        ft, name = self._fit_line(eng.name, ((17 if zh else 18), 16, 15, 14, 13),
+                                  room(ty, 22))
+        self.screen.blit(ft.render(name, True, INK), (x_l, ty))
         # --- engineering line: displacement · bore×stroke · CR · crank ----------
         cc = eng.total_displacement * 1.0e6
         disp_l = eng.total_displacement * 1000.0
@@ -2008,8 +2209,8 @@ class App:
             fire = f"  ·  fires every {720.0 / n:.0f}°"
         geo = (f"{cc:.0f} cc  ·  {disp_l:.1f} L  ·  {bore_mm:.1f} × "
                f"{stroke_mm:.1f} mm  ·  {cr:.1f}:1{fire}")
-        gtxt = self.font_small.render(geo, True, DIM)
-        self.screen.blit(gtxt, (rect.x + 18, ty + 24))
+        fg, geo = self._fit_line(geo, (14, 13, 12, 11), room(ty + 24, 18))
+        self.screen.blit(fg.render(geo, True, DIM), (x_l, ty + 24))
         # --- configuration line: layout/bank-angle · rotation · exhaust · valves -
         mat = getattr(eng, "wall_material", "steel")
         mat_lbl = {"titanium": "Ti", "stainless": "steel", "aluminium": "Alu",
@@ -2062,8 +2263,8 @@ class App:
             return s[:1].upper() + s[1:]
         spec = (f"{_cap(cfg)} · {rot} · {_cap(mat_lbl)} exh · {_cap(hdr)} · "
                 f"{_cap(vt)}{vv_txt}")
-        stxt = self.font_small.render(spec, True, (138, 146, 162))
-        self.screen.blit(stxt, (rect.x + 18, ty + 44))
+        fs, spec = self._fit_line(spec, (14, 13, 12, 11), room(ty + 44, 18))
+        self.screen.blit(fs.render(spec, True, (138, 146, 162)), (x_l, ty + 44))
         voice = self.tr(FIRING_VOICES[self.voice_idx][0])
         cab = f"   ·   {self.tr('cabin')}" if self.synth.cabin else ""
         self.screen.blit(self.font_small.render(
@@ -2071,25 +2272,10 @@ class App:
             True, ACCENT), (rect.x + 18, ty + 64))
         # firing order — in the open area to the RIGHT of the firing-voice line
         self._blit_firing(eng, rect.x + 286, ty + 64, rect.right - 18 - (rect.x + 286))
-        # control-key hints — tucked into the empty top-right of the engine panel,
-        # right-aligned so they clear the (left-aligned) title / spec lines
-        # Control-key hints in【key】function form, yellow, upshift/downshift on
-        # the first line.  A dedicated smaller font (smaller still in Chinese) keeps
-        # the three lines clear of the title / spec / firing-order text on the left,
-        # and short of the firing-order row at ty+64.
-        zh = self.lang == "zh"
-        lb, rb = ("【", "】") if zh else ("[", "]")
-        hint_rows = [
-            [("X", "Upshift"), ("Z", "Downshift"), ("T", "Auto/Manual")],
-            [("Up/Dn", "Gas"), ("Shift", "Clutch"), ("A", "Ign"), ("S", "Start")],
-            [("C", "Mixer"), ("E", "Scope"), ("M", "Mute"), ("Esc", "Exit")],
-        ]
-        hf = self.font_hint
-        lh = hf.get_height() + 3
-        for li, row in enumerate(hint_rows):
-            line = "  ".join(f"{lb}{k}{rb}{self.tr(fn)}" for k, fn in row)
-            ht = hf.render(line, True, (255, 200, 60))
-            self.screen.blit(ht, (rect.right - 14 - ht.get_width(), ty + li * lh))
+        # the control-key hints (laid out above, before the lines that fit
+        # around them), right-aligned in the empty top-right of the panel
+        for ht, hr in hints:
+            self.screen.blit(ht, hr.topleft)
 
         self._draw_telemetry(rect, ty + 86)
 
@@ -2105,15 +2291,14 @@ class App:
                 txt = f"FORZA  {self.tr('waiting for Data Out on UDP')} :{FORZA_PORT}"
                 col = WARN
             self.screen.blit(self.font_small.render(txt, True, col), (rect.x + 26, by))
-        if self._status_t > 0.0:
-            self.screen.blit(self.font_small.render(self._status, True, ACCENT),
-                             (rect.x + 26, by + 18))
+        # (the transient status line is a toast now: _draw_status_toast)
 
         # --- ENGINE BAY: a recessed rounded-rect that frames the whole engine,
         # whatever its layout (inline / V / W / boxer / rotary / radial) ---------
         bay = pygame.Rect(rect.x + 14, ty + 198, rect.width - 28,
                           rect.bottom - 14 - (ty + 198))
         self._recess(bay, 12, fill=(19, 21, 26))
+        self._bay_box = bay                              # (the status toast's anchor)
         # crankshaft centre + half-height — set by each layout, used to hang the
         # oil pan etc.; default to the bay centre for layouts that don't set it.
         self._crank_xy = (bay.centerx, (bay.y + bay.bottom) // 2)
@@ -2126,8 +2311,23 @@ class App:
         # VarioCam Plus / Ti-VCT / CVVT / D-VVT ...) switch to the aggressive cam
         # profile high up — shown as the high-lift cam engaging.
         self._vtec_on = bool(vv) and sim.rpm > 0.74 * eng.redline_rpm
-        self.screen.blit(self.font_small.render(self.tr("Engine Bay"), True,
-                                                (84, 90, 104)), (bay.x + 12, bay.y + 6))
+        self._place_text(self.font_small.render(self.tr("Engine Bay"), True,
+                                                (84, 90, 104)),
+                         [(bay.x + 12, bay.y + 6)], force=True)
+        caption = self._bay_caption(eng)
+        if caption:
+            # after the title, clear of the air-filter scoop that
+            # _draw_front_intake puts at bay.x + 96 (17 px half-width), and
+            # fitted short of the variable-valve badge in the other corner
+            x_c = max(bay.x + 12 + self.font_small.size(self.tr("Engine Bay"))[0] + 10,
+                      bay.x + 96 + 17 + 8)
+            right = bay.right - 16
+            vv_ = getattr(eng, "variable_valve", "")
+            if vv_:
+                right -= self.font_small.size(f"{vv_}  ON")[0] + 20
+            fc, ctext = self._fit_line(self.tr(caption), (14, 13, 12, 11), right - x_c)
+            self._place_text(fc.render(ctext, True, (150, 158, 174)),
+                             [(x_c, bay.y + 6)], force=True)
         cp = getattr(eng, "crank_plane", "")
         if cp in ("flat", "cross"):                   # end-on crankshaft phase diagram
             self._draw_crank_diagram(bay.x + 38, bay.y + 50, 17, cp, sim.crank_angle)
@@ -2264,8 +2464,7 @@ class App:
                     self._draw_cyl(cxx, jy, a, length, width, frac, theta, glow, phi)
                     lx = cxx + math.sin(a) * (length + 16)
                     ly = jy - math.cos(a) * (length + 16)
-                    lab = self.font_small.render(f"{i + 1}", True, DIM)
-                    self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+                    self._cyl_num(i, lx, ly)
             # manifolds ON TOP of the banks so the red/green pipes are never hidden
             self._draw_v_timing(cxx, mtop, dy, (cy0 + cy1) * 0.5, sim, eng)
             self._begin_pipe_layers()
@@ -2409,8 +2608,7 @@ class App:
                 self._draw_cyl(jx, crank_y, a, length, width, frac, theta, glow, phi)
                 lx = jx + math.sin(a) * (length + 14)
                 ly = crank_y - math.cos(a) * (length + 14)
-                lab = self.font_small.render(f"{i + 1}", True, DIM)
-                self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+                self._cyl_num(i, lx, ly)
         self._draw_bay_induction(bay, eng, sim)
 
     def _flash_surf(self, radius, glow):
@@ -2850,8 +3048,7 @@ class App:
                     (headsL if ui == 0 else headsR).append((hx, hy))
                     lx = ux + math.sin(a) * (length + 14)
                     ly = jy - math.cos(a) * (length + 14)
-                    lab = self.font_small.render(f"{i + 1}", True, DIM)
-                    self.screen.blit(lab, (int(lx) - lab.get_width() // 2, int(ly) - 6))
+                    self._cyl_num(i, lx, ly)
             ulab = self.font_small.render(unit_name, True, (150, 158, 172))
             self.screen.blit(ulab, (ux - ulab.get_width() // 2, mbot + 6))
             wwidth = width
@@ -3333,7 +3530,12 @@ class App:
         if camlab and cams:
             tag = self.font_small.render(camlab, True,
                                          (120, 196, 255) if vvt else (236, 176, 72))
-            sc.blit(tag, (cams[-1][0] + cam_r + 3, cams[-1][1] - 6))
+            # beside the last cam, else the first, else above -- never on a
+            # cylinder number
+            self._place_text(tag, [
+                (cams[-1][0] + cam_r + 3, cams[-1][1] - 6),
+                (cams[0][0] - cam_r - 3 - tag.get_width(), cams[0][1] - 6),
+                (cams[-1][0] - tag.get_width() // 2, cams[-1][1] - cam_r - tag.get_height())])
 
     def _draw_v_manifolds(self, eng, stations, cxx, mtop, dy, bank, length, width, bay):
         """V-engine manifolds on top of the banks, per the cold-V reference: smooth
@@ -4185,7 +4387,7 @@ class App:
             cx = xs[i]
             self._draw_ancillary(cx, y, kind, throttle)
             t = self.font_small.render(self.tr(name), True, (140, 148, 164))
-            self.screen.blit(t, (cx - t.get_width() // 2, y + 14))
+            self._place_text(t, [(cx - t.get_width() // 2, y + 14)], force=True)
         intake_x = next((xs[i] for i, (n, k) in enumerate(items) if k in ("tb", "ic")),
                         bay.x + 70)
         self._draw_front_intake(bay, eng, intake_x, y)   # cold-air front of the chain
@@ -4291,7 +4493,16 @@ class App:
         if not ring_only:
             pygame.draw.circle(sc, (150, 160, 176), (cx, cy), max(2, int(r * 0.3)))
         t = self.font_small.render(label, True, (130, 196, 255))
-        sc.blit(t, (cx - t.get_width() // 2, cy + r + 2))
+        if ring_only:                                 # on the turbo: below it
+            spots = [(cx - t.get_width() // 2, cy + r + 2)]
+        else:
+            # on the crank: beside it, a little high -- below is the exhaust
+            # chain's row, and the HV cable drops in at cx + 30 (_draw_battery)
+            h = t.get_height()
+            spots = [(cx + 36, cy - h + 2),
+                     (cx - r - 5 - t.get_width(), cy - h + 2),
+                     (cx - t.get_width() // 2, cy + r + 2)]
+        self._place_text(t, spots, force=True)
 
     # cool pre-turbo intake air (light blue) — (casing, body, sheen)
     _COOL_COLS = ((20, 44, 60), (70, 138, 180), (162, 212, 240))  # coolant = blue
@@ -4378,30 +4589,35 @@ class App:
         def lab(text, x, y):
             t = self.font_small.render(self.tr(text), True, (150, 158, 174))
             # clamp inside the bay so long labels (e.g. "Parallel Twin-turbo")
-            # never run off the panel edge or under the turbo icons
+            # never run off the panel edge or under the turbo icons -- and step
+            # off a cylinder number or another label if it would sit on one
             tx = min(max(int(x - t.get_width() // 2), bay.x + 8),
                      bay.right - 8 - t.get_width())
-            self.screen.blit(t, (tx, int(y)))
+            self._place_text(t, [(tx, int(y)), (tx, int(y) + 14), (tx, int(y) - 14)],
+                             force=True)
+
+        def cap(text):
+            """(The layout's caption is on the bay's title line: _bay_caption,
+            placed before the engine.)"""
 
         thr = min(max(sim.throttle, 0.0), 1.0)
         if ind in ("roots", "centrifugal"):           # supercharger sits on top
             self._bay_blower(bay.centerx, bay.y + 50, 26, spin, load,
                              centri=(ind == "centrifugal"))
-            lab("Supercharger" if ind == "roots" else "Centrifugal SC",
-                bay.centerx, bay.y + 6)
+            # (named on the bay's title line: _bay_caption)
             self._bay_ancillaries(bay, eng, thr)
             return
         hot = getattr(eng, "hot_v", False)
         etb = getattr(eng, "electric_turbo", False)
         sub = getattr(eng, "induction_subtype", "")
-        if sub == "Twincharge":                       # supercharger + turbo compound
+        if sub.lower() == "twincharge":               # supercharger + turbo compound
             self._bay_blower(bay.centerx, bay.y + 48, 22, spin, load)
             if has_banks:
                 for x in (bay.x + 52, bay.right - 52):
                     self._bay_turbo(x, cyv + 8, 17, spin, load)
             else:
                 self._bay_turbo(bay.right - 50, cyv + 8, 20, spin, load)
-            lab("Twincharge · Supercharger + Turbo", bay.centerx, bay.y + 6)
+            cap("Twincharge · Supercharger + Turbo")
             self._bay_ancillaries(bay, eng, thr)
             return
         if sub == "sequential":                       # small (primary) + big (secondary)
@@ -4411,7 +4627,7 @@ class App:
                 pts = ((bay.right - 52, cyv - 24, 15), (bay.right - 46, cyv + 22, 24))
             for x, y, rr in pts:
                 self._bay_turbo(x, y, rr, spin, load, electric=etb)
-            lab("Sequential Twin-turbo · Small + Big", bay.centerx, bay.y + 26)
+            cap("Sequential Twin-turbo · Small + Big")
             self._bay_ancillaries(bay, eng, thr)
             return
         if sub == "twin_scroll":                      # divided-housing single turbo
@@ -4425,7 +4641,7 @@ class App:
             for x, y in ((bay.x + 46, cyv - 34), (bay.x + 46, cyv + 34),
                          (bay.right - 46, cyv - 34), (bay.right - 46, cyv + 34)):
                 self._bay_turbo(x, y, 18, spin, load)
-            lab("Quad-turbo", bay.centerx, bay.y + 26)
+            cap("Quad-turbo")
         elif has_banks:
             r = 22
             if hot:
@@ -4443,13 +4659,13 @@ class App:
                 pygame.draw.line(sc, (180, 186, 200), (rx0 - 1, ry0), (rx1 - 1, ry1), 1)
                 self._bay_turbo(bay.centerx - 12, cyv + 6, r, spin, load,
                                 electric=etb, inlet_dir=-math.pi / 2)
-                lab("Hot-V Twin-turbo · In the Valley", bay.centerx, bay.y + 22)
+                cap("Hot-V Twin-turbo · In the Valley")
             else:                                      # outside the banks
                 self._bay_turbo(bay.x + 48, cyv, r, spin, load, electric=etb,
                                 inlet_dir=0.0)
                 self._bay_turbo(bay.right - 48, cyv, r, spin, load, electric=etb,
                                 inlet_dir=math.pi)
-                lab("Twin-turbo · Outboard (Cold-V)", bay.centerx, bay.y + 26)
+                cap("Twin-turbo · Outboard (Cold-V)")
         elif sub == "twin":                            # inline parallel twin-turbo
             self._bay_turbo(bay.right - 78, cyv - 13, 18, spin, load, electric=etb,
                             inlet_dir=math.pi)
@@ -5141,7 +5357,8 @@ class App:
             rt = self.font_small.render(rpm_txt, True, GOOD)
             self.screen.blit(rt, (int(fcx) - rt.get_width() // 2, int(fcy + r + 4)))
             bt = self.font_small.render(f"{self.sim.boost:.2f} bar", True, ACCENT)
-            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2, int(fcy + r + 17)))
+            self.screen.blit(bt, (int(fcx) - bt.get_width() // 2,
+                                  int(fcy + r + 4 + rt.get_height() - 1)))
 
     def _draw_preset_bar(self, rect):
         """Selectable engine chips (wrap to more rows for cfg engines)."""
@@ -5459,7 +5676,8 @@ class App:
                 k = redline + (max_rpm - redline) * i / 13.0
                 a = start - span * (k / max_rpm)
                 pygame.draw.line(self.screen, (212, 60, 52), pt(r - 3, a), pt(r - 8, a), 4)
-            for k in range(0, int(max_rpm) + 1, 1000):
+            for k in range(0, int(max_rpm) + 1,
+                           1000 * self._tach_step(r - 30, span, max_rpm)):
                 a = start - span * (k / max_rpm)
                 col = WARN if k >= redline else (200, 206, 216)
                 num = self.font.render(str(k // 1000), True, col)
@@ -5493,7 +5711,9 @@ class App:
             a = start - span * (k / max_rpm)
             pygame.draw.line(self.screen, (212, 60, 52), pt(r - 3, a), pt(r - 8, a), 4)
 
-        # ticks (every 500) + numbers (every 1000)
+        # ticks (every 500) + numbers (every 1000, or every 2-5 thousand on a
+        # high-revving dial so two-digit numbers never touch)
+        lstep = self._tach_step(r - 36, span, max_rpm)
         for k in range(0, int(max_rpm) + 1, 500):
             a = start - span * (k / max_rpm)
             major = (k % 1000 == 0)
@@ -5502,7 +5722,7 @@ class App:
             col = WARN if over else (214, 219, 228) if major else (110, 116, 128)
             pygame.draw.line(self.screen, col, pt(r0, a), pt(r - 3, a),
                              3 if major else 1)
-            if major:                                # tach numbers incl. 0 (lower-left)
+            if major and (k // 1000) % lstep == 0:   # numbers incl. 0 (lower-left)
                 num = self.font.render(str(k // 1000), True, col)
                 nx, ny = pt(r - 36, a)
                 self.screen.blit(num, (nx - num.get_width() // 2,
