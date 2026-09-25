@@ -1818,7 +1818,12 @@ def ferrari_f2007_v8() -> Engine:
         phys_voice=True,                 # the F2004's physical voice
         flywheel_inertia=0.05, redline_rpm=19000, idle_rpm=4000,
         heat_release_k=3.6, ve_peak_frac=0.85, ve_width_frac=0.55,
-        friction_static=6.0, friction_quad=4.0e-5,
+        # friction from the F2004's (whose dyno meets the real car's) as a
+        # function of MEAN PISTON SPEED -- FMEP ~ c_m, c_m^2 -- scaled by
+        # displacement (x0.80) and stroke (x0.96): 2.2 bar at 18500 rpm.
+        # (4e-5 took 179 N m there, FMEP 9.4 bar: 300 hp net of a 766 hp
+        # burn -- the high-revving V8 that 'performed so badly', Leo)
+        friction_static=7.2, friction_linear=0.0077, friction_quad=5.2e-6,
         starter_torque=140.0, starter_speed_rpm=3800.0,
         exhaust_tone=152.0,
         exhaust_primary_m=0.42, exhaust_total_m=0.65, exhaust_radius_m=0.018,
@@ -1843,7 +1848,7 @@ def ferrari_sf25_v6_hybrid() -> Engine:
     offsets = _even_offsets(6, firing_order=[1, 6, 3, 4, 2, 5])
     cylinders = [
         Cylinder(bore=mm(80), stroke=mm(53), rod_length=mm(102),
-                 compression_ratio=13.0, cycle_offset_deg=offsets[i],
+                 compression_ratio=13.0, cycle_offset_deg=offsets[i],   # real ~18:1; >= 14.5 reads as diesel here
                  bank_angle_deg=(-45.0 if i < 3 else 45.0))
         for i in range(6)
     ]
@@ -1853,11 +1858,24 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         open_cockpit=True,               # single-seater: onboard camera
         flywheel_inertia=0.11, redline_rpm=15000, idle_rpm=4000,
         heat_release_k=2.6, ve_peak_frac=0.8, ve_width_frac=0.6,
-        friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3800.0,
+        # friction from the F2004's FMEP vs mean piston speed, scaled by
+        # displacement (x0.53) and stroke (x1.28): 2.4 bar at 15000 rpm (the
+        # road-car default took 247 N m there -- FMEP 19 bar)
+        friction_static=4.8, friction_linear=0.0068, friction_quad=6.1e-6,
+        starter_torque=140.0, starter_speed_rpm=3800.0,
         exhaust_tone=118.0,
         exhaust_primary_m=0.4, exhaust_total_m=0.85, exhaust_radius_m=0.027,
         exhaust_channels=1, exhaust_openness=0.6, muffler_volume_m3=0.0018,
-        induction="turbo", boost_bar=1.6, turbo_lag=0.2, turbo_spool_frac=0.06,
+        induction="turbo", boost_bar=2.8, turbo_lag=0.2, turbo_spool_frac=0.06,
+        # THE FUEL-FLOW LIMIT, the rule the whole power unit is built round
+        # (FIA: 100 kg/h above 10500 rpm, 0.009 N + 5.5 kg/h below): 100 kg/h
+        # x 43 MJ/kg x ~50 % brake efficiency = 597 kW (~800 hp), flat from
+        # 10500 up -- so revving on past ~12000 buys nothing and the cars
+        # short-shift, though the limit is 15000 (Leo: races stay under
+        # 13000).  Below 10500 the flow falls with rpm: ~constant torque.
+        # Boost ~3.8 bar abs (the real units run 3.5-4) lets the burn reach it.
+        torque_limit_nm=543.0, power_limit_kw=597.0,
+        prechamber_ignition=True,        # jet ignition: knock-free at 18:1
         mgu_h=True,                      # MGU-H: lag-free spool + exhaust harvest
         hybrid_kw=120.0, hybrid_base_rpm=3000.0, ers_capacity_mj=4.0,  # small F1 store
         regen_kw=120.0,                  # MGU-K harvest under braking
@@ -1890,7 +1908,11 @@ def mclaren_mp44_honda_v6() -> Engine:
         open_cockpit=True,               # single-seater: onboard camera
         flywheel_inertia=0.11, redline_rpm=12500, idle_rpm=3500,
         heat_release_k=3.5, ve_peak_frac=0.8, ve_width_frac=0.6,
-        friction_static=6.0, starter_torque=140.0, starter_speed_rpm=3300.0,
+        # friction from the F2004's FMEP vs mean piston speed, scaled by
+        # displacement (x0.50) and stroke (x1.23): the road-car default had
+        # FMEP ~15 bar at 12500 rpm
+        friction_static=4.5, friction_linear=0.0061, friction_quad=5.3e-6,
+        starter_torque=140.0, starter_speed_rpm=3300.0,
         exhaust_tone=130.0,
         exhaust_primary_m=0.4, exhaust_total_m=0.7, exhaust_radius_m=0.022,
         exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.001,

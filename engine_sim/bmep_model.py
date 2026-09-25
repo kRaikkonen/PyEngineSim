@@ -105,6 +105,11 @@ def torque_target(eng, rpm, mapf, ve, pr_comp=None):
     # charge one at the same boost.  Diesel is compression-ignition -> no derate.
     ki = (t_man / T_AMB) * (cr * min(mapf, cr) / 10.0) ** (GAMMA_CYC - 1.0)
     eta_k = 1.0 if diesel else 1.0 - KNOCK_DERATE * min(max(ki - 1.0, 0.0), 2.2)
+    if getattr(eng, "prechamber_ignition", False):
+        # turbulent jet ignition: the jets light the whole charge at once and
+        # the end gas burns before it can auto-ignite -- how an F1 unit runs
+        # ~18:1 at ~4 bar without knock (no retard, no enrichment)
+        eta_k = 1.0
     imep = eta_cyc * ETA_SHAPE * eta_k * q_per_air * rho * max(ve, 0.0)
     pmep = max(P_ATM - mapf * P_ATM, 0.0)            # throttled intake pumping loop
     vd = eng.total_displacement
