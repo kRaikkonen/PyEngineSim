@@ -2543,12 +2543,24 @@ class Synthesizer:
             # changing path length is applied downstream as a per-sample
             # fractional delay — true Doppler (+30 %/-19 % at 290 km/h), 1/r
             # level and distance air-absorption follow the live distance.
+            # The engine side as the chase hears it (2026-09-25, Leo: the fly-by
+            # had no 'rough, wild explosions' -- 'like an electric car'): this
+            # view was cut from the chase's values on 2026-07-10 BEFORE that
+            # day's two chase fixes, and kept the muffles they took out --
+            #   * g_bay: the chase's g_bay is only its distance ratio r_tail /
+            #     r_bay; here each source is propagated from its own place, so
+            #     the bay meets the tail at 1 (was 0.45 road, 0.7 race),
+            #   * bay_alpha 0.08 modelled a SEALED engine box (e24616f: the
+            #     bay is open-bottomed -- underbody, arches, cooling stack),
+            #   * the body shell's re-radiation of the exhaust's sub band, the
+            #     outdoor chest thump (7336bf9), omnidirectional: from mid-car.
             geo = dict(
-                g_bay=(0.7 if race else 0.45), g_tail=1.0,
+                g_bay=1.0, g_tail=1.0,
                 d_bay=0, d_tail=0,
-                bay_alpha=(0.35 if race else 0.08), bay_fc=fc_mass(6.3),
+                bay_alpha=(0.35 if race else 0.22), bay_fc=fc_mass(6.3),
                 tail_alpha=None, tail_fc=None,
-                struct=0.0, struct_fc=800.0, chassis=0.0,
+                struct=0.0, struct_fc=800.0,
+                chassis=0.30, chassis_fc=70.0,
                 boom_f=0.0, ground=None, flyby=True)
         else:                                    # chase cam behind the car
             d, hs, hr, car = 6.0, 0.3, 1.2, 4.5  # cam 6 m back, tailpipe 0.3 m up
@@ -4249,13 +4261,19 @@ class Synthesizer:
             stq = self._pov_lp(self._pov_lp(bay_p, "st1", geo["struct_fc"]),
                                "st2", geo["struct_fc"])
             bay_air = bay_air + geo["struct"] * stq
+        chas = None
+        if geo.get("chassis", 0.0) > 0.0:
+            # CHASSIS-BORNE exhaust LF (applied below; the fly-by radiates it
+            # from the body, with the block)
+            chas = geo["chassis"] * self._pov_lp(tail_pre, "chassis",
+                                                 geo.get("chassis_fc", 100.0))
         if geo.get("flyby"):
             # Directivity belongs to the two OPENINGS alone.  The block, the
             # housings and the panels are big, roughly omnidirectional
             # radiators; the pipe end beams BACKWARDS, the intake mouth (above)
             # forwards.  The diffuse field is fed from every direction at once,
             # so it gets the unbeamed mix.
-            omni = geo["g_tail"] * tail + geo["g_bay"] * bay_air
+            omni = geo["g_tail"] * tail + geo["g_bay"] * bay_air + chas
             pos = self._tk_sources()
             tail = self._tk_directivity(tail, self._tk_x + pos["exh"][0])
             dbi_p = self._pov_partition(dbi, "bayi_dp", a_hi, 2400.0)
@@ -4263,7 +4281,7 @@ class Synthesizer:
             # the three engine radiators, each propagated from its own place
             self._tk_src = (geo["g_tail"] * tail,
                             geo["g_bay"] * (tk_mouth + dbi_p),
-                            geo["g_bay"] * (tk_block + tk_house))
+                            geo["g_bay"] * (tk_block + tk_house) + chas)
         if geo.get("onboard"):
             # the pipes from in front of their exits: their top end beams away
             a_tip = sim.engine.exhaust_radius_m \
@@ -4296,15 +4314,13 @@ class Synthesizer:
             # ...and the cabin standing-wave boom re-peaks what DOES get in
             bbm, abm = self._pk(geo["boom_f"], 2.2, 5.0)
             sig, self._boom_zi = lfilter(bbm, abm, sig, zi=self._boom_zi)
-        if geo.get("chassis", 0.0) > 0.0:
+        if chas is not None:
             # CHASSIS-BORNE exhaust LF: the hangers shake the floor pan and the
             # panels re-radiate the pipe's low band INSIDE the cabin — the chest
             # thump ("胸口能感觉到的震动").  A STRUCTURE path: it legitimately
             # bypasses both the airborne partition and the stiffness HP (that HP
             # models AIRBORNE transmission only).
-            chas = self._pov_lp(tail_pre, "chassis",
-                                geo.get("chassis_fc", 100.0))
-            sig = sig + geo["chassis"] * chas
+            sig = sig + chas
         if self.capture_stages:
             self._dbg_pov = (np.asarray(sig, dtype=np.float64).copy(),
                              float(getattr(self, "_tk_x", -60.0)))
@@ -5689,9 +5705,12 @@ class Synthesizer:
             w_H = 343.0 * math.sqrt(A_m / (_AIRBOX_VOL_X * vd * L_eff))
             Q_H = min(max(w_H * L_eff / u, 0.5), 20.0)
             x_box = biquad_lp(x, w_H, Q_H, key + "_box")
-            if key == "surge":
-                # the compressor's surge noise above the box's cross-mode:
-                # through the chamber and the filter, _AIRBOX_HF_TL_DB down
+            if key in ("surge", "eng"):
+                # above the box's cross-mode it is no lumped resonator: the
+                # surge noise -- and the valves' own pulses, the same box --
+                # cross the chamber and the filter _AIRBOX_HF_TL_DB down
+                # (the engine's was left on the lumped -40 dB/decade, and the
+                # airbox cars' intakes were 67-92 dB under the output)
                 f_x = 343.0 / (2.0 * (_AIRBOX_VOL_X * vd) ** (1.0 / 3.0))
                 b_x, a_x = self._bw(2, f_x, btype="high")
                 x_hf, zi[key + "_boxhf"] = lfilter(
