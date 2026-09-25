@@ -346,6 +346,13 @@ def ferrari_f2004_v10() -> Engine:
         friction_static=9.0,
         friction_linear=0.010,
         friction_quad=7.0e-6,            # tiny: this engine lives at 18000 rpm
+        # ITB trumpets into the roll-hoop ram airbox: each feeds a siamesed
+        # port of two 40.4 mm inlet valves (Ferrari tipo 049), throats 0.87 x
+        # valve -> one bore of sqrt(2) x 0.87 x 40.4 = 50 mm.  x10 = 6.6x the
+        # road tract's open area, so the top end keeps its ~1 atm (was 0.90)
+        throttle_bore_mm=50.0,
+        # the real onboard (2026-09-23 clip) upshifts at ~17500 (14.7k after)
+        upshift_rpm=17500.0,
         starter_torque=120.0,
         exhaust_tone=185.0,              # very high F1 shriek
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
@@ -354,8 +361,13 @@ def ferrari_f2004_v10() -> Engine:
         wall_material="titanium",
         megaphone=0.7,                           # open upswept race exit -> mid bark
         has_cat=False,                           # open race exhaust, no cat/GPF
-        # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
-        gear_ratios=[3.04, 2.57, 2.20, 1.89, 1.64, 1.42, 1.24], final_drive=5.35,
+        # real F1 close-ratio 7-speed.  Drag area from Monza 2004 (~365 km/h
+        # on ~900 hp): the 664 kW at the tread (net of rolling) = 1/2 rho CdA
+        # v^3 -> CdA 1.06 m^2 (the road default 0.68 let it pin the limiter in
+        # 7th at 347).  Final drive so 7th meets that top at peak power (18000):
+        # 1885 rad/s x 0.33 m / 101.4 m/s / 1.24 = 4.95; 1st then ~145 km/h.
+        gear_ratios=[3.04, 2.57, 2.20, 1.89, 1.64, 1.42, 1.24], final_drive=4.95,
+        drag_cda=1.06,
         vehicle_mass=650.0, wheel_radius=0.33, clutch_capacity=400.0,
         # F1 seamless shift, as on the F2007: the real onboard's upshifts dip
         # ~0.3 dB; the single-clutch slam (declutch, flare, kick) dipped 8-13
@@ -1824,6 +1836,8 @@ def ferrari_f2007_v8() -> Engine:
         # (4e-5 took 179 N m there, FMEP 9.4 bar: 300 hp net of a 766 hp
         # burn -- the high-revving V8 that 'performed so badly', Leo)
         friction_static=7.2, friction_linear=0.0077, friction_quad=5.2e-6,
+        # the F2004's trumpet rule on this 98 mm bore (valves x 98/96): 51 mm
+        throttle_bore_mm=51.0,
         starter_torque=140.0, starter_speed_rpm=3800.0,
         exhaust_tone=152.0,
         exhaust_primary_m=0.42, exhaust_total_m=0.65, exhaust_radius_m=0.018,
@@ -1834,6 +1848,9 @@ def ferrari_f2007_v8() -> Engine:
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         # (was too tall -> 1st hit 200 km/h without reaching the limiter).
         gear_ratios=[3.08, 2.60, 2.23, 1.92, 1.66, 1.44, 1.25], final_drive=5.4,
+        # Monza 2007 ~352 km/h on ~750 hp: 554 kW at the tread -> CdA 0.99 m^2;
+        # 7th (6.75 overall) meets that at ~19000, where these cars were geared
+        drag_cda=0.99,
         vehicle_mass=605.0, wheel_radius=0.33, clutch_capacity=600.0,
         gearbox_type="dct",              # F1 seamless shift (no flare)
     )
@@ -1848,7 +1865,7 @@ def ferrari_sf25_v6_hybrid() -> Engine:
     offsets = _even_offsets(6, firing_order=[1, 6, 3, 4, 2, 5])
     cylinders = [
         Cylinder(bore=mm(80), stroke=mm(53), rod_length=mm(102),
-                 compression_ratio=13.0, cycle_offset_deg=offsets[i],   # real ~18:1; >= 14.5 reads as diesel here
+                 compression_ratio=18.0, cycle_offset_deg=offsets[i],   # the FIA 2014-25 cap, run at it
                  bank_angle_deg=(-45.0 if i < 3 else 45.0))
         for i in range(6)
     ]
@@ -1876,14 +1893,22 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         # Boost ~3.8 bar abs (the real units run 3.5-4) lets the burn reach it.
         torque_limit_nm=543.0, power_limit_kw=597.0,
         prechamber_ignition=True,        # jet ignition: knock-free at 18:1
+        diesel=False,                    # an Otto engine at a diesel's CR
         mgu_h=True,                      # MGU-H: lag-free spool + exhaust harvest
         hybrid_kw=120.0, hybrid_base_rpm=3000.0, ers_capacity_mj=4.0,  # small F1 store
         regen_kw=120.0,                  # MGU-K harvest under braking
         mgu_whine=1.0, upshift_rpm=12000.0,   # loud MGU-H/K whistle; short-shifts
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         gear_grain=0.3,
-        # real F1 close-ratio 8-speed: 1st redlines ~130 km/h, 8th ~350 km/h
-        gear_ratios=[2.88, 2.49, 2.16, 1.87, 1.62, 1.41, 1.22, 1.07], final_drive=5.0,
+        # 8-speed.  Drag area from ~345 km/h (Monza trim) on 597 kW + the
+        # 120 kW MGU-K, net of rolling: 706 kW = 1/2 rho CdA v^3 -> CdA 1.34 m^2.
+        # The cap makes the power flat past 11000, so the box is geared for the
+        # SHIFT point, not the limiter: 8th meets that top at 12000 (1256.6
+        # rad/s x 0.33 / 95.8 m/s = 4.33 overall -> 0.866), the gears geometric
+        # from 1st (~104 km/h at 12000) -- was 8th at 1.07, which the road
+        # drag let run to 14250 at 331 km/h.
+        gear_ratios=[2.88, 2.426, 2.043, 1.721, 1.450, 1.221, 1.028, 0.866], final_drive=5.0,
+        drag_cda=1.34,
         vehicle_mass=800.0, wheel_radius=0.33, clutch_capacity=1500.0,
         gearbox_type="dct",              # F1 seamless shift (no flare)
     )
@@ -3536,7 +3561,7 @@ def _annotate(key, eng):
     #     integrated manifold / cam profile.  Heuristic auto-config; defaults are
     #     NEUTRAL so anything not matched here is left unchanged. ----------------
     nc = eng.num_cylinders
-    diesel = eng.cylinders[0].compression_ratio >= 14.5
+    diesel = eng.is_diesel()
     if eng.injection == "port":                       # only fill the default
         if diesel:
             eng.injection = "diesel"

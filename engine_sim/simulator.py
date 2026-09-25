@@ -99,7 +99,10 @@ class Simulator:
         # are UNTHROTTLED — load is set by fuel, so their MAP stays ~atmospheric)
         self._map_idle_area = (map_model.idle_area_for(engine)
                                if _HAVE_MAP_MODEL else 0.02)
-        self._map_diesel = engine.cylinders[0].compression_ratio >= 14.5
+        self._map_diesel = engine.is_diesel()
+        # a race ITB tract's wide-open area (fleet units; 1 = road intake)
+        self._map_wot_area = (map_model.wot_area_for(engine)
+                              if _HAVE_MAP_MODEL else 1.0)
 
         self.boost = 0.0                # forced-induction boost (bar gauge)
         # idle-governor air, 0..~0.35 — starts with a cold-start CHOKE head start
@@ -330,7 +333,23 @@ class Simulator:
             frac_wot = map_model.solve_map_fraction(
                 1.0, rpm, eng.redline_rpm, ve, self._map_idle_area)
             return (frac / max(frac_wot, 0.25)) * (P_ATM + boost_pa)
-        return frac * P_ATM
+        return frac * self._itb_wot_gain(rpm, ve) * P_ATM
+
+    def _itb_wot_gain(self, rpm, ve):
+        """A race ITB tract (F1) at WOT over the fleet's road intake, as a
+        MAP ratio: 1 for every road car.  The pedal is a TORQUE DEMAND (F1
+        drive-by-wire): the ECU opens the trumpets so a pedal asks the same
+        share of the wide-open charge as a road car's, so idle (the
+        closed_map_fraction anchor), part throttle and the blips are as they
+        were and only the top, where the road tract's loss sits, rises."""
+        w = self._map_wot_area
+        if w <= 1.0:
+            return 1.0
+        red = self.engine.redline_rpm
+        f1 = map_model.solve_map_fraction(1.0, rpm, red, ve, self._map_idle_area)
+        fw = map_model.solve_map_fraction(1.0, rpm, red, ve, self._map_idle_area,
+                                          wot_area=w)
+        return fw / max(f1, 1e-3)
 
     def _air_from_map(self, rpm, map_pa, p_up):
         """Air mass flow at a manifold pressure: (kg/s, MAP, T_charge, VE).
@@ -551,6 +570,8 @@ class Simulator:
                 fw = 0.92
             if boost <= 0.0:
                 mapf = fw                                 # NA: the throttle IS the restriction
+                if _HAVE_MAP_MODEL:
+                    mapf *= self._itb_wot_gain(r, 0.85)   # race ITB tract (1 for road cars)
             elif thr >= 1.0:
                 mapf = 1.0 + boost                        # WOT: unchanged, the fleet is calibrated on it
             else:

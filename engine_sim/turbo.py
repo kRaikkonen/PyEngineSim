@@ -871,7 +871,7 @@ def build(eng, engine_flow, exhaust_temp, bov_mode="recirc", afr_fn=None,
     n = {"single": 1, "twin": 2, "sequential": 2, "quad": 4}.get(layout, 1)
     red = eng.redline_rpm
     b = max(eng.boost_bar, 0.05)
-    diesel = eng.cylinders[0].compression_ratio >= 14.5
+    diesel = eng.is_diesel()
     rpm_d = 0.88 * red
     p_d = P_ATM + b * 1.0e5
     w_air_d, _, _ = engine_flow(rpm_d, 1.0, p_d)

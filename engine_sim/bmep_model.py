@@ -59,7 +59,7 @@ P_ATM = 101325.0
 
 
 def _is_diesel(eng):
-    return eng.cylinders[0].compression_ratio >= 14.5
+    return eng.is_diesel()
 
 
 def charge_temp(eng, mapf, ic_soak=0.0):

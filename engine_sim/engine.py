@@ -13,6 +13,7 @@ All physical quantities are SI (metres, kilograms, pascals, radians).
 from __future__ import annotations
 
 import math
+from typing import Optional
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -129,6 +130,7 @@ class Engine:
     wheel_radius: float = 0.31       # m
     clutch_capacity: float = 340.0   # N*m the clutch can transmit
     tire_mu: float = 1.05            # driven-tyre friction coefficient (traction cap)
+    drag_cda: float = 0.0            # aero drag area Cd*A, m^2 (0 = the fleet's road car, 0.31 x 2.2)
     # transmission type sets the *shift feel*:
     #   "dct"    dual-clutch  -> fast, seamless, rev-matched (no kick)
     #   "single" single-clutch automated manual (Aventador ISR, F1 'box) ->
@@ -306,6 +308,15 @@ class Engine:
     # is a big part of why two otherwise-similar engines (RB26 vs 2JZ) sound
     # nothing alike.  Audio-only.
     individual_throttle: bool = False
+    # Per-cylinder throttle / trumpet bore (mm) of a RACE ITB tract that is open
+    # to a ram airbox (F1).  0 = the fleet's lumped road intake (filter, snorkel,
+    # one plate), whose WOT loss map_model.K_BALANCE carries.  Set, the tract's
+    # open area n * pi/4 * d^2 replaces it (map_model.wot_area_for).
+    throttle_bore_mm: float = 0.0
+    # Compression-ignition engine.  None = the old rule (CR >= 14.5); an Otto
+    # engine above it (the 2014+ F1 PUs run the FIA's 18:1 cap on jet ignition)
+    # says False.
+    diesel: Optional[bool] = None
     balance_shaft: bool = False      # cancels the secondary shake of an I4 / 90deg-V6
     # Valve LIFT mechanism: "fixed", "two-stage" (VTEC/AVS-style switch -> a step),
     # "continuous" (Valvetronic/MultiAir -> throttleless, extra-smooth).  Derived
@@ -369,6 +380,11 @@ class Engine:
     @property
     def total_displacement(self) -> float:
         return sum(c.displacement for c in self.cylinders)
+
+    def is_diesel(self) -> bool:
+        if self.diesel is not None:
+            return bool(self.diesel)
+        return self.cylinders[0].compression_ratio >= 14.5
 
     @property
     def firing_order(self) -> list:

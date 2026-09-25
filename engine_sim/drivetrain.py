@@ -59,7 +59,8 @@ class Drivetrain:
         self.max_brake_decel = 9.0        # m/s^2 at full brake
 
         self.c_roll = 0.014               # rolling resistance coefficient
-        self.c_aero = 0.5 * 1.2 * 0.31 * 2.2   # 0.5*rho*Cd*A
+        cda = (getattr(engine, "drag_cda", 0.0) if engine is not None else 0.0) or 0.31 * 2.2
+        self.c_aero = 0.5 * 1.2 * cda     # 0.5*rho*Cd*A
         # --- tyres: the missing link between clutch and road.  Drive force is
         # capped by the driven axle's friction circle; anything beyond it SPINS
         # the wheels (self.spin = wheel-surface speed above road speed), the
@@ -343,7 +344,12 @@ class Drivetrain:
         # powerful engine that out-revs the road-matched rpm under clutch slip
         # still short-shifts on time, instead of pinning the limiter); the
         # next-gear sanity check still uses the wheel-matched rpm.
-        if not launching and self._shift_lock <= 0.0:
+        # The lockout stops HUNTING (up, down, up); an upshift the ROAD speed
+        # already puts at the shift point can't be that, so it may go inside
+        # the lock -- a car that climbs faster than the lock (an F1 in 2nd at
+        # ~3 g, ~10000 rpm/s) otherwise overran the shift point by ~1400 rpm.
+        road_up = self._matched_rpm(self.gear) > up
+        if not launching and (self._shift_lock <= 0.0 or road_up):
             # UPSHIFT on engine rpm — even if the clutch is still slipping under a
             # very torquey engine (so it never just pins the limiter).
             if (rpm > up and self.gear < self.num_gears
@@ -351,7 +357,8 @@ class Drivetrain:
                 self._begin_shift(self.gear + 1)
                 self._run_shift(rpm, redline, dt)
                 return
-            elif locked and self._matched_rpm(self.gear) < down and self.gear > 1:
+            elif (self._shift_lock <= 0.0 and locked
+                    and self._matched_rpm(self.gear) < down and self.gear > 1):
                 self._begin_shift(self.gear - 1)
                 self._run_shift(rpm, redline, dt)
                 return

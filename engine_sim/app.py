@@ -2579,7 +2579,7 @@ class App:
                                     hrad, self._EXH_COLS, axis="h")
             if eng.induction == "na":
                 self._exh_exit = turbo
-        if eng.cylinders[0].compression_ratio >= 14.5:    # diesel EGR cooler loop
+        if eng.is_diesel():    # diesel EGR cooler loop
             scr = self.screen
             egr_y = int(plen_y - 16)
             tap_x = int(turbo[0] - 44)
@@ -4320,7 +4320,7 @@ class App:
         body, intercooler, catalytic converter, wastegate, blow-off."""
         aircraft = (getattr(eng, "is_radial", False)
                     or getattr(eng, "gearbox_type", "") == "aircraft")
-        diesel = eng.cylinders[0].compression_ratio >= 14.5 and not aircraft
+        diesel = eng.is_diesel() and not aircraft
         if aircraft:                                     # piston aircraft: NO civilian cat
             items = [("Throttle Body", "tb"), ("Intercooler", "ic")]
             if eng.induction != "na":

@@ -58,22 +58,49 @@ def _psi(pr):
     return math.sqrt(max((2.0 * GAMMA) / (GAMMA - 1.0) * (a - b), 0.0))
 
 
-def throttle_area(throttle, idle_area):
-    """Effective throttle-plate open-area fraction (0..1).  A butterfly plate's
-    projected opening ≈ 1 - cos(angle); the idle bleed sets the floor."""
+def throttle_area(throttle, idle_area, wot_area=1.0):
+    """Effective throttle-plate open-area fraction (0..1 of the fleet tract).
+    A butterfly plate's projected opening ≈ 1 - cos(angle); the idle bleed
+    sets the floor; wide open it is the tract's ``wot_area`` (1 = the fleet's
+    lumped road intake, > 1 a race ITB tract -- wot_area_for)."""
     t = min(max(throttle, 0.0), 1.0)
     plate = 1.0 - math.cos(0.5 * math.pi * t)   # 0 shut → 1 wide open, convex
-    return idle_area + (1.0 - idle_area) * plate
+    return idle_area + (wot_area - idle_area) * plate
 
 
-def solve_map_fraction(throttle, rpm, redline, ve, idle_area, warm=0.5):
+# K_BALANCE in metres: the balance a·Ψ(pr) = K·(rpm/redline)·VE·pr is the
+# isentropic orifice  m = Cd·A·p0/sqrt(R·T0)·Ψ  against the pump
+# m = (pr·p0/(R·T0))·VE·Vd·rpm/120, so a = 1 is an effective open area
+#   Cd·A_nom = Vd·redline / (120·sqrt(R·T0)·K_BALANCE)
+# (a 2.0 L 7000 rpm car: 7.3 cm^2, a 30 mm hole -- filter, snorkel and plate
+# together, sized so the fleet sits ~0.90 atm at redline).
+_R_AIR, _T_AMB = 287.05, 293.15
+_CD_BELL = 0.97        # radiused bellmouth discharge coefficient (ISO 5167 nozzle 0.96-0.99)
+
+
+def wot_area_for(eng):
+    """Wide-open tract area in fleet units.  A race ITB tract (F1): each
+    cylinder's trumpet opens straight into a ram airbox, so the open area is
+    n·π/4·d², far above the demand -- the manifold stays at the airbox's
+    pressure and only the valves (in VE) restrict.  Else 1 (fleet)."""
+    d = getattr(eng, "throttle_bore_mm", 0.0) or 0.0
+    if d <= 0.0:
+        return 1.0
+    vd = eng.total_displacement
+    a_nom = vd * eng.redline_rpm / (120.0 * math.sqrt(_R_AIR * _T_AMB) * K_BALANCE)
+    a_t = eng.num_cylinders * 0.25 * math.pi * (d * 1.0e-3) ** 2 * _CD_BELL
+    return max(a_t / max(a_nom, 1e-9), 1.0)
+
+
+def solve_map_fraction(throttle, rpm, redline, ve, idle_area, warm=0.5,
+                       wot_area=1.0):
     """Solve MAP/P_atm from the throttle-orifice ↔ cylinder-pump balance.
 
     n_in(pr) = A_eff · Ψ(pr)            (falls as pr → 1)
     n_out(pr) = k_pump · (rpm/redline) · VE · pr   (rises with pr)
     balance where they cross; bisection is robust across the choked kink.
     """
-    a_eff = throttle_area(throttle, idle_area)
+    a_eff = throttle_area(throttle, idle_area, wot_area)
     # pump demand grows with rpm and breathing; K_BALANCE fixes the operating
     # point.  rpm normalised by redline keeps the ratio displacement-free.
     pump = K_BALANCE * max(rpm, 1.0) / max(redline, 1.0) * max(ve, 0.05)
