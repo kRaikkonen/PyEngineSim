@@ -977,7 +977,16 @@ _TK_WALL_M = 15.0                  # far-side barrier, this far beyond the line
 _TK_WALL_R = 0.7                   # concrete, but only ~1 m of it faces the car
 _TK_WALL_H = 1.0                   #   ...its height (m)
 _TK_NEAR_M = 5.0                   # a facade behind the mic, this far behind it
-_TK_NEAR_R = 0.6                   #   pressure reflection (openings, people)
+_TK_NEAR_R = 0.85                  #   pressure reflection: a concrete pit wall /
+                                   #   building (was 0.6, openings and people:
+                                   #   Leo, the near echo should be clearer)
+_TK_STAND_M = 60.0                 # a GRANDSTAND / pit building across the track,
+_TK_STAND_R = 0.8                  #   this far beyond the line, concrete, this
+_TK_STAND_H = 12.0                 #   tall: the long echo.  Near, it arrives
+                                   #   ~32 dB under the direct and is masked;
+                                   #   40 m back, only ~14 dB under it and
+                                   #   plainly heard, darker by its 240 m of
+                                   #   extra air (Leo: far = a long echo)
 _TK_NEAR_H = 4.0                   #   ...its height (m)
 _TK_CAR_LEN = 4.4                  # the body ahead of its tailpipes (m)
 _TK_HALF_W = 0.95                  # the body's half width at the tail (m)
@@ -4335,9 +4344,9 @@ class Synthesizer:
                                   for nm in ("exh", "intake", "body")}
                 self._tk_air1 = _AirFIR(sr)
                 self._tk_gzi = np.zeros(1)
-                self._tk_img = _MovingTaps(int(3.0 * sr), 4)
+                self._tk_img = _MovingTaps(int(3.5 * sr), 5)
                 self._tk_img_zi = [[np.zeros(1), np.zeros(1)]
-                                   for _ in range(4)]
+                                   for _ in range(5)]
                 self._tk_omni_dl = _FlybyDelay(int(3.0 * sr))
                 self._tk_field = _OutdoorField(sr)
             # CONVECTIVE AMPLIFICATION: a moving monopole is louder ahead of
@@ -6098,10 +6107,12 @@ class Synthesizer:
         return dict(exh=(-2.2, hs), intake=(1.9, 0.6), body=(1.3, 0.5))
 
     def _tk_walls(self, sig, v, M, L, hm, frames):
-        """The track's two walls: the barrier across it and the facade behind
-        the mic, as image sources in the two planes -- each wall once and each
-        pair of bounces between them.  One delay buffer, four read heads, each
-        at its own retarded time (its own Doppler).
+        """The track's walls: the barrier across it and the facade behind the
+        mic, as image sources in the two planes -- each wall once and each
+        pair of bounces between them -- and the grandstand far across the
+        track, once (the long echo).  One delay buffer, five read heads, each
+        at its own retarded time (its own Doppler): every echo is the sound
+        the car made when THAT path left it, with that path's air.
 
         A wall reflects only what it is big enough to: coherently where it
         covers the first Fresnel zone, f > c d1 d2 / ((d1 + d2) h^2) (d1, d2
@@ -6111,12 +6122,14 @@ class Synthesizer:
         sr = self.sample_rate
         z = 0.5
         a_, b_ = -_TK_WALL_M, L + _TK_NEAR_M          # the two planes (lateral)
+        s_ = -_TK_STAND_M                            # ...and the stand beyond
         # (image lateral position, reflections as (wall, leg-to, leg-from))
         imgs = (
             (2.0 * a_, (("far", -a_, L - a_),)),
             (2.0 * b_, (("near", b_, b_ - L),)),
             (2.0 * b_ - 2.0 * a_, (("far", -a_, b_ - a_), ("near", b_ - a_, b_ - L))),
             (2.0 * a_ - 2.0 * b_, (("near", b_, b_ - a_), ("far", b_ - a_, L - a_))),
+            (2.0 * s_, (("stand", -s_, L - s_),)),
         )
         taus, gains, fcs, fas = [], [], [], []
         for y_img, refl in imgs:
@@ -6126,8 +6139,9 @@ class Synthesizer:
             g = L / r_ * (1.0 + M * xe_ / r_) ** -2
             fc = 20.0
             for wall, d1, d2 in refl:
-                R, h = ((_TK_WALL_R, _TK_WALL_H) if wall == "far"
-                        else (_TK_NEAR_R, _TK_NEAR_H))
+                R, h = {"far": (_TK_WALL_R, _TK_WALL_H),
+                        "near": (_TK_NEAR_R, _TK_NEAR_H),
+                        "stand": (_TK_STAND_R, _TK_STAND_H)}[wall]
                 g *= R
                 fc = max(fc, 343.0 * d1 * d2 / ((d1 + d2) * h * h))
             taus.append(t_ * sr)
@@ -6136,7 +6150,7 @@ class Synthesizer:
             fas.append(self._air_f3db(r_))
         heads = self._tk_img.process(sig, taus)
         out = np.zeros(frames)
-        for k in range(4):
+        for k in range(len(imgs)):
             y_ = heads[k] * gains[k]
             if _HAVE_SCIPY:
                 q = lambda f: 2.0 ** (round(12.0 * math.log2(f)) / 12.0)
