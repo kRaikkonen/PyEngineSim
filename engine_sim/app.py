@@ -166,7 +166,8 @@ TR_ZH = {
     "Explosion reverb": "爆燃混响", "Reverb (space)": "空间混响",
     "Cylinder spread": "缸间差异", "Radiation near/far": "辐射近/远场叠加",
     "Supercharger whine": "机增啸叫",
-    "Turbo spool / BOV": "涡轮/泄压", "Spool reverb": "增压混响",
+    "Turbo spool / BOV": "涡轮/泄压", "Turbo blade whistle": "涡轮叶片哨声",
+    "Spool reverb": "增压混响",
     "Straight-cut whine": "直齿啸叫", "Gear-whine reverb": "直齿混响",
     "Electric / e-turbo": "电机/电涡轮", "Overrun pops": "收油放炮",
     "Pop muffle": "放炮闷度", "Pop reverb": "放炮混响",
@@ -230,6 +231,7 @@ SLIDER_DEFS = [
     ("cyl_spread", "Cylinder spread", 0.0, 1.0),
     ("super_vol", "Supercharger whine", 0.0, 1.2),
     ("turbo_vol", "Turbo spool / BOV", 0.0, 1.2),
+    ("blade_vol", "Turbo blade whistle", 0.0, 3.0),
     ("spool_reverb", "Spool reverb", 0.0, 0.6),
     ("gearbox_vol", "Straight-cut whine", 0.0, 1.2),
     ("gearbox_reverb", "Gear-whine reverb", 0.0, 0.6),
@@ -2042,6 +2044,8 @@ class App:
         ind = getattr(eng, "induction", "na")
         if key == "turbo_vol":
             return ind == "turbo" or getattr(eng, "electric_turbo", False)
+        if key == "blade_vol":
+            return ind == "turbo"
         if key == "super_vol":
             return ind in ("roots", "centrifugal")
         if key == "spool_reverb":

@@ -1425,6 +1425,11 @@ class Synthesizer:
                                   #   into the full exhaust bus; through the bay
                                   #   bright path (1/r + leak) it needs ~2x —
                                   #   Leo: flutter buried, turbo too quiet
+            "blade_vol": 1.0,     # the compressor's BLADE whistle (the blade-pass
+                                  #   line and the tip-clearance band, and the
+                                  #   lift's lit whistle) on top of turbo_vol:
+                                  #   1 = the measured / physical level (Leo:
+                                  #   "增加叶片音量滑槽")
             "gearbox_vol": 0.375, # straight-cut gearbox whine (was 0.5 -> 75%)
             "wall_thickness": 0.3,  # pipe-wall thickness: higher = duller, less 'trumpet'
             "shear": 0.08,        # tail-pipe air-shear roar at the exit (mass-flow)
@@ -3763,13 +3768,20 @@ class Synthesizer:
             # injected into the full bus at unity — through the bay bright path
             # (~0.4x) it dug a -16 dB hole the flutter couldn't fill (Leo:
             # "flutter 搞坏了").  The engine now dips, the valve rides on top.
-            duck = min(0.40 * getattr(self, "_bov_env", 0.0), 0.40)
-            sig = (1.0 - duck) * sig          # exhaust collapses on the lift...
+            # (no duck any more: the flutter and the dump keep the gain the
+            # engine fired at, so they need no hole dug for them -- and the
+            # duck held the engine ~3 dB down for as long as a flutter lasted:
+            # Leo, again, "松油门阀门关闭后导致引擎声更小")
             if self.capture_stages:
                 self._dbg_gw = (np.asarray(ind, dtype=np.float64).copy(),
                                 np.asarray(gw, dtype=np.float64).copy())
             bayi = bayi + self._cl * ind + gw  # whine/BOV: intake tract + dump
                                               # vent to open air, not the pipe
+            # ...and the compressor's inlet noise -- its whistle through the
+            # filter, the surge, the recirculated dump -- leaves by the intake
+            # MOUTH (its place and forward beam on the fly-by, the airbox on
+            # an open car), not from the engine's housings; the gearbox stays
+            bayi_mouth = bayi_mouth + self._cl * ind
         if not self.stage_on.get("induction+gears", True):
             bayi = np.zeros(frames, dtype=np.float64)   # layer hidden
             bayi_mouth = bayi
@@ -4452,9 +4464,6 @@ class Synthesizer:
             # engine while it FIRES and holds when it stops (as trackside levels
             # the car, not the mic) -- otherwise the AGC fills the physical
             # overrun drop back in.  sustain_on_lift still holds it up.
-            self._level += (rms - self._level) * 0.04 * (
-                min(max(getattr(self, "_comb_load", 1.0), 0.0), 1.0)
-                if phys else 1.0)
             # gain ceiling FOLLOWS COMBUSTION: on the overrun a real car gets
             # QUIETER — the old fixed x6 ceiling let the AGC pump the residual
             # noise floors (fizz/ticks/injector band) up to fill the hole,
@@ -4464,11 +4473,22 @@ class Synthesizer:
             # level under it (a sealed cockpit runs at ~4.5x flat out; a fixed
             # 2.2 took another 6 dB off every lift)
             cl_ = min(max(getattr(self, "_comb_load", 1.0), 0.0), 1.0)
+            ovr = float(getattr(sim, "throttle", 1.0)) < 0.02   # a LIFT
+            # ON THE OVERRUN ONLY (Leo, three times: the lift must not go
+            # quiet): the level estimate falls fast, the gain follows at once,
+            # and the ceiling opens to +20 dB over the fired gain (capped at
+            # 12 -- a sealed cockpit fires at ~4.5x and its lift had nowhere
+            # to go).  The turbo layer keeps the fired gain regardless, so no
+            # flutter or dump is pumped.  Firing, everything is as it was.
+            k_lv = 0.25 if (ovr and rms < self._level) else 0.04
+            self._level += (rms - self._level) * k_lv * (cl_ if phys else 1.0)
             if cl_ > 0.5:
                 self._gain_fired = self._gain
-            gmax = max(2.2 + 3.8 * cl_, min(getattr(self, "_gain_fired", 2.2), 6.0))
+            g_f = getattr(self, "_gain_fired", 2.2)
+            gmax = max(2.2 + 3.8 * cl_,
+                       min(10.0 * g_f, 12.0) if ovr else min(g_f, 6.0))
             gain = min(0.22 / (self._level + 1e-6), gmax)
-            rate = 0.05 if gain > self._gain else 0.2    # rise SLOW (no decel pump-up)
+            rate = 0.2 if (ovr or gain < self._gain) else 0.05
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
         else:
@@ -4609,39 +4629,49 @@ class Synthesizer:
                                   #   by ear (Leo 2026-09-25: the other turbo
                                   #   cars "still a bit small")
     _TB_BUZZ = 0.050              # buzz-saw orders per (M_rel - 1)
-    _TB_TCN = 1.0                 # tip-clearance noise, per the blade-pass
-                                  #   line's power: at subsonic tip speeds it
-                                  #   DOMINATES a radial compressor's noise
-                                  #   (Raitor & Neise 2008) -- equal power is
-                                  #   the conservative reading (was 0.030 by
-                                  #   ear, 30-42 dB under the line, so a small
-                                  #   turbo, whose blade-pass is above hearing,
-                                  #   had no whistle at all)
+    _TB_TCN = 0.316               # tip-clearance noise, per the blade-pass
+                                  #   line's amplitude: 10 dB under it (Leo's
+                                  #   ear, 2026-09-25: "把叶尖声音降低").  The
+                                  #   literature has it DOMINATING a radial
+                                  #   compressor's subsonic noise (Raitor &
+                                  #   Neise 2008); 0.030 (by ear, 30-42 dB
+                                  #   under) left a small turbo, whose blade-
+                                  #   pass is above hearing, no whistle at all
+    _TB_FLUTTER = 5.5             # the whistle through a surge, re its steady
+                                  #   drive: MEASURED -- with it the 2JZ's lift
+                                  #   band sits ~+5 dB over its WOT whistle, as
+                                  #   a real one's (+2.7/+7.8/+7.9); at 1 it
+                                  #   was -7 (the reversals' cuts and the
+                                  #   slowing shaft) and the flutter had no
+                                  #   whistle in it (Leo: "whistle泄压声加大")
     _TB_TCN_Q = 20.0              # ...narrow-band: the real 2JZ's lift blob is
                                   #   ~300 Hz wide at 6.4 kHz (s.17)
     _TB_WHOOSH = 0.030            # whoosh band per M_u2^3
     # SURGE (plan doc s.14): every part in ONE unit, the flow W / W_r (W_r
     # the wheel's zero-slope flow at its rated speed); only _TB_SURGE is set
     # by ear-free anchoring, the rest is physics or cited
-    _TB_SURGE = 60.0              # the surge's level, the one anchor: a
-                                  #   flutter at equal distance ~5 dB under the
-                                  #   WOT exhaust (s.14: the stalled wheel's
-                                  #   dipole ~110 dB at 1 m, the thump's flip
-                                  #   ~120 dB peak, a sporty exhaust at WOT
-                                  #   ~105-110 dB).  Set on the S15 lifting from
-                                  #   0.93 bar / 5800 rpm, chase view: its first
-                                  #   0.5 s at -11 dB(A) under the WOT engine,
-                                  #   pre-AGC.  Re-solved (10 -> 32) when s.17
-                                  #   took the duct ring and the sub-cut-on
-                                  #   stall out of the mix -- which also puts a
-                                  #   2JZ single's first bursts where a real
-                                  #   one's are (~0 dB re its WOT 2-8 kHz)
+    _TB_SURGE = 60.0              # the surge's level, the one anchor, set on a
+                                  #   REAL 2JZ single's lift (s.17.8): its first
+                                  #   bursts +3..+10 dB over the WOT 2-8 kHz
+                                  #   band, fading to the whistle by ~0.4 s.
+                                  #   With the jet at the top of its range and
+                                  #   the monopole x0.25, the first dump of the
+                                  #   full boost is the loud 'pfft' (+9 dB),
+                                  #   each later one ~U^3 smaller (Leo: the
+                                  #   first release big, not a linear one)
     _TB_W_HP = 3.0                # the engine's slow draw taken off the surge
                                   #   flow (Hz): under the deep-surge rate
                                   #   (12-25 Hz)
-    _TB_CF = 0.2                  # fluctuating blade-force coefficient of the
+    _TB_CF = 0.3                  # fluctuating blade-force coefficient of the
                                   #   blow-back jet on the wheel (turbulent
-                                  #   impingement 0.1-0.3: an estimate)
+                                  #   impingement 0.1-0.3: the top -- the first
+                                  #   dump of the full boost, ~U^3, is the loud
+                                  #   'pfft' of a lift, s.17.8)
+    _TB_MONO = 0.25               # the flow's own thump (the monopole) per its
+                                  #   lumped value: the lumped duct flips the
+                                  #   flow in ~1 ms (its length an estimate), a
+                                  #   real 2JZ's bursts carry <= 3 dB below
+                                  #   1 kHz -- and every 'tu' a drum (Leo)
     _TB_ST = 0.2                  # jet-noise peak Strouhal number
     _TB_HISS_Q = 0.7              # ...a hump ~1.4 octaves wide
     _TB_SW_CF = 0.1               # the stalled wheel: fluctuating force
@@ -4760,23 +4790,52 @@ class Synthesizer:
             fwd = np.clip(phi / phi_z, 0.0, 1.0) ** 2
             f_s = float(om1) / (2.0 * math.pi)
             z = c.z_main
+            # a SURGE is on while the flow reverses through the wheel (and a
+            # quarter second after the last reversal) -- not the twin's busy
+            # flag, which a big wheel near its surge line keeps up at WOT
+            if not hasattr(self, "_tw_srg"):
+                self._tw_srg = {}
+            s0 = self._tw_srg.get(j, 0.0)
+            s1 = 1.0 if float(wj.min()) < 0.0 else max(s0 - frames / (0.25 * sr), 0.0)
+            self._tw_srg[j] = s1
+            sg = s0 + (s1 - s0) * (xi + 1.0) / frames
+            # THE FLUTTER IS THE WHISTLE, LIT BY EACH RE-GRIP: a real 2JZ's
+            # whistle band during a lift is ~5 dB over its steady WOT whistle
+            # (three of four lifts, s.17.7) -- the blades slam back onto the
+            # flow after every reversal; the flow gate cuts it between
+            # ...each re-grip as hard as the pressure swing it slams against,
+            # ~U2^2: the lit whistle fades with the shaft faster than its own
+            # tone does, as a real one's dies within half a second
+            if not hasattr(self, "_tw_u2s"):
+                self._tw_u2s = {}
+            if s0 <= 0.0:
+                self._tw_u2s[j] = float(u2[0])
+            k_rg = (u2 / max(self._tw_u2s.get(j, float(u2[0])), 1.0)) ** 2
+            lit = 1.0 + (self._TB_FLUTTER - 1.0) * sg * np.minimum(k_rg, 1.0)
+            # the blades carry their pressure field whenever they load the air
+            # -- forward flow, or none (then they churn it: C_RC) -- and lose
+            # it only as the flow REVERSES through them: the whistle's gate
+            # (fwd, full only at the surge line's flow, left it silent for
+            # most of a flutter, where the flow sits at or below zero)
+            g_wh = np.clip(1.0 + phi / (0.5 * phi_z), 0.0, 1.0) ** 2
 
             def fade(f):                 # no partial past the Nyquist guard
                 return min(max((nyq - f) / (0.05 * sr), 0.0), 1.0)
-            a = tv * self._TB_TONE * m_u ** 2.5 * fwd
+            a = tv * self._TB_TONE * m_u ** 2.5 * g_wh
             # the pod's measured anchor is the BLADE-PASS line's: the shaft's
             # own orders stay put (a real 7675 through a cone shows no 1x
             # line at all, s.17)
             g_bp = (self._TB_TONE_POD / self._TB_TONE
                     if getattr(self, "pod_filter", False) else 1.0)
-            tone = (g_bp * (fade(z * f_s) * np.sin(z * ph)
-                            + 0.35 * fade(2 * z * f_s) * np.sin(2 * z * ph))
+            bv = self.params.get("blade_vol", 1.0)
+            tone = ((g_bp * bv) * (fade(z * f_s) * np.sin(z * ph)
+                                   + 0.35 * fade(2 * z * f_s) * np.sin(2 * z * ph))
                     + 0.5 * fade(f_s) * np.sin(ph)
                     + 0.2 * fade(2 * f_s) * np.sin(2 * ph))
             if self.o_chord:             # easter egg: the V7 on the 1st order
                 for hm, ha in _TURBO_V7:
                     tone = tone + 0.6 * ha * fade(hm * 4 * f_s) * np.sin(hm * 4 * ph)
-            out += a * tone
+            out += (a * lit) * tone
             # buzz-saw: the inducer tip's relative Mach past 1 -> shocks
             # locked to the rotor, every shaft order, uneven blade to blade
             c_ax = wj / (rho * c.a_ann)
@@ -4799,20 +4858,24 @@ class Synthesizer:
             # chops it with every surge reversal (a whistle in each 'tu'), and
             # it hands over to the blade tones as the inducer goes supersonic
             sub_ = np.clip((1.05 - m_rel) / 0.15, 0.0, 1.0)
+            # THE FLUTTER IS THE WHISTLE (Leo: "本来turbo whistle在松油门的时候
+            # 就会tutu泄气"; a real 2JZ's lift is its whistle band lit and cut
+            # by each surge cycle): through a surge the whistle keeps the voice
+            # it had when the surge began -- no new tip-clearance band switching
+            # on as the slowing tip goes subsonic -- and the flow gate cuts it
+            # with every reversal while the shaft's slowing fades and lowers it
+            if not hasattr(self, "_tw_sub0"):
+                self._tw_sub0 = {}
+            if s1 <= 0.0 and s0 <= 0.0:
+                self._tw_sub0[j] = float(sub_[-1])
+            sub_ = (1.0 - sg) * sub_ + sg * self._tw_sub0.get(j, float(sub_[0]))
             f_t = min(0.5 * z * f_s, nyq)
             if f_t > 200.0:
                 nb = self._tw_band(noise, f_t, self._TB_TCN_Q, ("tcn", j))
                 a_bp = (self._TB_TONE_POD if getattr(self, "pod_filter", False)
                         else self._TB_TONE) * m_u ** 2.5 * (1.0 / math.sqrt(2.0))
-                # ...a rotating instability of a steady near-stall forward
-                # flow: in deep surge the flow is either reversed or rushing
-                # back in far right of the surge line, and it never forms (as
-                # the rotating-stall cells) -- a flutter's whistle is the
-                # blade-pass of the slowing shaft (a real 2JZ's lift: a band
-                # at ~0.85 x the whistle's pitch, nothing at half of it)
-                sg0 = self._tw_gate[j]
-                sg = sg0 + (min(tw.busy / 8.0, 1.0) - sg0) * (xi + 1.0) / frames
-                out += tv * self._TB_TCN * a_bp * fwd * sub_ * (1.0 - sg) * nb
+                out += (tv * self._TB_TCN * self.params.get("blade_vol", 1.0)
+                        * a_bp) * g_wh * sub_ * lit * nb
             # whoosh: broadband from the inlet duct's (1,0) cut-on (the duct
             # ~1.2 x the inducer) to ~0.8 x BPF, worst at low-to-mid flow
             f_lo = 1.8412 * a01 / (math.pi * 1.2 * c.d1s)
@@ -4851,7 +4914,7 @@ class Synthesizer:
                 # ramp over the twin's 8-block hold fades it in and out, so
                 # nothing steps when a surge starts or ends.
                 gate = g0 + (g1 - g0) * (xi + 1.0) / frames
-                surge += tv * self._TB_SURGE * gate * (wj - wlp) / w_r
+                surge += tv * self._TB_SURGE * self._TB_MONO * gate * (wj - wlp) / w_r
                 # (2) THE BLOW-BACK.  The plenum empties backwards through the
                 # spinning wheel: a jet chopped by its blades ('like blowing
                 # through a fan') -- a DIPOLE on them (Curle),
@@ -5031,9 +5094,10 @@ class Synthesizer:
         # fired (the previous block's), letting go of it over ~3 s.
         g = float(getattr(self, "_gain", 1.0)) if self.agc_enabled else 1.0
         g_ref = getattr(self, "_tl_gref", g)
+        surging = any(v > 0.0 for v in getattr(self, "_tw_srg", {}).values())
         if getattr(self, "_comb_load", 1.0) > 0.5 or g_ref > g:
             g_ref = g
-        else:
+        elif not surging:                # held through the whole flutter
             g_ref += (g - g_ref) * min(frames / (sr * 3.0), 1.0)
         self._tl_gref = g_ref
         if g > 1e-9 and g_ref < g:
