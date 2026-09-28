@@ -3596,6 +3596,12 @@ def _annotate(key, eng):
         eng.valve_lift = "two-stage"
     elif "Valvetronic" in vv or "MultiAir" in vv:
         eng.valve_lift = "continuous"
+    elif any(k in vv for k in ("VANOS", "VVT", "VCT", "VTC", "Dual")):
+        # cam PHASING (VANOS, VVT-i, VCT...): the intake cam advances through
+        # the mid range and retards at the top -- the breathing of a hot cam
+        # up top without its low-rpm overlap lope (was display-only; Leo
+        # 2026-09-28: "vvt vtec vanos 似乎没有明显的声音变化")
+        eng.valve_lift = "phasing"
     # integrated (in-head) exhaust manifold — modern turbo fours
     if key in _INTEGRATED_MANIFOLD:
         eng.integrated_manifold = True

@@ -102,7 +102,7 @@ def _cam_params(eng, rpm):
         xr = getattr(eng, "vtec_rpm", 0.0) or 0.62 * eng.redline_rpm
         w = 1.0 / (1.0 + math.exp(-(rpm - xr) / max(0.013 * eng.redline_rpm, 45.0)))
         return tuple(lo + (hi - lo) * w for lo, hi in zip(_VTEC_LO, _VTEC_HI))
-    if lift == "continuous":
+    if lift in ("continuous", "phasing"):
         knee, _, _ = _CAM.get(getattr(eng, "cam_profile", "stock"), _CAM["stock"])
         return (max(knee, _CAM["hot"][0]), 0.0, 1.0)   # top-end breathing, no lope
     return _CAM.get(getattr(eng, "cam_profile", "stock"), _CAM["stock"])

@@ -898,7 +898,14 @@ _FIZZ_POW = 3.0
 # ...and its level: x2.5 with the cube gate (Leo 2026-09-28, A/B "D": the
 # gas-rush tearing is what took the silk off -- the dry mix, more scatter and
 # a sharper attack did not)
-_FIZZ_GAIN = 1.6               # (2.5 was Leo's A/B pick; then "沙点声音太大")
+_FIZZ_GAIN = 1.6
+# TWO-STAGE CAM (VTEC / AVS / VarioCam...) on the pulse itself, not just a
+# brighter filter: gas_truth's lobes are 230 deg low / 286 deg high, so the
+# high lobe cracks the exhaust (286 - 230) / 2 = 28 deg EARLIER -- into a
+# cylinder still that much more compressed (polytropic, p ~ V^-1.3, from the
+# engine's own crank geometry) -- and lifts the intake 1.15 / 0.82 = 1.40x.
+_VTEC_EVO_SHIFT = 28.0
+_VTEC_IN_GAIN = 1.40               # (2.5 was Leo's A/B pick; then "沙点声音太大")
 # The explosions' LOW END (Leo 2026-09-28, A/B "B" on the Aventador and the
 # F2004: "爆炸低频", the F1 lacked "strong bass to support the gnarly power"):
 # each car's own firing body x1.75, the fire-tone pad's weight 0.5 -> 0.9
@@ -2256,6 +2263,11 @@ class Synthesizer:
             step = 1.0 if vl == "two-stage" else 0.22
             xf = (getattr(eng, "vtec_rpm", 0.0) / max(eng.redline_rpm, 1.0)) or 0.62
             self._vtec = min(max((rpm_frac - xf) / 0.06, 0.0), 1.0)
+            if vl == "two-stage" and getattr(self, "_vtec_pr", None) is None:
+                cyl0 = eng.cylinders[0]
+                v_lo = cyl0.volume(math.radians(VALVE_OPEN - 360.0))
+                v_hi = cyl0.volume(math.radians(VALVE_OPEN - 360.0 - _VTEC_EVO_SHIFT))
+                self._vtec_pr = (v_lo / max(v_hi, 1e-12)) ** 1.3
             self._post_fc *= 1.0 + 0.30 * step * self._vtec
             fc *= 1.0 + 0.26 * step * self._vtec
         # tail-pipe TIP mouth: a big bore brightens the exit, a small one darkens it
@@ -2914,8 +2926,15 @@ class Synthesizer:
                 else:
                     phi = np.mod(crank + off + self._hdr_off()[j]
                                  + self._tjit[j], 720.0)
-                d = phi - VALVE_OPEN
-                inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
+                # the active cam's exhaust opening (two-stage: earlier and
+                # stronger above the crossover, _VTEC_EVO_SHIFT)
+                vt_ = self._vtec if getattr(self, "_vtec_pr", None) else 0.0
+                evo = VALVE_OPEN - _VTEC_EVO_SHIFT * vt_
+                # ...which strengthens the choked BLOWDOWN (flow ~ p_cyl) against
+                # the piston's push-out: the pulse's shape, not just its level
+                kv_ = 1.0 + vt_ * (self._vtec_pr - 1.0) if vt_ > 0.0 else 1.0
+                d = phi - evo
+                inwin = (phi >= evo) & (phi <= VALVE_CLOSE)
                 dd = np.clip(d, 0.0, None)
                 # Two-stage exhaust pulse instead of one flat blat:
                 # (1) BLOWDOWN — the valve cracks and the still-high cylinder
@@ -2931,7 +2950,7 @@ class Synthesizer:
                 # snap; a slow one (diesel) a longer, softer swell.  Anchored at
                 # sharp=1 (the reference) so that car's decay is unchanged.
                 tau_blow = max(0.30 * tau_j / self._bd_sharp ** 0.85, 2.5)
-                blow = (0.7 + 1.0 * load) * hard * np.exp(-dd / tau_blow)
+                blow = (0.7 + 1.0 * load) * kv_ * hard * np.exp(-dd / tau_blow)
                 # (2) DISPLACEMENT — the rising piston then pushes the rest out: a
                 #   soft, broad, lower, later hump (the body / low end).
                 soft = np.clip(d / self.params["attack_deg"], 0.0, 1.0)
@@ -3764,9 +3783,11 @@ class Synthesizer:
                     t_ratio = 300.0 / max(sim.exhaust_gas_temp(), 300.0)
                     # (P["intake"] trims it; 0.11, its default, = as derived)
                     trim = P["intake"] / 0.11
+                    vt_ = self._vtec if getattr(self, "_vtec_pr", None) else 0.0
                     src = (0.55 * t_ratio * self._inl_scale * trim
                            * self._throttle_T()
-                           * getattr(self, "_voice_g", 1.0)) * q
+                           * getattr(self, "_voice_g", 1.0)
+                           * (1.0 + vt_ * (_VTEC_IN_GAIN - 1.0))) * q
                     bayi = bayi + self._intake_radiate(src, "eng")
 
         # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
