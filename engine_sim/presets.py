@@ -183,10 +183,10 @@ def ferrari_458() -> Engine:
         friction_quad=6.0e-5,
         starter_torque=170.0,
         exhaust_tone=120.0,              # high, raspy flat-plane voice
-        # flat-plane fires evenly -> banks merge into one even channel; near-open
-        # race exhaust -> bright, ringing (high openness)
+        # one pipe per bank to the silencer (the factory manual lists a left
+        # and a right catalyst); near-open race exhaust -> bright, ringing
         exhaust_primary_m=0.62, exhaust_total_m=2.2, exhaust_radius_m=0.025,
-        exhaust_channels=1, exhaust_openness=0.92, muffler_volume_m3=0.0015,
+        exhaust_channels=2, exhaust_openness=0.92, muffler_volume_m3=0.0015,
         wall_material="titanium", cat_cells_cpsi=200,
         gear_ratios=[3.08, 2.18, 1.63, 1.29, 1.03, 0.84, 0.69],
         final_drive=5.14,
@@ -642,7 +642,8 @@ def lamborghini_huracan_v10() -> Engine:
         friction_static=8.0, friction_quad=6.0e-5, starter_torque=180.0,
         exhaust_tone=112.0,
         exhaust_primary_m=0.6, exhaust_total_m=2.0, exhaust_radius_m=0.025,
-        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        # one pipe per bank (the bolt-on cat-backs replacing it are 2 x 3")
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0018,
         gear_ratios=[3.13, 2.41, 1.81, 1.46, 1.19, 0.97, 0.84], final_drive=4.77,
         vehicle_mass=1422.0, wheel_radius=0.34, clutch_capacity=620.0,
         gearbox_type="dct",      # 7-speed dual-clutch — seamless
@@ -901,7 +902,8 @@ def ferrari_f355_v8() -> Engine:
         valves_per_cyl=5,                        # 5-valve heads
         exhaust_tone=100.0,
         exhaust_primary_m=0.55, exhaust_total_m=1.95, exhaust_radius_m=0.025,
-        exhaust_channels=1, exhaust_openness=0.9, muffler_volume_m3=0.0018,
+        # one pipe per bank: a left and a right catalyst
+        exhaust_channels=2, exhaust_openness=0.9, muffler_volume_m3=0.0018,
         gear_ratios=[3.21, 2.10, 1.52, 1.16, 0.92, 0.77], final_drive=4.19,
         vehicle_mass=1350.0, wheel_radius=0.33, clutch_capacity=480.0,
         gearbox_type="single",                   # F1 single-clutch
@@ -3367,6 +3369,19 @@ _ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
                   "e36m3"})     # BMW M3 E36 Euro S50B30 I6, 6 ITBs
 _NO_ITB = frozenset()          # exclusions from the auto straight-cut rule
 
+# PHYSICAL sound channels into the cabin -- a duct with a membrane from the
+# intake through the bulkhead, not a speaker (BMW's Active Sound, VW's
+# Soundaktor, Honda's ASC play synthesized sound and are not modelled):
+# {key: (outlets, outlet -> ear m)}.  No maker publishes the band; the LFA's
+# (Lexus: 300-600 Hz) is its firing frequency from 0.4 to 0.8 of the redline,
+# and the same design rule sets these (_annotate).
+_SOUND_CHANNEL = {
+    "3": (1, 0.9),     # Mustang GT Coyote 2011-23: the 'sound tube', behind
+                       #   the filter to the firewall at the driver's feet
+    "gt3": (2, 0.5),   # 992 GT3: Porsche's Sound Symposer, two tubes into the
+                       #   cabin behind the seats (the 991.2 / 992 layout)
+}
+
 # Real intake-runner lengths (m) for the V10/V12 fleet — physical MEASUREMENT
 # data (short velocity-stacks on a screamer, a variable/plenum on a road exotic,
 # a long torque runner on a pushrod, a big turbo plenum), NOT audio tuning.
@@ -3542,6 +3557,12 @@ def _annotate(key, eng):
             eng.turbo_ball_bearing = True
     if key in _POD_INTAKE:
         eng.intake_filter = "pod"
+    if key in _SOUND_CHANNEL and not eng.sound_channel_hi_hz:
+        n_out, ear = _SOUND_CHANNEL[key]
+        fire = eng.num_cylinders / 120.0          # firing Hz per rpm (4-stroke)
+        eng.sound_channel_lo_hz = 0.4 * eng.redline_rpm * fire
+        eng.sound_channel_hi_hz = 0.8 * eng.redline_rpm * fire
+        eng.sound_channel_ducts, eng.sound_channel_ear_m = n_out, ear
     # --- exhaust hardware (audio) ------------------------------------------------
     # Spread the exhaust OPENNESS around the fleet mean so genuinely different
     # exhaust HARDWARE finally sounds different: a track/straight-cut car ends up
