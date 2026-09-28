@@ -236,6 +236,31 @@ def lexus_lfa() -> Engine:
     )
 
 
+def lexus_lfa_yamaha() -> Engine:
+    """Lexus LFA, EXPERIMENT: the LFA with the sound hardware Lexus, Yamaha
+    and Sango describe, each piece as published:
+
+      * the surge tank as a soundboard, DUCTED INTO THE CABIN (Yamaha): a main
+        channel to below the dashboard, two more to the upper cowl and a
+        reflector at the front; the tank emits ~300 Hz up to 4000 rpm, 400-500
+        Hz at 6000, 600 Hz near 9000 (Lexus, "Sounds Spectacular", 2009);
+      * the titanium silencer's valve (Sango): shut up to 3000 rpm (multi-
+        chamber path), open above it (Lexus);
+      * full dual pipes from equal-length manifolds (Sango, via Jalopnik);
+      * the two-port intake: one port at low / medium speed, both above ~3000
+        rpm (Jalopnik; other sources only say "at higher speeds").
+    Everything else is the LFA preset ("5").
+    """
+    eng = lexus_lfa()
+    eng.name = "Lexus LFA 1LR-GUE 4.8 V10 Yamaha Exp"
+    eng.sound_channel_lo_hz, eng.sound_channel_hi_hz = 300.0, 600.0
+    eng.muffler_valve_rpm = 3000.0
+    eng.exhaust_channels = 2
+    eng.header_equality = 1.0
+    eng.intake_port2_rpm = 3000.0
+    return eng
+
+
 def lamborghini_murcielago() -> Engine:
     """Lamborghini Murcielago LP670-4 SuperVeloce — 6.5 L 60-deg V12.
 
@@ -3174,6 +3199,7 @@ PRESETS = [
     ("hura", "Huracan V10", lamborghini_huracan_v10),
     ("6", "LP670 SV", lamborghini_murcielago),
     ("5", "LFA", lexus_lfa),
+    ("lfax", "LFA Yamaha Exp", lexus_lfa_yamaha),
     ("gts", "GranTurismo S F136 V8", maserati_granturismo_s),
     ("787b", "787B 4-rotor", mazda_787b_rotary),
     ("rx7", "RX-7 rotary", mazda_rx7_rotary),
@@ -3242,7 +3268,7 @@ _VARIABLE_VALVE = {
     "0": "Valvetronic", "e60m5": "double-VANOS", "b48": "Valvetronic",
     "330i": "double-VANOS", "bmwv8": "Valvetronic",          # S63
     # Toyota / Lexus — VVT-i (phasing)
-    "9": "VVT-i", "5": "VVT-i", "2jzst": "VVT-i",
+    "9": "VVT-i", "5": "VVT-i", "lfax": "VVT-i", "2jzst": "VVT-i",
     # Ferrari — VVT (phasing); F1 cars use pneumatic valves -> none
     "4": "F1-Trac VVT", "488": "VVT", "pista": "VVT", "lafe": "VVT",
     "enzo": "VVT", "fxxk": "VVT",
@@ -3330,6 +3356,7 @@ _ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
                   "ae86",       # 4A-GE 20-valve ITBs — Leo's own example
                   # --- V10 / V12 icons that genuinely run ITBs / velocity stacks
                   "5",          # Lexus LFA 1LR-GUE V10, 10 ITBs (the F1 howl)
+                  "lfax",       # ...its sound-hardware experiment
                   "e60m5",      # BMW M5 S85 V10, 10 ITBs
                   "mf1",        # McLaren F1 BMW S70/2 V12, 12 ITBs
                   "917",        # Porsche 917 flat-12, slide throttles
@@ -3347,7 +3374,7 @@ _NO_ITB = frozenset()          # exclusions from the auto straight-cut rule
 # these engines differentiate from geometry.  Only what Leo scoped: V10 + V12.
 _INTAKE_RUNNER = {
     # V10
-    "5": 0.10, "7": 0.08, "cgt": 0.12, "e60m5": 0.16, "hura": 0.24,
+    "5": 0.10, "lfax": 0.10, "7": 0.08, "cgt": 0.12, "e60m5": 0.16, "hura": 0.24,
     "viper": 0.36, "fdviper": 0.34,
     # V12 — race / stacks (short)
     "mf1": 0.17, "clkgtr": 0.14, "917": 0.12, "valk": 0.13, "vulcan": 0.16,

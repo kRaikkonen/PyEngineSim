@@ -2229,6 +2229,23 @@ class Synthesizer:
         # and steepens the top -> far more idle-vs-redline contrast.
         valve = valve ** 1.4
         self._valve = valve
+        # a VALVED silencer (Engine.muffler_valve_rpm, the LFA's): shut or
+        # open, switched at its rpm (+-2 % hysteresis, so it does not chatter
+        # on the line) by an actuator with a ~0.2 s stroke.  The two-port
+        # intake (intake_port2_rpm) switches the same way.
+        for attr, st_attr, r_sw in (("_mv", "_mv_on", "muffler_valve_rpm"),
+                                    ("_port2", "_port2_on", "intake_port2_rpm")):
+            r_sw = getattr(eng, r_sw, 0.0)
+            if r_sw > 0.0:
+                on = getattr(self, st_attr, False)
+                if self.sim.rpm > 1.02 * r_sw:
+                    on = True
+                elif self.sim.rpm < 0.98 * r_sw:
+                    on = False
+                setattr(self, st_attr, on)
+                x_ = getattr(self, attr, 0.0)
+                setattr(self, attr, x_ + (float(on) - x_)
+                        * (1.0 - math.exp(-dt_ / 0.2)))
         self._post_fc = 1600.0 + 9600.0 * valve     # muffled 1.6 kHz .. bright 11 kHz
 
         # MEAN EXHAUST FLOW (0..1) — drives the TURBULENT (v^2) nonlinearities:
@@ -3718,6 +3735,11 @@ class Synthesizer:
             # and the bright straight-through tap is crossfaded back in — the note
             # gets louder and opens up at the top end, exactly like a valved system.
             vo = min(max((self._valve - 0.40) / 0.5, 0.0), 1.0) * 0.5 * P.get("valve_open", 1.0)
+            if getattr(sim.engine, "muffler_valve_rpm", 0.0) > 0.0:
+                # this car's own valve (the LFA's): shut, the gas takes the
+                # chambers; open, the bypass takes it -- up to the share two
+                # paths in parallel leave it (the cap below)
+                vo = 0.85 * getattr(self, "_mv", 0.0) * P.get("valve_open", 1.0)
             vo = min(vo, 0.85)
             if self.vx.get("phys_voice", False):
                 vo = 0.0      # a generic valve model, not this car's hardware
@@ -4456,6 +4478,12 @@ class Synthesizer:
         else:
             bay_air = bay_air + g_int * self._pov_partition(bayi_p, "bayi_p",
                                                             a_hi, f_hi)
+            if self.pov == "cockpit":
+                # the car's sound channel, if it has one: the tank's sound
+                # comes in through a duct, not through the firewall
+                ch = self._sound_channel(bayi_mouth)
+                if ch is not None:
+                    bay_air = bay_air + ch
         if geo["struct"] > 0.0:
             # structure-borne mount path: shell re-radiation of the engine's
             # low-mid band inside the cabin (2nd-order above the panel response)
@@ -6516,7 +6544,55 @@ class Synthesizer:
         eng = self.sim.engine
         q = (eng.total_displacement * eng.redline_rpm / 120.0 * eng.ve_max
              * (1.0 + max(eng.boost_bar, 0.0)))
-        return math.sqrt(q / (math.pi * 35.0))
+        a = math.sqrt(q / (math.pi * 35.0))
+        if getattr(eng, "intake_port2_rpm", 0.0) > 0.0:
+            # two ports, sized together for the peak flow: below the switch
+            # only the primary breathes -- half the area
+            a *= math.sqrt(0.5 + 0.5 * getattr(self, "_port2", 0.0))
+        return a
+
+    def _sound_channel(self, x):
+        """The sound channel (Engine.sound_channel_*, the LFA's): the surge
+        tank's sound ducted into the cabin, past the firewall.
+
+        The tank's pressure drives both the intake mouth and the channel's
+        outlets.  An opening of area A fed through a duct of inertance length
+        L' radiates p = p_tank A / (4 pi r L') at r (above the box's own
+        resonance, below the opening's ka = 1).  ``x`` is the mouth's field at
+        the cockpit's bay reference (1.5 m, _pov_geo), so n outlets deliver
+            x * n (a_c / a_m)^2 (L_m' / L_c') (1.5 / r_ear)
+        of it.  The band is the tank's own, as Lexus gives it: a 2nd-order
+        resonance at f0 = sqrt(lo hi), Q = f0 / (hi - lo) -- the ribbed shell
+        and the channel tuned to pass it.  None when the car has none."""
+        eng = self.sim.engine
+        lo = getattr(eng, "sound_channel_lo_hz", 0.0)
+        hi = getattr(eng, "sound_channel_hi_hz", 0.0)
+        if not (lo > 0.0 and hi > lo) or not _HAVE_SCIPY:
+            return None
+        if getattr(self, "_sch_ba", None) is None:
+            f0 = math.sqrt(lo * hi)
+            w0 = 2.0 * math.pi * min(f0, 0.45 * self.sample_rate) / self.sample_rate
+            al = math.sin(w0) / (2.0 * f0 / (hi - lo))
+            a0 = 1.0 + al
+            self._sch_ba = (np.array([al, 0.0, -al]) / a0,
+                            np.array([a0, -2.0 * math.cos(w0), 1.0 - al]) / a0)
+            self._sch_zi = np.zeros(2)
+        a_m = max(self._intake_mouth_radius(), 0.01)
+        if self.pod_filter:
+            L_m = (float(getattr(eng, "pod_pipe_m", 0.0) or 0.0) or _POD_DUCT_M) \
+                + 0.61 * a_m
+        else:
+            L_m = _AIRBOX_DUCT_M + (0.61 + 0.85) * a_m
+        a_c = 0.5e-3 * max(getattr(eng, "sound_channel_d_mm", 50.0), 1.0)
+        L_c = max(getattr(eng, "sound_channel_len_m", 1.0), 0.05) \
+            + (0.61 + 0.85) * a_c
+        g = (max(int(getattr(eng, "sound_channel_ducts", 1)), 1)
+             * (a_c / a_m) ** 2 * (L_m / L_c)
+             * 1.5 / max(getattr(eng, "sound_channel_ear_m", 0.6), 0.1)
+             * self.params.get("channel", 1.0))
+        b, a = self._sch_ba
+        y, self._sch_zi = lfilter(b, a, x, zi=self._sch_zi)
+        return g * y
 
     def _tk_L_target(self):
         """The post's distance off the racing line (m) from the spatial pad's

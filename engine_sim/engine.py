@@ -198,6 +198,26 @@ class Engine:
     # the driver's ear.  0 = auto (13 dB thin-shelled sports car; 6 dB if the
     # shell is stripped/open race).  Set ~20+ for a sealed luxury saloon.
     cabin_nr_db: float = 0.0
+    # SOUND CHANNEL (Lexus LFA, Yamaha): the intake surge tank is built as a
+    # soundboard (a ribbed resin shell) and ducted INTO the cabin -- Lexus: a
+    # main channel from the tank to below the dashboard, two more to the upper
+    # cowl and to a reflector low at the front.  Its band, as Lexus gives it:
+    # the tank emits ~300 Hz up to 4000 rpm, 400-500 Hz at 6000, 600 Hz near
+    # 9000.  0 = none (the cabin hears the intake through the firewall only).
+    sound_channel_lo_hz: float = 0.0
+    sound_channel_hi_hz: float = 0.0
+    sound_channel_ducts: int = 3     # outlets (the LFA: dash, cowl, footwell)
+    sound_channel_d_mm: float = 50.0 # each duct's bore (not published: a
+                                     #   dash-vent-sized duct)
+    sound_channel_len_m: float = 1.0 # tank -> outlet, through the bulkhead
+    sound_channel_ear_m: float = 0.6 # outlet -> the driver's ear
+    # VALVED SILENCER (the LFA's titanium box, Sango): shut below this rpm (the
+    # multi-chamber path), open above it (the bypass).  0 = the fleet's generic
+    # flap that eases open with rpm and pedal.
+    muffler_valve_rpm: float = 0.0
+    # TWO-PORT INTAKE (the LFA): one inlet port at low / medium speed, both
+    # above this rpm -- the mouth's area doubles.  0 = one fixed mouth.
+    intake_port2_rpm: float = 0.0
     blower_ratio: float = 0.0        # whine pitch per engine-rev (SC types)
     turbo_lag: float = 0.6           # spool time constant (s) -- only the legacy
                                      #   boost lag reads it; the turbo MACHINE's lag
