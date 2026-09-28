@@ -898,7 +898,7 @@ _FIZZ_POW = 3.0
 # ...and its level: x2.5 with the cube gate (Leo 2026-09-28, A/B "D": the
 # gas-rush tearing is what took the silk off -- the dry mix, more scatter and
 # a sharper attack did not)
-_FIZZ_GAIN = 2.5
+_FIZZ_GAIN = 1.6               # (2.5 was Leo's A/B pick; then "沙点声音太大")
 # The explosions' LOW END (Leo 2026-09-28, A/B "B" on the Aventador and the
 # F2004: "爆炸低频", the F1 lacked "strong bass to support the gnarly power"):
 # each car's own firing body x1.75, the fire-tone pad's weight 0.5 -> 0.9
@@ -3823,13 +3823,9 @@ class Synthesizer:
                 # the air tearing through the trumpets (_ITB_FLOW)
                 kf = P.get("itb_flow", _ITB_FLOW)
                 shp = getattr(self, "_inl_q", None)
-                if kf > 0.0 and shp is not None and _HAVE_SCIPY:
-                    g3 = np.zeros(frames)
-                    for off in self._offsets:
-                        qj = np.maximum(np.interp(np.mod(crank + off, 720.0),
-                                                  self._inl_deg, shp,
-                                                  period=720.0), 0.0)
-                        g3 += qj * qj * qj
+                g3 = getattr(self, "_inl_g3", None)
+                if kf > 0.0 and shp is not None and _HAVE_SCIPY \
+                        and g3 is not None and len(g3) == frames:
                     g3 = g3 / max(float(np.sqrt(np.mean(g3 * g3))), 1e-30)
                     if getattr(self, "_itbn_ba", None) is None:
                         self._itbn_ba = butter(2, [300.0 / (self.sample_rate / 2),
@@ -4803,6 +4799,15 @@ class Synthesizer:
         if frames:
             step = max(1, frames // 64)
             self.last_wave = out[::step][:64].astype(np.float64).copy()
+            if self.scope_enabled:
+                # every 4th output sample for the waveform scope (as his)
+                if getattr(self, "_scope_ring", None) is None:
+                    self._scope_ring = np.zeros(8192, dtype=np.float32)
+                    self._scope_n = 0
+                v4 = out[::4]                 # (blocks are 4-sample aligned)
+                idx = self._scope_n + np.arange(len(v4))
+                self._scope_ring[idx % 8192] = v4
+                self._scope_n += len(v4)      # entries, each 4 samples apart
         self._tap("output", out)             # final post-master signal
         return out
 
@@ -4854,8 +4859,12 @@ class Synthesizer:
         block: each 720-deg cycle of it draws its own arrival time
         (N(0, _FIRE_DT_S)) and strength (1 + N(0, _FIRE_COV)), once."""
         cyc = np.floor((self._crank_turns * 720.0 + ang) / 720.0)
+        c0, c1 = float(cyc[0]), float(cyc[-1])
+        if c0 == c1 and c0 <= self._fs_cyc[j]:          # the common case
+            return (np.full(len(ang), self._fs_dt[j] * 6.0 * max(rpm, 1.0)),
+                    self._fs_a[j])
         dt = np.empty(len(ang)); am = np.empty(len(ang))
-        for c in np.unique(cyc):
+        for c in np.arange(c0, c1 + 1.0):
             if c > self._fs_cyc[j]:
                 self._fs_cyc[j] = c
                 self._fs_dt[j] = self.params.get("fire_dt", _FIRE_DT_S)                     * self._rng.standard_normal()
@@ -4877,7 +4886,7 @@ class Synthesizer:
         cyc = c0 + f_cyc / sr * np.arange(frames)
         idx = np.floor(cyc)
         dt = np.empty(frames); am = np.empty(frames)
-        for c in np.unique(idx):
+        for c in np.arange(idx[0], idx[-1] + 1.0):
             if c > self._cw_cyc:
                 self._cw_cyc = c
                 self._cw_dt = self.params.get("fire_dt", _FIRE_DT_S)                     * self._rng.standard_normal()
@@ -5889,11 +5898,16 @@ class Synthesizer:
         if shape is None:
             return None
         shape = shape + self._inl_hammer(shape, self.sim.rpm)
-        q = np.zeros(len(crank))
-        for off in self._offsets:
-            q += np.interp(np.mod(crank + off, 720.0), self._inl_deg, shape,
-                           period=720.0)
-        return q
+        # every cylinder in one interpolation (numpy's per-call cost, not the
+        # arithmetic, is what 16 small calls a block spent)
+        offs = np.asarray(self._offsets, dtype=np.float64)
+        ph = np.mod(crank[None, :] + offs[:, None], 720.0)
+        qm = np.interp(ph.ravel(), self._inl_deg, shape,
+                       period=720.0).reshape(ph.shape)
+        q = np.add.reduce(qm, axis=0)
+        qp = np.maximum(qm, 0.0)
+        self._inl_g3 = np.add.reduce(qp * qp * qp, axis=0)   # each trumpet's
+        return q                                            #   flow cubed
 
     def _inl_hammer(self, shape, rpm):
         """The flow the runner's stopped column rings into the plenum after

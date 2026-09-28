@@ -345,11 +345,19 @@ class Simulator:
         w = self._map_wot_area
         if w <= 1.0:
             return 1.0
+        key = (int(rpm / 25.0), int(ve * 200.0))
+        cache = self.__dict__.setdefault("_itb_gain_cache", {})
+        g = cache.get(key)
+        if g is not None:
+            return g
+        if len(cache) > 4096:
+            cache.clear()
         red = self.engine.redline_rpm
         f1 = map_model.solve_map_fraction(1.0, rpm, red, ve, self._map_idle_area)
         fw = map_model.solve_map_fraction(1.0, rpm, red, ve, self._map_idle_area,
                                           wot_area=w)
-        return fw / max(f1, 1e-3)
+        cache[key] = g = fw / max(f1, 1e-3)
+        return g
 
     def _air_from_map(self, rpm, map_pa, p_up):
         """Air mass flow at a manifold pressure: (kg/s, MAP, T_charge, VE).

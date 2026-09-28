@@ -25,6 +25,7 @@ import numpy as np
 import pygame
 
 from .simulator import Simulator
+from .scope_cluster import ScopeCluster
 from .audio import Synthesizer, list_output_devices
 from .telemetry import ForzaTelemetry, FORZA_PORT
 from . import presets
@@ -405,6 +406,7 @@ class App:
         self.mixer_open = False   # audio console overlay (press C)
         self.speed_mph = False    # show speed in mph (else km/h)
         self.scope_open = False   # exhaust-path per-stage waveform overlay (press E)
+        self.scopes = ScopeCluster()   # the oscilloscope cluster (engine-sim's layout)
         self.scope_mode = "flow"  # "flow" (exhaust gas) | "audio" (listener chain)
         self._scope_toggle_rect = None
         self._drag = None         # slider currently being dragged
@@ -1060,6 +1062,8 @@ class App:
 
     # ----------------------------------------------------------- engine swap
     def load_engine(self, key):
+        if getattr(self, "scopes", None) is not None:
+            self.scopes.reset()
         if key not in presets.ALL or key == self.current_key:
             return
         self.current_key = key
@@ -1258,8 +1262,9 @@ class App:
         """Press on the normal UI (dropdown menu, mixer, sliders, toolbar)."""
         if self._layer_click(mpos):          # the layers panel sits on top
             return
-        if self.scope_open:                  # modal overlay: any click dismisses it
-            self.scope_open = False
+        if self.scope_open:                  # a small scope: focus it; else close
+            if not self.scopes.click(mpos):
+                self.scope_open = False
             return
         # the trip RESET button lives in the always-visible right panel, so check
         # it before the left-panel overlays (menu / mixer) get a shot
@@ -1586,7 +1591,7 @@ class App:
         # integration where it matters (the redline), with a negligible rpm-
         # trajectory shift (the flywheel smooths it; audio is independent).  Normal
         # mode keeps the fine 80 for full fidelity.
-        self.sim.substep_cap = 24 if self.low_quality else 80
+        self.sim.substep_cap = 24 if self.low_quality else 40
         # tyre-slip dynamics follow the toggle (re-pushed every frame so it
         # survives engine swaps, which rebuild the drivetrain)
         self.sim.drivetrain.traction_model = self.traction_on
@@ -1600,6 +1605,8 @@ class App:
             # Show indicated torque — combustion plus any electric-motor assist.
             drive_tq = self.sim.gas_torque + self.sim.motor_torque
             self._disp_torque += (drive_tq - self._disp_torque) * 0.08
+            if self.scope_open and not self.low_quality:
+                self.scopes.sample(self, sdt)
         if self._status_t > 0.0:
             self._status_t -= dt
 
@@ -1724,6 +1731,17 @@ class App:
                 self._draw_menu()
             self._present()
             return
+        if self.scope_open and not self.low_quality:
+            # the cluster covers the panels: draw only it (the hidden UI under
+            # it cost the audio thread ~12 ms of GIL a frame for nothing)
+            self.screen.fill((12, 13, 16))
+            if self.synth is not None:
+                self.synth.scope_enabled = True
+            self._draw_scope_cluster(pygame.Rect(24, 24, 1052, 632))
+            if self._open_menu is not None:
+                self._draw_menu()
+            self._present()
+            return
         self.screen.blit(self._grad_surf(WIDTH, HEIGHT, BG_TOP, BG_BOT, 0), (0, 0))
         self.screen.blit(self._brushed(WIDTH, HEIGHT, 0), (0, 0))   # brushed backplate
         for sx, sy in ((13, 13), (WIDTH - 13, 13), (13, HEIGHT - 13),
@@ -1745,8 +1763,8 @@ class App:
             or getattr(self, "flow_dbg", False)
         if self.synth is not None:
             self.synth.scope_enabled = stage_scopes
-        if stage_scopes:
-            self._draw_exhaust_scopes(pygame.Rect(24, 24, 1052, 632))
+        if self.scope_open and not self.low_quality:
+            self._draw_scope_cluster(pygame.Rect(24, 24, 1052, 632))
         if self._open_menu is not None:
             self._draw_menu()
         self._draw_touch_overlay()
@@ -5038,45 +5056,6 @@ class App:
         return cols
 
     @staticmethod
-    def _smooth(arr, k):
-        """Moving-average smoothing — models a stage damping the flow pulsation."""
-        if k <= 1 or len(arr) < 2:
-            return arr
-        k = min(k, len(arr))
-        return np.convolve(arr, np.ones(k) / k, mode="same")
-
-    @staticmethod
-    def _stabilize(wave):
-        """Peak-trigger an audio tap so the dominant transient sits at a FIXED
-        position every frame — you see the steady TIMBRE SHAPE instead of a trace
-        sliding with rpm (a poor-man's scope trigger)."""
-        if wave is None or len(wave) < 4:
-            return wave
-        shift = len(wave) // 3 - int(np.argmax(np.abs(wave)))
-        return np.roll(wave, shift)
-
-    def _ascope(self, x, y, w, h, title, series, bipolar=False, vmax=None):
-        """A framed signal window plotting one or more (array, colour) traces."""
-        x, y, w, h = int(x), int(y), int(w), int(h)
-        pygame.draw.rect(self.screen, (10, 11, 14), (x, y, w, h))
-        pygame.draw.rect(self.screen, (52, 58, 70), (x, y, w, h), 1)
-        self.screen.blit(self.font_small.render(self.tr(title), True, (150, 158, 172)),
-                         (x + 5, y + 3))
-        base = y + h * 0.5 if bipolar else y + h - 7
-        pygame.draw.line(self.screen, (32, 36, 44), (x, int(base)), (x + w, int(base)), 1)
-        good = [(a, c) for a, c in series if a is not None and len(a) > 1]
-        if not good:
-            return
-        vm = vmax or max((float(np.max(np.abs(a))) for a, _ in good), default=1e-6) or 1e-6
-        amp = (h * 0.40) if bipolar else (h - 22)
-        for a, col in good:
-            nn = len(a)
-            xs = x + np.arange(nn) / (nn - 1) * (w - 2) + 1
-            yv = base - (a / vm) * amp
-            pts = np.column_stack((xs, yv)).astype(np.int32).tolist()
-            pygame.draw.lines(self.screen, col, False, pts, 1)
-
-    @staticmethod
     def _valve_lift(ang, open_deg, dur):
         """Raised-cosine valve-lift curve over [open, open+dur], wrapping the cycle
         so an intake event spanning 720 -> 0 still draws (valve-overlap region)."""
@@ -5166,138 +5145,15 @@ class App:
         self.screen.blit(self.font_small.render(f"spark adv {adv:.0f}°", True, ACCENT),
                          (x + w - 92, axy + 2))
 
-    def _draw_exhaust_scopes(self, rect):
-        """Engine-analyzer overlay: final audio waveform on top, then per-cycle
-        physical signals (combustion pulses, exhaust pressure, valve lift, crank
-        torque, single-cylinder pressure, ignition/cam timing)."""
-        self._panel(rect, screws=False)
-        sim, eng = self.sim, self.sim.engine
-        self.screen.blit(self.font.render(self.tr("ENGINE ANALYZER"), True, INK),
-                         (rect.x + 18, rect.y + 12))
-        self.screen.blit(self.font_small.render(
-            self.tr("Live engine signals  ·  E / click to close"), True, DIM),
-            (rect.x + 18, rect.y + 36))
-        PATM = 101325.0
-        pad, gap = 14, 12
-        x0, fullw = rect.x + pad, rect.width - 2 * pad
-        topy, toph = rect.y + 58, 116
-
-        # --- analytic per-cycle signals -----------------------------------------
-        W = 240
-        ang = np.linspace(0, 720, W, endpoint=False)
-        n = eng.num_cylinders
-        offs = getattr(sim, "_offset_deg", [0.0] * n)
-        shifts = [int(round((offs[i] % 720.0) / 720.0 * W)) for i in range(n)]
-        load = min(max((sim.blowdown_pressure() - PATM) / (0.9 * PATM), 0.25), 1.1)
-        thr = min(max(sim.throttle, 0.0), 1.0)
-        cyl = eng.cylinders[0]
-        # VALVE LIFT — the REAL cam for THIS engine at THIS rpm (duration by profile,
-        # VTEC lift+duration STEP at vtec_rpm, VANOS phasing).  Not a fixed curve.
-        ivo, dur_i, lift_i, evo, dur_e = self._cam_state(eng, sim.rpm)
-        ivl = self._valve_lift(ang, ivo, dur_i) * lift_i
-        evl = self._valve_lift(ang, evo, dur_e)
-        # CYLINDER PRESSURE — the ACTUAL Wiebe finite-burn trace the engine runs
-        # (live burn multiplier k, real spark advance + burn duration, peak cap),
-        # sampled over the cycle; NOT a separate display curve.
-        p_man = sim._manifold_pressure()
-        combusting = getattr(sim, "ignition_on", True) and not getattr(sim, "_fuel_cut", False)
-        kb = getattr(sim, "_k_burn", 1.0)
-        Pcyl = np.array([sim._cylinder_pressure(cyl, float(a), p_man, combusting, kb)
-                         for a in ang])
-        arm = cyl.piston_area * np.array(
-            [cyl.d_displacement_d_theta(math.radians(a % 360.0)) for a in ang])
-        g = (Pcyl - PATM) * arm
-        # EXHAUST FLOW — REAL: mass flow past the exhaust valve = curtain area
-        # (proportional to exhaust lift) x gas velocity.  At EVO the cylinder is
-        # still near peak pressure -> a choked BLOWDOWN burst proportional to
-        # sqrt(P_cyl - P_exh); then the piston displaces the rest at low pressure.
-        # Driven by the REAL cyl pressure + REAL exhaust cam, so it tracks load,
-        # rpm, spark and VTEC instead of a hardcoded lin-rise/exp-decay window.
-        blow = np.sqrt(np.maximum(Pcyl - 1.05 * PATM, 0.0) / PATM)
-        eflow = evl * (blow + 0.30)          # blowdown burst + displacement while open
-        dC = ang - 360.0
-        cbase = np.where((dC >= -6) & (dC < 150),
-                         np.clip((dC + 6) / 8.0, 0, 1) * np.exp(-np.clip(dC, 0, None) / 45.0), 0.0)
-        torque = np.zeros(W); comb = np.zeros(W); exh = np.zeros(W)
-        for s in shifts:
-            torque += np.roll(g, -s)
-            comb += np.roll(cbase, -s)
-            exh += np.roll(eflow, -s)
-        # combustion-pulse fallback amplitude tracks load+throttle (exhaust flow
-        # already scales with load through the real cylinder pressure)
-        drive = 0.15 + 0.85 * (0.45 * load + 0.55 * thr)
-        comb *= drive
-        exh = self._smooth(exh, max(3, int(W * 0.04)))
-        aud = getattr(self.synth, "last_wave", None) if self.synth else None
-
-        # torque & horsepower curves vs RPM (a live dyno chart) ------------------
-        rl = eng.redline_rpm
-        rlo = eng.idle_rpm * 0.7
-        rpms = np.linspace(rlo, rl, W)
-        # WHITE-BOX dyno: torque/HP now come from the ACTUAL physics the engine runs
-        # (VE x BMEP x knock x charge-temp x boost - friction), not a pre-made
-        # Gaussian VE bell — so the displayed curve IS what the car makes.
-        try:
-            tq, hp_curve = sim.dyno_curve(rpms, include_electric=True)  # system power (ICE+ERS)
-        except Exception:
-            peak = eng.ve_peak_frac * rl
-            width = max(eng.ve_width_frac * rl, 1.0)
-            tq = eng.ve_floor + (eng.ve_max - eng.ve_floor) * np.exp(-((rpms - peak) / width) ** 2)
-            hp_curve = tq * rpms
-        # WOT reference maxima (fixed scale), then scale the drawn curves by the
-        # live throttle so they shrink/grow as you lift/press
-        tq_ref = max(tq.max(), 1e-9)
-        hp_ref = max(hp_curve.max(), 1e-9)
-        thr_scale = 0.10 + 0.90 * thr
-        tq_n = (tq * thr_scale) / tq_ref
-        hp_n = (hp_curve * thr_scale) / hp_ref
-        rpmfrac = float(np.clip((sim.rpm - rlo) / max(rl - rlo, 1.0), 0, 1))
-        # spark-advance timing: ignition spike vs the valve-event reference ------
-        # REAL map — identical to the Wiebe model in _cylinder_pressure (advance
-        # grows with rpm, saturating ~3600, off the live physical spark_advance_deg).
-        adv = eng.spark_advance_deg * (0.38 + 0.62 * min(sim.rpm / 3600.0, 1.0))
-        dS = ((ang - (360.0 - adv) + 360.0) % 720.0) - 360.0
-        ign = np.exp(-(dS / 9.0) ** 2)
-        vref = np.maximum(ivl, evl) * 0.7
-
-        # --- top: master audio output waveform ----------------------------------
-        self._ascope(x0, topy, fullw, toph, "WAVEFORM · master audio output",
-                     [(aud, (120, 230, 150))], bipolar=True)
-        cw = (fullw - 2 * gap) / 3.0
-        rowy = topy + toph + gap
-        rh = (rect.bottom - pad - rowy - gap) / 2.0
-        cx = [x0, x0 + cw + gap, x0 + 2 * (cw + gap)]
-        # --- row 2: firing pulses · exhaust flow · valve lift -------------------
-        # REAL non-linear combustion voice (tanh-saturated bang + sharp edges) when
-        # the audio is running; the analytic per-cylinder hump is only the fallback.
-        rc = getattr(self.synth, "last_combustion", None) if self.synth else None
-        if rc is not None and len(rc) > 1 and np.any(rc):
-            self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
-                         [(self._stabilize(rc), (255, 150, 70))], bipolar=True)
-        else:
-            self._ascope(cx[0], rowy, cw, rh, "FIRING PULSES · cylinder combustion",
-                         [(comb, (255, 150, 70))])
-        self._ascope(cx[1], rowy, cw, rh, "EXHAUST FLOW · system pressure",
-                     [(exh, (255, 165, 70))])
-        self._ascope(cx[2], rowy, cw, rh, "VALVE LIFT · intake / exhaust",
-                     [(ivl, (110, 220, 130)), (evl, (240, 120, 120))])
-        # --- row 3: torque/hp · cylinder pressure · spark advance ---------------
-        rowy2 = rowy + rh + gap
-        self._ascope(cx[0], rowy2, cw, rh, "TORQUE / HP · output curves",
-                     [(tq_n, (255, 190, 70)), (hp_n, (90, 200, 255))])
-        curx = int(cx[0] + 1 + rpmfrac * (cw - 3))
-        pygame.draw.line(self.screen, (255, 255, 255),
-                         (curx, int(rowy2 + 18)), (curx, int(rowy2 + rh - 4)), 1)
-        self.screen.blit(self.font_small.render("T", True, (255, 190, 70)),
-                         (int(cx[0] + cw - 40), int(rowy2 + 3)))
-        self.screen.blit(self.font_small.render("HP", True, (90, 200, 255)),
-                         (int(cx[0] + cw - 26), int(rowy2 + 3)))
-        self._ascope(cx[1], rowy2, cw, rh, "CYLINDER PRESSURE · 4-stroke",
-                     [(Pcyl - PATM, (255, 120, 160))])
-        self._ascope(cx[2], rowy2, cw, rh, "SPARK ADVANCE · ignition timing",
-                     [(vref, (110, 200, 130)), (ign, (255, 90, 90))])
-        self.screen.blit(self.font_small.render(f"adv {adv:.0f}°", True, ACCENT),
-                         (int(cx[2] + cw - 60), int(rowy2 + rh - 16)))
+    def _draw_scope_cluster(self, rect):
+        """The oscilloscope cluster, engine-sim's layout and drawing
+        (scope_cluster.py): a focus scope over waveform / total exhaust flow /
+        valve lift / torque-power / pressure-volume / flow, each a ring of live
+        samples drawn with its history.  Click a small scope to focus it."""
+        self.scopes.draw(self.screen, rect, self.font, self.font_small, self.tr)
+        hint = self.font_small.render(self.tr("E / click outside to close"), True,
+                                      (120, 126, 138))
+        self.screen.blit(hint, (rect.right - hint.get_width() - 12, rect.y + 12))
 
     def _draw_telemetry(self, rect, top_y):
         """Telemetry as a cluster of round aircraft instruments, plus a turbo /
@@ -5788,12 +5644,12 @@ class App:
             dt = min(dt, 0.05)              # clamp huge hitches
             self.handle_events()
             self.update(dt)
-            if self.low_quality:
-                render_accum += dt
-                if render_accum >= RENDER_PERIOD:
-                    render_accum = 0.0
-                    self.draw()
-            else:
+            # every mode draws at 30 fps now (2026-09-28, Leo: no crackle on
+            # the Veyron / F2004): measured, a 60 fps draw (12-16 ms a frame)
+            # plus the physics kept the GIL ~100 % busy and starved the audio
+            # thread into underruns; the dashboard reads the same at 30.
+            render_accum += dt
+            if render_accum >= RENDER_PERIOD:
                 render_accum = 0.0
                 self.draw()
         self.synth.stop()
