@@ -894,7 +894,17 @@ _FIRE_COV = 0.05
 _ITB_FLOW = 0.35
 # The exhaust's gas-rush noise ('fizz') gate: its flow to this power (1 = the
 # pulse's own shape, the old gate; 3 = Curle's U^3 amplitude, as the trumpets)
-_FIZZ_POW = 1.0
+_FIZZ_POW = 3.0
+# ...and its level: x2.5 with the cube gate (Leo 2026-09-28, A/B "D": the
+# gas-rush tearing is what took the silk off -- the dry mix, more scatter and
+# a sharper attack did not)
+_FIZZ_GAIN = 2.5
+# The explosions' LOW END (Leo 2026-09-28, A/B "B" on the Aventador and the
+# F2004: "爆炸低频", the F1 lacked "strong bass to support the gnarly power"):
+# each car's own firing body x1.75, the fire-tone pad's weight 0.5 -> 0.9
+# (its 110 Hz shelf +5 -> +9 dB) and the low EQ +6 dB.  No mid scoop (he
+# heard it, chose without).
+_BODY_GAIN = 1.75
 _JET_KAPPA = 0.0              # off: Leo 2026-09-28 heard the gated jet at 0.3 as
                               #   "noise, clipping, sand" -- the rasp he asked for
                               #   is not noise
@@ -1476,7 +1486,7 @@ class Synthesizer:
                                   #   adds its range offset on top
                                  #   in free field; 0.4 was a small room, far too wet
             "intake": 0.11,       # induction roar level (halved — was too windy)
-            "eq_low": 0.0,        # dB
+            "eq_low": 6.0,        # dB (Leo's A/B "B": the explosions' low end)
             "eq_mid": 0.0,        # dB
             "eq_high": 0.0,       # dB
             "presence": 0.0,      # dB — guitar-amp 'presence' (upper-mid bite ~3 kHz)
@@ -1517,7 +1527,8 @@ class Synthesizer:
                                   #   (x2 per Leo's reverb audit)
             "hybrid_vol": 0.5,    # electric-motor / e-turbo whine level (hybrids)
             "gearbox_reverb": 0.12,  # dedicated reverb on the straight-cut whine
-            "fire_weight": 0.5,   # fire-tone pad X: thin/bright .. thick/fat body
+            "fire_weight": 0.9,   # fire-tone pad X: thin/bright .. thick/fat body
+                                  #   (0.5 -> 0.9, Leo's A/B "B", 2026-09-28)
             "fire_grit": 0.3,     # fire-tone pad Y: smooth .. coarse/raw saturation
             "pops": 0.6,          # overrun pop level (power-chord bangs on decel)
             "pop_muff": 0.4,      # how muffled the pops are (0 sharp .. 1 dull)
@@ -1557,8 +1568,10 @@ class Synthesizer:
             _cr = max(getattr(c0, "compression_ratio", 10.5) or 10.5, 5.0)
             _mps = 2.0 * c0.stroke * max(simulator.engine.redline_rpm, 1000.0) / 60.0
             self.params["crack"] = min(max(0.17 * self._bd_sharp ** 0.6, 0.07), 0.40)
-            self.params["body"] = min(max(1.60 * (_disp / 5.415e-4) ** 0.30, 1.0), 2.6)
-            self.params["turbulence"] = min(max(0.34 * (_mps / 21.65) ** 0.5, 0.18), 0.5)
+            self.params["body"] = _BODY_GAIN * min(
+                max(1.60 * (_disp / 5.415e-4) ** 0.30, 1.0), 2.6)
+            self.params["turbulence"] = _FIZZ_GAIN * min(
+                max(0.34 * (_mps / 21.65) ** 0.5, 0.18), 0.5)
             self.params["drive"] = min(max(0.40 * (_cr / 11.8) ** 0.5, 0.25), 0.6)
             # CYLINDER SPREAD from the build, not taste: carb / mechanical
             # race injection meters each cylinder differently (±6-8 % scatter)
@@ -4788,9 +4801,9 @@ class Synthesizer:
         for c in np.unique(cyc):
             if c > self._fs_cyc[j]:
                 self._fs_cyc[j] = c
-                self._fs_dt[j] = _FIRE_DT_S * self._rng.standard_normal()
-                self._fs_a[j] = max(1.0 + _FIRE_COV * self._rng.standard_normal(),
-                                    0.5)
+                self._fs_dt[j] = self.params.get("fire_dt", _FIRE_DT_S)                     * self._rng.standard_normal()
+                self._fs_a[j] = max(1.0 + self.params.get("fire_cov", _FIRE_COV)
+                                    * self._rng.standard_normal(), 0.5)
             m = cyc == c
             dt[m] = self._fs_dt[j]
             am[m] = self._fs_a[j]
@@ -4810,8 +4823,9 @@ class Synthesizer:
         for c in np.unique(idx):
             if c > self._cw_cyc:
                 self._cw_cyc = c
-                self._cw_dt = _FIRE_DT_S * self._rng.standard_normal()
-                self._cw_a = max(1.0 + _FIRE_COV * self._rng.standard_normal(), 0.5)
+                self._cw_dt = self.params.get("fire_dt", _FIRE_DT_S)                     * self._rng.standard_normal()
+                self._cw_a = max(1.0 + self.params.get("fire_cov", _FIRE_COV)
+                                 * self._rng.standard_normal(), 0.5)
             m = idx == c
             dt[m] = self._cw_dt
             am[m] = self._cw_a
