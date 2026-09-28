@@ -1884,6 +1884,20 @@ def ferrari_f2007_v8() -> Engine:
         exhaust_channels=2, exhaust_openness=0.99, muffler_volume_m3=0.0006,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         megaphone=0.72,                          # open upswept race exit -> mid bark
+        # THE F2007'S LINES (Leo 2026-09-29: "我们的f2007表现远不如..."):
+        # Raikkonen's own onboard, Australia 2007 FP2 (YouTube 63UocghLeNo,
+        # a 104 s lap captured in-page), medians of 213 steady frames at
+        # 17.5-18.3k, dB re the loudest.  The 2nd order LEADS -- 11 dB over
+        # the firing 4th -- with a 3rd/3.5th/4.5th chord round it; this
+        # generic even-fire set had only the 4th, 8th and 12th.  (A flat-
+        # plane V8 is two fours: its 2nd-order secondary force is free, and
+        # the engine is the chassis.)  The 5.5th and 6th sat on a FIXED
+        # ~1.6 kHz peak in that clip (they swap as the rpm moves), so theirs
+        # are the source-filter fit's over the lap (11-19k): -21.
+        order_profile={0.5: -22.0, 1.5: -25.0, 2.0: 0.0, 2.5: -20.0,
+                       3.0: -15.0, 3.5: -15.0, 4.0: -11.0, 4.5: -15.0,
+                       5.0: -19.0, 5.5: -21.0, 6.0: -21.0, 7.5: -24.0,
+                       8.0: -22.0, 9.0: -24.0},
         wall_material="titanium", gear_grain=0.38, upshift_rpm=18500.0,
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         # (was too tall -> 1st hit 200 km/h without reaching the limiter).
