@@ -830,6 +830,15 @@ class _TapDelay:
         return outs
 
 
+# The pass at a trackside post: the direct path and its image off the tarmac
+# (|R| 0.9) arrive together there, so the car's peak can reach 1 + 0.9 of
+# itself; and full scale is the limiter's threshold at the default master
+# (the output stage is x = sig * volume * master * 1.5, master 0.6) -- the
+# listener's own volume stays theirs.
+_TK_PASS = 1.9
+_TK_FULL = 1.0 / (0.6 * 1.5)
+
+
 class _FlybyDelay:
     """Fractional delay line whose delay RAMPS per sample — a moving source's
     propagation delay.  Changing path length IS the Doppler effect (physically
@@ -4659,6 +4668,7 @@ class Synthesizer:
             # arriving sound left it -- not the mic, so it levels rpm and car
             # like any other view and leaves 1/r, the air and the track alone
             self._tk_level_src = src_then
+            self._tk_src_pk = float(np.max(np.abs(src_then))) if frames else 0.0
 
         # --- the SPACE, per perspective: the open air behind the car (chase)
         # vs the small absorbent cabin cavity (cockpit).  ONE shared space —
@@ -4742,6 +4752,21 @@ class Synthesizer:
             gmax = max(2.2 + 3.8 * cl_,
                        min(10.0 * g_f, 12.0) if ovr else min(g_f, 6.0))
             gain = min(0.22 / (self._level + 1e-6), gmax)
+            if self.pov == "trackside" and ref is not None:
+                # THE RECORDIST'S CEILING: a trackside recording is set so the
+                # pass -- the car's own peak, arriving direct and off the tarmac
+                # together (1 + |R| = 1.9, _TK_PASS) -- just reaches full scale.
+                # The auto-level holds the car at the other views' level, which
+                # for a bass-heavy car already sits at the limiter: the pass
+                # went 6 dB over it (aven, rs3) and the limiter took the
+                # loudest second of the fly-by off (Leo 2026-09-29: no
+                # "声音大小变化弹弓感").  The car's peak follows its operating
+                # point (~0.5 s), not the distance -- it is measured AT the car.
+                dt_b = frames / float(self.sample_rate)
+                self._tk_pk = max(getattr(self, "_tk_src_pk", 0.0),
+                                  getattr(self, "_tk_pk", 0.0)
+                                  * math.exp(-dt_b / 0.5))
+                gain = min(gain, _TK_FULL / (_TK_PASS * max(self._tk_pk, 1e-9)))
             rate = 0.2 if (ovr or gain < self._gain) else 0.05
             self._gain += (gain - self._gain) * rate
             sig *= self._gain
