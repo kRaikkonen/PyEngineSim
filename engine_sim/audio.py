@@ -905,6 +905,20 @@ _FIZZ_GAIN = 2.5
 # (its 110 Hz shelf +5 -> +9 dB) and the low EQ +6 dB.  No mid scoop (he
 # heard it, chose without).
 _BODY_GAIN = 1.75
+# SHOCK STEEPENING at the exit (2026-09-28, Leo: the F1 fly-by's "划破空气的
+# 晴空霹雳 ... 很像音爆"): a pulse strong enough steepens as it runs -- its
+# high-pressure part travels at c + beta u -- until its front is a SHOCK, a
+# small sonic boom per firing.  The distance it takes is x_s = lambda /
+# (2 pi beta M), beta = (gamma + 1) / 2 = 1.2, M the pulse's acoustic Mach
+# number (the exit flow's pulsation u' over c): an F1's M ~0.4 at a 1.5 kHz
+# firing forms shocks in ~15 cm, inside the last metre of pipe and plume; a
+# silenced road car's M ~0.05-0.1 at 300 Hz barely steepens.  Applied as the
+# simple wave's own solution (the Riemann warp t -> t - beta L u / c^2) over
+# _SHOCK_L of pipe and near plume, capped at the point the front turns
+# vertical (a shock).
+_SHOCK_L = 2.0                # the collector, tail and near plume (Leo's A/B: 2 m
+                              #   over 1 m -- "2x")
+_SHOCK_D = 64                 # samples of look-ahead the warp needs (fixed delay)
 _JET_KAPPA = 0.0              # off: Leo 2026-09-28 heard the gated jet at 0.3 as
                               #   "noise, clipping, sand" -- the rasp he asked for
                               #   is not noise
@@ -4102,6 +4116,8 @@ class Synthesizer:
                                              refl, zi=self._tail_lp_zi)
             sig = sig + 0.16 * refl
         sig = self._tap("reflection", sig)    # + gear-grain, round-trip echo
+        # --- (8b) SHOCK STEEPENING over the last metre (see _SHOCK_L) ----------
+        sig = self._shock_steepen(sig, sim, c_runner, dps, phys)
         q_tip = sig                           # the flow at the tip (for the jet)
 
         # --- (8a) TAILPIPE RADIATION: what a microphone BEHIND the car hears is
@@ -4792,6 +4808,47 @@ class Synthesizer:
 
     # ------------------------------------------------------------ callback
     # --------------------------------------------------- forced induction
+    def _shock_steepen(self, sig, sim, c_runner, dps, phys):
+        """The pulses' own nonlinear steepening over _SHOCK_L: a simple wave's
+        point at pressure p runs beta u / c faster, so the output is the input
+        read beta L u / c^2 ahead where it is high (the Riemann warp).  u from
+        the exit flow's pulsation: M = openness x U / c_tip (an open race
+        exit's flow pulses about its mean; a silenced one's less), the signal
+        over its running rms as its shape.  Capped where the front goes
+        vertical -- beyond it the wave IS a shock.  A fixed _SHOCK_D delay."""
+        D = _SHOCK_D
+        frames = len(sig)
+        hist = getattr(self, "_shk_hist", None)
+        if hist is None or len(hist) != 2 * D:
+            hist = self._shk_hist = np.zeros(2 * D)
+        ext = np.concatenate((hist, sig))
+        self._shk_hist = ext[-2 * D:].copy()
+        k = 0.0
+        if dps > 1e-12 and not phys and self.params.get("shock", 1.0) > 0.0:
+            eng = sim.engine
+            thr = min(max(sim.throttle, 0.0), 1.0)
+            q_ex = eng.total_displacement * sim.rpm / 120.0 * 3.0
+            a_tips = self._nchan * math.pi * (
+                max(eng.exhaust_radius_m, 0.012)
+                * max(getattr(eng, "tip_scale", 1.0), 0.5)) ** 2
+            u = min(q_ex / max(a_tips, 1e-4) * (0.35 + 0.65 * thr), 320.0)
+            c_tip = max(0.9 * c_runner, 300.0)
+            m_ac = min(max(getattr(eng, "exhaust_openness", 0.6), 0.0), 1.0) \
+                * u / c_tip * getattr(self, "_comb_load", 1.0)
+            k = (self.sample_rate * 1.2 * _SHOCK_L * m_ac / c_tip) \
+                * self.params.get("shock", 1.0)
+        r = float(np.sqrt(np.mean(sig * sig)))
+        self._shk_rms = getattr(self, "_shk_rms", r) + 0.2 * (r - getattr(self, "_shk_rms", r))
+        xn = ext / max(self._shk_rms, 1e-12)
+        slope = float(np.max(np.abs(np.diff(xn)))) if len(xn) > 1 else 0.0
+        k = min(k, 0.9 / max(slope, 1e-9), float(D) / max(float(np.max(np.abs(xn))), 1e-9))
+        n = np.arange(frames) + D
+        pos = n + k * xn[n]
+        pos = np.clip(pos, 0.0, len(ext) - 1.001)
+        i0 = pos.astype(np.int64)
+        fr = pos - i0
+        return ext[i0] * (1.0 - fr) + ext[i0 + 1] * fr
+
     def _fire_scatter(self, j, ang, rpm):
         """Per-sample (shift deg, strength) of cylinder j's firings over this
         block: each 720-deg cycle of it draws its own arrival time
