@@ -3014,7 +3014,7 @@ class Synthesizer:
                 # internal-combustion machine from a synthesizer.  (0.008 was
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
                 nfl = 0.006 if self.vx.get("noise", True) else 0.005
-                fp = P.get("fizz_pow", _FIZZ_POW)
+                fp = self.params.get("fizz_pow", _FIZZ_POW)
                 if fp != 1.0:
                     # the gas rush's noise follows its flow CUBED (Curle,
                     # power ~ U^6), as the trumpets' does: the same rms, but
