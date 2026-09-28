@@ -3860,10 +3860,38 @@ class Synthesizer:
                 if prof:                        # the measured lines
                     # ...at the level that gives the reference's balance: its
                     # chase-view 0.3-1 kHz share, 65 % (Leo: "更响/更厚")
+                    c_prev = getattr(self, "_itb_cyc_phase", 0.0)
                     howl = _PROFILE_GAIN * self._cycle_whine(
                         f_cyc, frames,
                         [(2.0 * o, 10.0 ** (db / 20.0), 0.0)
                          for o, db in sorted(prof.items())], "_itb_cyc_phase")
+                    # TRACKSIDE: THE BANKS' LINES LEAVE BY THE EXHAUSTS.  Each
+                    # bank's own collector carries its beat -- n/4 x odd orders
+                    # (a flat V8's 2nd, 6th..., a V10's 2.5th, 7.5th...) -- which
+                    # meet the other bank's half a period out only where all
+                    # the cylinders sum, at the airbox; out of the two pipes,
+                    # backwards, they stand.  Real Eau Rouge passes (YouTube
+                    # vLaW0KWklQI): coming, the firing order leads the bank's
+                    # by ~7 dB; going away, the bank's leads by ~7 (a V8's
+                    # 4th/2nd, a V10's 5th/2.5th).  So there the bank lines go
+                    # out with the tail (its backward beam), the rest with the
+                    # airbox mouth (forwards).  The same scatter: the cycle
+                    # state is keyed by the cycle, so the subset is exactly
+                    # the full chord's part.  Other views: as they were.
+                    self._tk_bank_howl = None
+                    if self.pov == "trackside":
+                        nb = len(self._offsets) / 4.0
+                        bank = [(o, db) for o, db in prof.items()
+                                if abs((o / nb) - round(o / nb)) < 1e-6
+                                and int(round(o / nb)) % 2 == 1]
+                        if bank:
+                            self._itb_cyc_phase_b = c_prev
+                            hb = _PROFILE_GAIN * self._cycle_whine(
+                                f_cyc, frames,
+                                [(2.0 * o, 10.0 ** (db / 20.0), 0.0)
+                                 for o, db in sorted(bank)], "_itb_cyc_phase_b")
+                            howl = howl - hb
+                            self._tk_bank_howl = hb
                 elif pat is None:               # even firing: the firing orders
                     n_ = len(self._offsets)
                     howl = self._cycle_whine(
@@ -3892,6 +3920,8 @@ class Synthesizer:
                     hr = float(np.sqrt(np.mean(howl * howl)))
                     howl = howl + kf * hr * g3 * nb
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
+                if getattr(self, "_tk_bank_howl", None) is not None:
+                    self._tk_bank_howl = howl_gain * self._tk_bank_howl
 
         # THE PHYSICAL INTAKE: the summed intake-valve flow into the airbox,
         # radiated from the mouth.  Per mole the hot exhaust carries T_exh/T_air
@@ -4427,6 +4457,10 @@ class Synthesizer:
                              np.asarray(bayi, dtype=np.float64).copy())
         geo = self._pov_geo()
         tail = sig
+        hb_ = getattr(self, "_tk_bank_howl", None)
+        if hb_ is not None and self.pov == "trackside" and len(hb_) == len(tail):
+            tail = tail + hb_                 # the banks' lines, out of the pipes
+            self._tk_bank_howl = None
         if geo["d_tail"]:
             tail = self._pov_delay(tail, "tail_d", geo["d_tail"])
         tail_pre = tail                       # pre-partition (for structure paths)
@@ -4597,6 +4631,8 @@ class Synthesizer:
                 self._tk_paths = {nm: _MovingTaps(int(3.0 * sr), 2)
                                   for nm in ("exh", "intake", "body")}
                 self._tk_air1 = _AirFIR(sr)
+                self._tk_air_fld = _AirFIR(sr)      # the car -> the scatterers
+                self._tk_air_img = [_AirFIR(sr) for _ in range(5)]
                 self._tk_gzi = np.zeros(1)
                 self._tk_img = _MovingTaps(int(3.5 * sr), 5)
                 self._tk_img_zi = [[np.zeros(1), np.zeros(1)]
@@ -4658,7 +4694,12 @@ class Synthesizer:
             # specified).
             src_then = self._tk_omni_dl.process(omni, tau1 * sr)
             g_field = (L / _TK_RC_M) * _TK_RS_M / (r1 + _TK_RS_M) * cv1
-            field = self._tk_field.process(src_then * g_field)
+            # the field is lit by sound that has CROSSED the air to the
+            # scatterers -- a far car's reverberation is as dark as its direct
+            # sound (without it, 10-13 kHz ran 25-33 dB too bright out there
+            # against a real Spa pass: Eau Rouge, YouTube vLaW0KWklQI)
+            src_fld = self._tk_air_fld.process(src_then, r1)
+            field = self._tk_field.process(src_fld * g_field)
             sig = near + (0.0 if "wall" in _m else wall) \
                 + (0.0 if "field" in _m else field) * (P["reverb"] / 0.2)
             # the tyres' geometry, for the tyre and wind noise after the level
@@ -6673,7 +6714,7 @@ class Synthesizer:
             (2.0 * a_ - 2.0 * b_, (("near", b_, b_ - a_), ("far", b_ - a_, L - a_))),
             (2.0 * s_, (("stand", -s_, L - s_),)),
         )
-        taus, gains, fcs, fas = [], [], [], []
+        taus, gains, fcs, rs = [], [], [], []
         for y_img, refl in imgs:
             ly = abs(y_img - L)
             t_, xe_ = self._track.retarded(v, ly * ly + (hm - z) ** 2)
@@ -6689,7 +6730,7 @@ class Synthesizer:
             taus.append(t_ * sr)
             gains.append(g)
             fcs.append(fc)
-            fas.append(self._air_f3db(r_))
+            rs.append(r_)
         heads = self._tk_img.process(sig, taus)
         out = np.zeros(frames)
         for k in range(len(imgs)):
@@ -6699,9 +6740,12 @@ class Synthesizer:
                 bH, aH = self._bw(1, q(min(fcs[k], sr * 0.4)), btype="high")
                 y_, self._tk_img_zi[k][0] = lfilter(bH, aH, y_,
                                                     zi=self._tk_img_zi[k][0])
-                bL, aL = self._bw(1, q(min(fas[k], sr * 0.45)))
-                y_, self._tk_img_zi[k][1] = lfilter(bL, aL, y_,
-                                                    zi=self._tk_img_zi[k][1])
+            # the air over the path: ISO 9613-1 grows ~f^2 per metre, which a
+            # one-pole at its -3 dB point (-6 dB/oct) under-took by ~60 dB at
+            # 12 kHz over 300 m
+            airs = getattr(self, "_tk_air_img", None)
+            if airs is not None:
+                y_ = airs[k].process(y_, rs[k])
             out = out + y_
         return out
 
