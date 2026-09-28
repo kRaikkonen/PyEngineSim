@@ -864,6 +864,40 @@ class _FlybyDelay:
 # rpm (12.4 / 9.4 dB real vs 18.0 / 9.1 dB here).  Lighthill's U^8 carries it
 # to every other car and speed.
 _PHYS_JET = 0.003
+# The exit flow's pulsation over its mean (u'_rms / U) that the jet noise
+# follows (see the tail-pipe air-shear): Lighthill's U^8 on u(t), not on U.
+# A measured order profile's level over the generic howl's (Engine.order_profile):
+# x3.16 (+10 dB) puts the F2004's chase view at the Assetto Corsa reference's
+# 0.3-1 kHz share, 66 vs 65 % (0.38 gave 26 %).
+_PROFILE_GAIN = 3.16
+# FIRING-TO-FIRING SCATTER (2026-09-28, Leo: every car "过于 silky", no
+# "颗粒感").  Measured: consecutive 720-deg cycles of his real F2004 onboard
+# (steady stretches) correlate 0.93 / 0.80 / 0.20 in 0.3-1 / 1-4 / 4-10 kHz,
+# the Assetto Corsa F2004 he pointed to 0.90 / 0.78 / 0.25 -- ours 1.00 /
+# 0.99 / 0.86: every cycle a copy of the last (the block-rate scatter is
+# smoothed and ~9 us at 17k).  Both recordings fit ONE arrival-time scatter:
+# corr ~ rho exp(-(2 pi f sigma)^2) gives sigma = 32 us at 2 and at 6 kHz.
+# The valve opens on the cam, but the pulse then runs a metre of pipe at a
+# speed its own temperature and pressure set, which scatter cycle to cycle
+# (a few % of c over ~1.6 ms is tens of us).  Drawn once per firing.
+_FIRE_DT_S = 32e-6
+# ...and each firing's strength: a race engine's cycle-to-cycle COV of IMEP /
+# peak pressure is a few % (Heywood ch. 9: 2-5 % at WOT); 5 %.
+_FIRE_COV = 0.05
+# The trumpets' FLOW NOISE (2026-09-28, still "too silky"): the F2004 onboard
+# put its lines 43 dB over the floor between them (97th pct 28 dB) where
+# the reference (Leo's Assetto Corsa F2004) sits 30-37 / 16-22 -- pure lines
+# on an empty floor.  The air tearing through each trumpet is edge / flow
+# noise, power ~ U^6 (Curle), so its amplitude follows each trumpet's own
+# intake flow CUBED: a burst per intake stroke, not a hiss.  Its level, in
+# the howl's rms, set so the onboard floor meets the reference's.
+_ITB_FLOW = 0.35
+# The exhaust's gas-rush noise ('fizz') gate: its flow to this power (1 = the
+# pulse's own shape, the old gate; 3 = Curle's U^3 amplitude, as the trumpets)
+_FIZZ_POW = 1.0
+_JET_KAPPA = 0.0              # off: Leo 2026-09-28 heard the gated jet at 0.3 as
+                              #   "noise, clipping, sand" -- the rasp he asked for
+                              #   is not noise
 # Gear-mesh radiation of the physical voice (see _induction_audio): one
 # constant, set so a loaded straight-cut box sits under the engine at full
 # throttle as in a real F1 onboard recording (4-8 kHz ~2 % of the energy in a
@@ -887,6 +921,23 @@ _AIRBOX_DUCT_M = 0.40
 # the same OEM-intake loss as the blade-pass tone's (_TB_TONE vs _TB_TONE_POD).
 # Without it every airbox flutter car (the F40...) kept only its low thump.
 _AIRBOX_HF_TL_DB = 12.0
+# THE INTAKE VALVE'S WATER HAMMER (2026-09-25, Leo: the fly-by has no violent
+# roar -- "like an electric car"; the intake is what faces a car coming at
+# you).  The gas solver's plenum is a constant-pressure boundary with no air
+# COLUMN in the runner, so its valve flow tapers smoothly to nothing and the
+# intake sat ~60 dB under the exhaust (a real one ~10-25).  In the engine the
+# runner's column still carries the intake's flow when the valve shuts on it
+# (that is ram tuning) and is stopped: a pressure wave rings the runner,
+# closed at the valve, open at the plenum -- the plenum end keeps its flow
+# for L'/c, then returns -R, +R^2 ... every 2L'/c, until the valve reopens.
+# Closing slower than the round trip weakens it (Michaud 1878: dp = 2 rho L u
+# / T_c for T_c > 2L/c); T_c = the cam's flank over which the curtain throttles
+# the runner (lift under ~half, gas_truth's cos^2 profile: 0.636 of the half
+# duration).  Wall losses are nothing here (viscothermal ~0.4 % a round trip at
+# 250 Hz in a 40 mm runner); the plenum end gives back _INL_RING_R of it (the
+# mouth's vortex shedding at these velocities, and the next runners).
+_INL_RING_R = 0.9
+_INL_CLOSE_FRAC = 0.636
 # The classic chain's intake (every car) uses the same box.  A pod filter's
 # pipe -- throttle or compressor inlet to the cone -- and the intake-manifold
 # plenum an NA engine draws through before the throttle:
@@ -991,6 +1042,9 @@ _TK_NEAR_H = 4.0                   #   ...its height (m)
 _TK_CAR_LEN = 4.4                  # the body ahead of its tailpipes (m)
 _TK_HALF_W = 0.95                  # the body's half width at the tail (m)
 _TK_PIPE_Y = 0.45                  # the near tailpipe, off the centreline (m)
+_TK_FLOOR_Z = 0.12                 # the floor's height (a sports car's clearance;
+                                   #   a single-seater's plank ~0.05)
+_TK_DECK_Z = 1.10                  # the rear deck / engine cover's top edge (m)
 _TK_SHIELD_MAX_DB = 12.0           # most the body can take off the pipes: the
                                    #   gap under the floor and over the roof
                                    #   leak round it
@@ -1377,6 +1431,11 @@ class Synthesizer:
         self._stage_full = {}
         self._jit = np.ones(ncyl)
         self._tjit = np.zeros(ncyl)   # per-cylinder firing-phase scatter (deg)
+        self._crank_turns = 0         # 720-deg cycles run (the crank, unwrapped)
+        self._fs_cyc = np.full(ncyl, -1.0)   # the cycle each firing's draw is for
+        self._fs_dt = np.zeros(ncyl)         # its arrival scatter (s)
+        self._fs_a = np.ones(ncyl)           # its strength
+        self._cw_cyc, self._cw_dt, self._cw_a = -1.0, 0.0, 1.0   # tonal layer's
         self._level = 0.05
         self._gain = 1.0
         self.agc_enabled = True   # off (fixed gain) for isolated-pop auditioning
@@ -1777,6 +1836,7 @@ class Synthesizer:
         self._fcache = {}                 # cached IIR designs (avoid per-block redesign)
         self._turbine_zi = np.zeros(2)    # boost-dependent turbine damping state
         self._itb_phase = 0.0             # ITB induction-howl oscillator
+        self._itb_cyc_phase = 0.0         # ...its cycle-rate twin (patterns, profiles)
         self._mesh_phase = 0.0            # transmission gear-mesh whine oscillator
         self._rad_prev = 0.0              # tailpipe-radiation derivative state
         self._burble_prev = 0.0          # overrun-burble low-pass state
@@ -2818,8 +2878,15 @@ class Synthesizer:
                     # floor the pulse so the engine keeps barking on lift.
                     lo = 0.06 if self.vx.get("vacuum", True) else 0.30
                     amp_j *= min(max(rel, lo), 1.5) ** 0.8
-                phi = np.mod(crank + off + self._hdr_off()[j]
-                             + self._tjit[j], 720.0)
+                if not self.vx.get("phys_voice", False):
+                    # this firing's own arrival and strength (_FIRE_DT_S)
+                    sh_, am_ = self._fire_scatter(
+                        j, crank + off + self._hdr_off()[j], sim.rpm)
+                    phi = np.mod(crank + off + self._hdr_off()[j] + sh_, 720.0)
+                    amp_j = amp_j * am_
+                else:
+                    phi = np.mod(crank + off + self._hdr_off()[j]
+                                 + self._tjit[j], 720.0)
                 d = phi - VALVE_OPEN
                 inwin = (phi >= VALVE_OPEN) & (phi <= VALVE_CLOSE)
                 dd = np.clip(d, 0.0, None)
@@ -2947,12 +3014,28 @@ class Synthesizer:
                 # internal-combustion machine from a synthesizer.  (0.008 was
                 # a whisper; the flow-scaled shear/vortex stages add the rest.)
                 nfl = 0.006 if self.vx.get("noise", True) else 0.005
-                fizz_chans[ci] = e * noise + nfl * noise
+                fp = P.get("fizz_pow", _FIZZ_POW)
+                if fp != 1.0:
+                    # the gas rush's noise follows its flow CUBED (Curle,
+                    # power ~ U^6), as the trumpets' does: the same rms, but
+                    # a burst on each pulse instead of a copy of its shape
+                    ea = np.abs(e) ** fp
+                    ea *= float(np.sqrt(np.mean(e * e)))                         / max(float(np.sqrt(np.mean(ea * ea))), 1e-30)
+                    fizz_chans[ci] = ea * noise + nfl * noise
+                else:
+                    fizz_chans[ci] = e * noise + nfl * noise
             # bang and fizz, before any cavity sees them -- the second
             # tap a reimplementation is held to
             self._tap("bang", chans[0])
             self._tap("fizz", fizz_chans[0])
+            # the pulses' level, for the intake (scaled to them) to follow
+            # through the voicing below
+            _s = chans[0].copy()
+            for _c in chans[1:]:
+                _s += _c
+            self._src_rms = float(np.sqrt(np.mean(_s * _s)))
         self._update_lights(self._audio_crank, dps, frames)
+        self._crank_turns += int((self._audio_crank + dps * frames) // 720.0)
         self._audio_crank = (self._audio_crank + dps * frames) % 720.0
 
         # --- mix the DRY combustion pulses with the WET pipe resonance -------
@@ -3074,6 +3157,15 @@ class Synthesizer:
             bang, self._fire_low_zi = lfilter(b, a, bang, zi=self._fire_low_zi)
         # the voiced firing event -- pulse train turned into combustion
         bang = self._tap("voiced", bang, "src")
+        # the voicing's LEVEL (dry, crack, body, drive), source to voiced: the
+        # intake is scaled to the source pulses at the solver's own intake :
+        # exhaust ratio, so it takes the same level on -- or that ratio is
+        # lost ~11 dB on the way to the ear (level only; no timbre)
+        _sr = getattr(self, "_src_rms", 0.0)
+        if _sr > 1e-9 and not phys:
+            _g = float(np.sqrt(np.mean(bang * bang))) / _sr
+            self._voice_g = getattr(self, "_voice_g", _g) \
+                + 0.2 * (_g - getattr(self, "_voice_g", _g))
 
         # separated fizz (own slider)
         fizz = np.zeros(frames, dtype=np.float64)
@@ -3646,7 +3738,8 @@ class Synthesizer:
                     # (P["intake"] trims it; 0.11, its default, = as derived)
                     trim = P["intake"] / 0.11
                     src = (0.55 * t_ratio * self._inl_scale * trim
-                           * self._throttle_T()) * q
+                           * self._throttle_T()
+                           * getattr(self, "_voice_g", 1.0)) * q
                     bayi = bayi + self._intake_radiate(src, "eng")
 
         # --- INDIVIDUAL THROTTLE BODIES: the raw induction HOWL --------------
@@ -3674,7 +3767,7 @@ class Synthesizer:
             # at this charge over wide open's at this speed, through the
             # plates (was 0.15 + 0.85 x pedal; wide open, as voiced)
             draw = self._intake_draw()
-            howl_gain = (0.38 if scrm else 0.16) \
+            howl_gain = (P.get("itb_howl", 0.38) if scrm else 0.16) \
                 * ((0.15 + 0.85 * thr) if draw is None else draw) \
                 * rpm_frac ** 1.5
             if howl_gain > 1e-4 and 20.0 < fire_hz < self.sample_rate * 0.4:
@@ -3682,8 +3775,47 @@ class Synthesizer:
                          (6, 0.42), (8, 0.25), (10, 0.14)] if scrm else
                         [(1, 1.0), (2, 0.85), (3, 0.6), (4, 0.42), (5, 0.28),
                          (6, 0.18), (8, 0.10)])
-                howl = self._whine(fire_hz, frames, hset,
-                                   phase_attr="_itb_phase")
+                pat = self._firing_pattern()
+                prof = getattr(sim.engine, "order_profile", None)
+                f_cyc = sim.rpm / 120.0
+                if prof:                        # the measured lines
+                    # ...at the level that gives the reference's balance: its
+                    # chase-view 0.3-1 kHz share, 65 % (Leo: "更响/更厚")
+                    howl = _PROFILE_GAIN * self._cycle_whine(
+                        f_cyc, frames,
+                        [(2.0 * o, 10.0 ** (db / 20.0), 0.0)
+                         for o, db in sorted(prof.items())], "_itb_cyc_phase")
+                elif pat is None:               # even firing: the firing orders
+                    n_ = len(self._offsets)
+                    howl = self._cycle_whine(
+                        f_cyc, frames, [(h * n_, a, 0.0) for h, a in hset],
+                        "_itb_cyc_phase")
+                else:
+                    howl = self._pattern_whine(f_cyc, fire_hz, frames,
+                                               hset, pat, "_itb_cyc_phase")
+                # the air tearing through the trumpets (_ITB_FLOW)
+                kf = P.get("itb_flow", _ITB_FLOW)
+                shp = getattr(self, "_inl_q", None)
+                if kf > 0.0 and shp is not None and _HAVE_SCIPY:
+                    g3 = np.zeros(frames)
+                    for off in self._offsets:
+                        qj = np.maximum(np.interp(np.mod(crank + off, 720.0),
+                                                  self._inl_deg, shp,
+                                                  period=720.0), 0.0)
+                        g3 += qj * qj * qj
+                    g3 = g3 / max(float(np.sqrt(np.mean(g3 * g3))), 1e-30)
+                    if getattr(self, "_itbn_ba", None) is None:
+                        self._itbn_ba = butter(2, [300.0 / (self.sample_rate / 2),
+                                                   min(5000.0, self.sample_rate * 0.45)
+                                                   / (self.sample_rate / 2)],
+                                               btype="band")
+                        self._itbn_zi = np.zeros(4)
+                    nb, self._itbn_zi = lfilter(self._itbn_ba[0], self._itbn_ba[1],
+                                                self._rng.standard_normal(frames),
+                                                zi=self._itbn_zi)
+                    nb = nb / max(float(np.sqrt(np.mean(nb * nb))), 1e-12)
+                    hr = float(np.sqrt(np.mean(howl * howl)))
+                    howl = howl + kf * hr * g3 * nb
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
 
         # THE PHYSICAL INTAKE: the summed intake-valve flow into the airbox,
@@ -3913,7 +4045,7 @@ class Synthesizer:
                 # ROAR whose LF tracks TOTAL mass flow, not litres-per-cyl —
                 # the 0.3 L F1 cylinders had zeroed their rumble share
                 # (Leo: the F1 needs MORE bass, not less)
-                g_rmb = max(g_rmb, 0.26)
+                g_rmb = max(g_rmb, P.get("f1_rumble", 0.26))
             self._dbg_grmb = g_rmb            # fleet-audit stash
             if g_rmb > 0.01:
                 spac2 = 720.0 / max(len(self._offsets), 1)     # firing spacing
@@ -3957,6 +4089,7 @@ class Synthesizer:
                                              refl, zi=self._tail_lp_zi)
             sig = sig + 0.16 * refl
         sig = self._tap("reflection", sig)    # + gear-grain, round-trip echo
+        q_tip = sig                           # the flow at the tip (for the jet)
 
         # --- (8a) TAILPIPE RADIATION: what a microphone BEHIND the car hears is
         # NOT the in-duct pressure.  The pipe end radiates like a monopole whose
@@ -4068,6 +4201,28 @@ class Synthesizer:
                                                  ns_, zi=self._shear_hp_zi)
                 if self.road_pipe:                 # a cat car's tip is breathier
                     shear_gain *= 0.7
+                # LIGHTHILL ON THE INSTANTANEOUS VELOCITY (2026-09-28, Leo: not
+                # harsh enough, the F1 still rubbish; measured: the real F2004
+                # onboard's 1-4 kHz band flutters 30-150 Hz at 15.8, above
+                # white noise's 10.9 -- ours 3.6, a steady whine; road cars
+                # 10-13 vs 15.7-18.3).  The jet's noise power goes as U^8 of
+                # the velocity leaving the tip NOW, and each pulse drives that
+                # up: u(t) = U (1 + kappa s(t)), s the flow at the tip over its
+                # running rms, kappa its pulsation over the mean.  So the roar
+                # comes in a random burst on every pulse (the rasp), not as a
+                # steady hiss.  Normalised over the block: the mean power, and
+                # every level set on it, stay where they were.
+                kap = P.get("jet_kappa", _JET_KAPPA)
+                if kap > 0.0:
+                    r_q = float(np.sqrt(np.mean(q_tip * q_tip)))
+                    self._q_rms = getattr(self, "_q_rms", r_q) \
+                        + 0.3 * (r_q - getattr(self, "_q_rms", r_q))
+                    u_r = np.maximum(1.0 + kap * q_tip
+                                     / max(self._q_rms, 1e-12), 0.0)
+                    g4 = u_r * u_r
+                    g4 = g4 * g4
+                    ns_ = ns_ * (g4 / math.sqrt(max(float(np.mean(g4 * g4)),
+                                                    1e-12)))
                 sig = sig + shear_gain * ns_
             # --- KARMAN VORTEX STREET + EDGE TONE (flow-acoustic sources): the
             # moving gas itself sings.  Vortices shed off the tip lip at the
@@ -4624,6 +4779,95 @@ class Synthesizer:
 
     # ------------------------------------------------------------ callback
     # --------------------------------------------------- forced induction
+    def _fire_scatter(self, j, ang, rpm):
+        """Per-sample (shift deg, strength) of cylinder j's firings over this
+        block: each 720-deg cycle of it draws its own arrival time
+        (N(0, _FIRE_DT_S)) and strength (1 + N(0, _FIRE_COV)), once."""
+        cyc = np.floor((self._crank_turns * 720.0 + ang) / 720.0)
+        dt = np.empty(len(ang)); am = np.empty(len(ang))
+        for c in np.unique(cyc):
+            if c > self._fs_cyc[j]:
+                self._fs_cyc[j] = c
+                self._fs_dt[j] = _FIRE_DT_S * self._rng.standard_normal()
+                self._fs_a[j] = max(1.0 + _FIRE_COV * self._rng.standard_normal(),
+                                    0.5)
+            m = cyc == c
+            dt[m] = self._fs_dt[j]
+            am[m] = self._fs_a[j]
+        return dt * 6.0 * max(rpm, 1.0), am
+
+    def _cycle_whine(self, f_cyc, frames, harmonics, phase_attr):
+        """A tonal layer at the engine's cycle rate (harmonics (k, a) of
+        f_cyc, each with its phase) that carries the firings' scatter: every
+        cycle arrives _FIRE_DT_S-scattered and _FIRE_COV-strong, as the
+        pulses it stands for do -- a sum of fixed sines repeats each cycle
+        exactly (the 'silky' tell)."""
+        sr = self.sample_rate
+        c0 = getattr(self, phase_attr, 0.0)            # cycles run (unwrapped)
+        cyc = c0 + f_cyc / sr * np.arange(frames)
+        idx = np.floor(cyc)
+        dt = np.empty(frames); am = np.empty(frames)
+        for c in np.unique(idx):
+            if c > self._cw_cyc:
+                self._cw_cyc = c
+                self._cw_dt = _FIRE_DT_S * self._rng.standard_normal()
+                self._cw_a = max(1.0 + _FIRE_COV * self._rng.standard_normal(), 0.5)
+            m = idx == c
+            dt[m] = self._cw_dt
+            am[m] = self._cw_a
+        ph = 2.0 * math.pi * (cyc + f_cyc * dt)
+        sig = np.zeros(frames, dtype=np.float64)
+        nyq = sr * 0.47
+        for k, a, p in harmonics:
+            if k * f_cyc < nyq:
+                sig += a * np.sin(k * ph + p)
+        setattr(self, phase_attr, c0 + f_cyc / sr * frames)
+        return sig * am
+
+    def _firing_pattern(self):
+        """The firing pattern's factor per cycle harmonic k (order k/2):
+        P_k = (1/n) sum_j exp(-i 2 pi k theta_j / 720) over the cylinders'
+        offsets, for k up to 24 firing orders -- None when the engine fires
+        evenly (then only the firing orders survive, at |P| = 1: the plain
+        harmonic set).  An ODD-firing engine's pulses repeat every pair
+        interval: a 90/54 V10's every 144 deg, so its lines are orders 2.5,
+        5, 7.5, 12.5 ... and the 10th cancels (the pair's two pulses meet in
+        antiphase there) -- the order a real F2004 onboard is loudest on is
+        the 2.5th, and it has no 10th to speak of."""
+        cached = getattr(self, "_fpat", False)
+        if cached is not False:
+            return cached
+        th = np.asarray(self._offsets, dtype=np.float64) / 720.0
+        n = len(th)
+        k = np.arange(1, 24 * n + 1)
+        P = np.exp(-2j * np.pi * np.outer(k, th)).sum(axis=1) / max(n, 1)
+        off = np.abs(P[(k % n) != 0])
+        self._fpat = (k, P) if off.size and float(off.max()) > 0.05 else None
+        return self._fpat
+
+    def _pattern_whine(self, f_cyc, fire_hz, frames, harmonics, pat,
+                       phase_attr):
+        """The trumpets' howl for an uneven firing pattern: every cycle
+        harmonic k at |P_k| (_firing_pattern), in the pattern's own phase, on
+        the same spectral envelope the even set uses (``harmonics``: (h, a)
+        at h x the firing frequency; 1 below it)."""
+        hs = np.array([0.0] + [h for h, _ in harmonics])
+        av = np.array([harmonics[0][1]] + [a for _, a in harmonics])
+        k, P = pat
+        n = len(self._offsets)
+        h_top = hs[-1]
+        lines = []
+        for kk, pk in zip(k, P):
+            h = kk / n                              # re the firing frequency
+            if h > h_top:
+                break
+            m = abs(pk)
+            if m < 0.05:
+                continue
+            lines.append((int(kk), m * float(np.interp(h, hs, av)),
+                          float(np.angle(pk))))
+        return self._cycle_whine(f_cyc, frames, lines, phase_attr)
+
     def _whine(self, freq, frames, harmonics, phase_attr="_whine_phase"):
         """A continuous tonal oscillator (sum of harmonics) at ``freq`` Hz."""
         sr = self.sample_rate
@@ -5568,15 +5812,57 @@ class Synthesizer:
 
     def _inl_flow(self, crank):
         """The intake flow at this operating point, every cylinder at its own
-        phase."""
+        phase: the solver's valve flow and the runner's hammer after it
+        closes (_inl_hammer)."""
         shape = getattr(self, "_inl_q", None)
         if shape is None:
             return None
+        shape = shape + self._inl_hammer(shape, self.sim.rpm)
         q = np.zeros(len(crank))
         for off in self._offsets:
             q += np.interp(np.mod(crank + off, 720.0), self._inl_deg, shape,
                            period=720.0)
         return q
+
+    def _inl_hammer(self, shape, rpm):
+        """The flow the runner's stopped column rings into the plenum after
+        the intake valve closes (see _INL_RING_R), over the cycle, in the
+        solver's units.  The column carries the intake event's mean flow; the
+        valve's closing flank (T_c) against the runner's round trip sets how
+        much of it becomes the hammer (Michaud) and how sharp its edges are."""
+        eng = self.sim.engine
+        deg = self._inl_deg
+        pk = float(shape.max())
+        if pk <= 0.0 or rpm <= 1.0:
+            return np.zeros_like(shape)
+        on = shape > 0.01 * pk
+        idx = np.nonzero(on)[0]
+        th_c = float(deg[idx[-1]])                     # the valve seats
+        dur = float(deg[idx[-1]] - deg[idx[0]]) + 2.0  # the intake event
+        q_ev = float(shape[on].mean())                 # the column's flow
+        # the runner, as the solver builds it (gas_truth: 1.1 x the valve)
+        bore = eng.cylinders[0].bore
+        n_int = max(1, getattr(eng, "valves_per_cyl", 4) // 2)
+        a_r = 0.55 * bore * (0.39 if n_int >= 2 else 0.47)
+        Lp = max(getattr(eng, "intake_runner_m", 0.30), 0.05) + 0.61 * a_r
+        dps = 6.0 * rpm                                # crank deg per second
+        t_half = Lp / 343.0                            # one way, s
+        t_c = _INL_CLOSE_FRAC * 0.5 * dur / dps        # the closing flank, s
+        q_h = q_ev * min(1.0, 2.0 * t_half / max(t_c, 1e-6))
+        ramp = min(t_c, t_half)
+        t = np.mod(deg - th_c, 720.0) / dps            # s since it seated
+        k = np.maximum(np.floor((t - t_half) / (2.0 * t_half)) + 1.0, 0.0)
+        amp = np.where(t < t_half, 1.0, (-_INL_RING_R) ** k)
+        prev = np.where(t < t_half, 0.0,
+                        np.where(k <= 1.0, 1.0, (-_INL_RING_R) ** (k - 1.0)))
+        ph = np.where(t < t_half, t, np.mod(t - t_half, 2.0 * t_half)) \
+            / max(ramp, 1e-9)
+        w = np.where(ph < 1.0, 0.5 - 0.5 * np.cos(np.pi * np.clip(ph, 0.0, 1.0)),
+                     1.0)
+        h = q_h * (prev + (amp - prev) * w)
+        # ...until the valve reopens (the runner is open at both ends again)
+        h[t > (720.0 - dur) / dps] = 0.0
+        return h
 
     def _intake_draw(self):
         """The intake flow the valves draw at this operating point over wide
@@ -5989,23 +6275,47 @@ class Synthesizer:
         attenuation A = 10 lg(3 + 20 N), N = 2 delta f / c, faded in from 0 at
         the shadow boundary (A -> 10 lg(1 + 20N/3) + 4.8 (1 - exp(-N/0.3)):
         within 0.2 dB of Maekawa for N >= 1) and capped at
-        _TK_SHIELD_MAX_DB.  Behind the tail the line is clear: nothing."""
+        _TK_SHIELD_MAX_DB.  Behind the tail the line is clear: nothing.
+
+        A body is no endless screen (Leo 2026-09-25: shield it less): the
+        sound also gets DOWN under the rear floor edge and out past the sill
+        (_TK_FLOOR_Z; two edges, their detours add) and OVER the rear deck
+        (_TK_DECK_Z).  The paths' energies add (ISO 9613-2's lateral paths
+        round a finite barrier) -- the side edge still leads, the total is
+        ~2 dB less than it alone -- and the cap then bounds the sum."""
         L = getattr(self, "_tk_L", 12.0)
         open_c = getattr(self.sim.engine, "open_cockpit", False)
         w = 0.45 if open_c else _TK_HALF_W
         yp = 0.2 if open_c else _TK_PIPE_Y
-        delta = 0.0
+        zf = 0.05 if open_c else _TK_FLOOR_Z
+        zt = 0.95 if open_c else _TK_DECK_Z
+        hs = self._tk_sources()["exh"][1]
+        hm = 1.2
+        deltas = (0.0, 0.0, 0.0)
         if x_p < 0.0:
             # where the pipe -> mic line crosses the body's side
             xc = x_p + (-x_p) * (w - yp) / (L - yp)
             if xc < x_p + _TK_CAR_LEN:
-                delta = ((w - yp) + math.hypot(-x_p, L - w)
-                         - math.hypot(-x_p, L - yp))
-        delta = max(delta, 0.0)
+                d_s = ((w - yp) + math.hypot(-x_p, L - w)
+                       - math.hypot(-x_p, L - yp))
+                r_pm = math.sqrt(x_p * x_p + (L - yp) ** 2 + (hm - hs) ** 2)
+                # under: down to the rear floor edge below the pipe, along
+                # under the car to the sill's bottom edge at the crossing, up
+                # to the mic
+                d_u = ((hs - zf) + math.hypot(xc - x_p, w - yp)
+                       + math.sqrt(xc * xc + (L - w) ** 2 + (hm - zf) ** 2)
+                       - r_pm) if hs > zf else 0.0
+                # over: up to the deck edge above the pipe, then to the mic
+                d_t = ((zt - hs) + math.sqrt(x_p * x_p + (L - yp) ** 2
+                                             + (hm - zt) ** 2)
+                       - r_pm) if zt > hs else 0.0
+                deltas = (max(d_s, 0.0), max(d_u, 0.0), max(d_t, 0.0))
         if getattr(self, "_tk_shield", None) is None:
             self._tk_shield = _MagFIR(self.sample_rate)
         # 2 mm buckets: inside one the curve moves < 0.3 dB
-        key = round(delta * 500.0)
+        key = tuple(round(d * 500.0) for d in deltas)
+        if key[0] == 0:
+            key = 0                    # in the open: the side edge leads
         if key == 0 and self._tk_shield._key in (None, 0):
             self._tk_shield._key = 0
             self._tk_shield._hist = np.concatenate(
@@ -6014,12 +6324,18 @@ class Synthesizer:
             d = np.concatenate((getattr(self, "_tk_sh_d", np.zeros(_MagFIR.M // 2)), sig))
             self._tk_sh_d = d[-(_MagFIR.M // 2):]
             return d[:len(sig)]
-        dq = key / 500.0
+        dqs = [k / 500.0 for k in key] if key != 0 else []
 
         def mag(f):
-            N = 2.0 * dq * f / 343.0
-            a = 10.0 * np.log10(1.0 + 20.0 * N / 3.0) \
-                + 4.8 * (1.0 - np.exp(-N / 0.3))
+            if not dqs:
+                return np.ones_like(f)          # leaving the shadow: clear
+            e = np.zeros_like(f)
+            for dq in dqs:
+                N = 2.0 * dq * f / 343.0
+                a = 10.0 * np.log10(1.0 + 20.0 * N / 3.0) \
+                    + 4.8 * (1.0 - np.exp(-N / 0.3))
+                e = e + 10.0 ** (-a / 10.0)
+            a = np.maximum(-10.0 * np.log10(np.maximum(e, 1e-12)), 0.0)
             return 10.0 ** (-np.minimum(a, _TK_SHIELD_MAX_DB) / 20.0)
         y = self._tk_shield.process(sig, key, mag)
         self._tk_sh_d = np.concatenate((getattr(self, "_tk_sh_d", np.zeros(_MagFIR.M // 2)),

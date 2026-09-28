@@ -335,7 +335,9 @@ def ferrari_f2004_v10() -> Engine:
         name="Ferrari F2004 Tipo053 3.0 V10 F1",
         cylinders=cylinders,
         open_cockpit=True,               # single-seater: onboard camera
-        phys_voice=True,                 # measured against a real onboard
+        phys_voice=False,                # the classic voice (2026-09-28, Leo's
+                                         #   A/B: the physical one, matched to
+                                         #   a dark onboard clip, lost the scream)
         straight_cut=True,               # F1: sequential dog box
         flywheel_inertia=0.045,          # F1: revs almost instantly
         redline_rpm=18500,
@@ -353,6 +355,17 @@ def ferrari_f2004_v10() -> Engine:
         throttle_bore_mm=50.0,
         # the real onboard (2026-09-23 clip) upshifts at ~17500 (14.7k after)
         upshift_rpm=17500.0,
+        # THE V10 CHORD (Leo 2026-09-28: "完全没有v10的和弦感"): the lines of
+        # his real F2004 onboard (1.5th and 4.5th ~9 dB under the 2.5th) and
+        # the Assetto Corsa F2004 he pointed to (YouTube -9hdq47xx44, 1:12-1:45
+        # at ~17-18.5k: 1.5th -6, 4.5th -11, 7.5th -13, 5th -14, 1st -15 dB):
+        # two interleaved series, 1.5/4.5/7.5 over 2.5/5/7.5 (3:5, a sixth).
+        # The 90/54 pulse train gives only the 2.5th's multiples and no
+        # cylinder pattern that is not +-20 % reproduces the rest, so it is
+        # the recordings' own.  Mean of the two, dB re the 2.5th.
+        order_profile={0.5: -20.0, 1.0: -17.0, 1.5: -7.0, 2.5: 0.0,
+                       3.5: -20.0, 4.5: -10.0, 5.0: -12.0, 5.5: -16.0,
+                       7.5: -12.0, 10.0: -24.0, 12.5: -20.0, 15.0: -24.0},
         starter_torque=120.0,
         exhaust_tone=185.0,              # very high F1 shriek
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
@@ -1827,7 +1840,7 @@ def ferrari_f2007_v8() -> Engine:
         name="Ferrari F2007 Tipo056 2.4 V8 F1",
         cylinders=cylinders,
         open_cockpit=True,               # single-seater: onboard camera
-        phys_voice=True,                 # the F2004's physical voice
+        phys_voice=False,                # classic, as the F2004 (Leo's A/B)
         flywheel_inertia=0.05, redline_rpm=19000, idle_rpm=4000,
         heat_release_k=3.6, ve_peak_frac=0.85, ve_width_frac=0.55,
         # friction from the F2004's (whose dyno meets the real car's) as a

@@ -313,6 +313,12 @@ class Engine:
     # one plate), whose WOT loss map_model.K_BALANCE carries.  Set, the tract's
     # open area n * pi/4 * d^2 replaces it (map_model.wot_area_for).
     throttle_bore_mm: float = 0.0
+    # MEASURED tonal signature: {engine order: dB re the loudest}, read off a
+    # real recording of this very engine.  Where set, the engine's tonal layer
+    # (its trumpets' howl) carries these lines instead of a generic harmonic
+    # set -- for the lines no pulse model here derives (the F2004's 1.5th and
+    # 4.5th, the 'chord' round its 2.5th).  None: modelled.
+    order_profile: Optional[dict] = None
     # Compression-ignition engine.  None = the old rule (CR >= 14.5); an Otto
     # engine above it (the 2014+ F1 PUs run the FIA's 18:1 cap on jet ignition)
     # says False.
