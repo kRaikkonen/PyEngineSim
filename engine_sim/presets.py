@@ -413,6 +413,73 @@ def ferrari_f2004_v10() -> Engine:
     )
 
 
+def renault_r25_v10() -> Engine:
+    """Renault R25 -- RS25 3.0 L 72-deg V10 Formula 1 engine (2005).
+
+    Alonso's title car, the last V10 champion: 98 x 39.75 mm x 10 (2998 cc),
+    800-900 hp at 19000 rpm, 6-speed sequential, 605 kg with driver
+    (Wikipedia: Renault R25, Renault RS engine).  The 72-deg vee on a five-
+    throw crank FIRES EVENLY, every 72 deg -- unlike the Ferrari 053's 90-deg
+    90/54 -- so each bank's 144-deg beat (the 2.5th) meets the other bank's
+    half a period out and the firing 5th leads: the pure V10 howl.
+    """
+    offsets = _even_offsets(10, firing_order=[1, 6, 5, 10, 2, 7, 3, 8, 4, 9])
+    cylinders = []
+    for i in range(10):
+        bank = -36.0 if i < 5 else 36.0              # 72-deg V
+        cylinders.append(
+            Cylinder(bore=mm(98), stroke=mm(39.75), rod_length=mm(102),
+                     compression_ratio=13.0, cycle_offset_deg=offsets[i],
+                     bank_angle_deg=bank))
+    return Engine(
+        name="Renault R25 RS25 3.0 V10 F1",
+        cylinders=cylinders,
+        open_cockpit=True,               # single-seater: onboard camera
+        phys_voice=False,                # the classic voice, as the F2004/F2007
+        straight_cut=True,               # F1: sequential dog box
+        flywheel_inertia=0.045,          # the F2004's: revs almost instantly
+        redline_rpm=19000,
+        idle_rpm=3600,
+        heat_release_k=3.9,
+        ve_peak_frac=0.82, ve_width_frac=0.6,
+        # the F2004's piston-speed friction on the RS25's 39.75 mm stroke
+        # (x 39.75/41.4 on the linear, squared on the quadratic term)
+        friction_static=9.0, friction_linear=0.0096, friction_quad=6.5e-6,
+        # the F2004's trumpet rule on this 98 mm bore: 50 x 98/96
+        throttle_bore_mm=51.0,
+        # ITS LINES, as the trackside microphones hear them: Alonso's 2020
+        # Abu Dhabi demo run (YouTube fpgv1iN9HR8, F1's own 2-minute cut of
+        # passes, captured in-page), medians of 294 frames at 11-23k apparent
+        # rpm, dB re the loudest.  The bank beat (2.5th) LEADS, 6 dB over the
+        # firing 5th: from the side the two banks' exits sit ~0.6 m apart
+        # across the car -- the wavelength of the 2.5th at 13k -- so the even
+        # 72-deg firing's cancellation, which a centred ear keeps, is gone.
+        # FITTED on a replica of that video (same apparent rpm, the video's
+        # floor band by band, its band levels): each line moved by what the
+        # replica's (median of the same 995 frames, re the 5th) missed.
+        order_profile={1.0: -20.0, 1.5: -22.0, 2.0: -16.0, 2.5: 0.0,
+                       3.0: -16.0, 3.5: -17.0, 4.0: -19.0, 4.5: -17.0,
+                       5.0: -9.0, 5.5: -18.0, 6.0: -21.0, 7.5: -11.0,
+                       10.0: -31.0, 12.5: -17.0},
+        starter_torque=120.0,
+        exhaust_tone=185.0,
+        exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
+        # two banks, two 5-into-1 systems, two exits
+        exhaust_channels=2, exhaust_openness=0.98, muffler_volume_m3=0.0008,
+        wall_material="titanium",
+        megaphone=0.7,
+        has_cat=False,
+        # 6-speed (the last Renault before 2006's 7): 6th meets the F2004's
+        # Monza top (~365 km/h, drag area 1.06 m^2, the same era's car) at
+        # 19000: 1990 rad/s x 0.33 m / 101 m/s = 6.44 overall; 1st ~155 km/h;
+        # geometric steps between
+        gear_ratios=[3.04, 2.57, 2.17, 1.83, 1.54, 1.30], final_drive=4.95,
+        drag_cda=1.06,
+        vehicle_mass=605.0, wheel_radius=0.33, clutch_capacity=400.0,
+        gearbox_type="dct",
+    )
+
+
 def dodge_hellcat_v8() -> Engine:
     """Dodge Challenger SRT Hellcat — 6.2 L supercharged HEMI V8.
 
@@ -3176,6 +3243,7 @@ PRESETS = [
     ("pista", "Ferrari 488 Pista V8", ferrari_488_pista),
     ("enzo", "Ferrari Enzo F140 V12", ferrari_enzo_v12),
     ("7", "F2004", ferrari_f2004_v10),
+    ("r25", "R25 RS25", renault_r25_v10),
     ("f2007", "Ferrari F2007 V8 F1", ferrari_f2007_v8),
     ("f355", "F355 V8", ferrari_f355_v8),
     ("f40", "F40 twin-turbo V8", ferrari_f40_v8),
@@ -3365,7 +3433,7 @@ _FLAT_PLANE = {"4", "488", "918", "atomv8", "f2007", "f355",
 # a NA straight-cut screamer (>=8600 rpm) is auto-flagged in _annotate.  Carb
 # race engines (Weber stacks) are ITB-like acoustically -> folded in there too.
 _ITB = frozenset({"r34",        # RB26 twin-turbo, 6 ITBs
-                  "f2004", "f2007", "mp44", "sf25",   # F1
+                  "f2004", "r25", "f2007", "mp44", "sf25",   # F1
                   "e92m3", "m3gtr",   # BMW S65 / P60 race V8, 8 ITBs
                   "cgt",        # Carrera GT 5.7 V10, 10 ITBs
                   "atomv8",     # Ariel Atom Hartley race V8
@@ -3403,7 +3471,7 @@ _SOUND_CHANNEL = {
 # these engines differentiate from geometry.  Only what Leo scoped: V10 + V12.
 _INTAKE_RUNNER = {
     # V10
-    "5": 0.10, "lfax": 0.10, "7": 0.08, "cgt": 0.12, "e60m5": 0.16, "hura": 0.24,
+    "5": 0.10, "lfax": 0.10, "7": 0.08, "r25": 0.08, "cgt": 0.12, "e60m5": 0.16, "hura": 0.24,
     "viper": 0.36, "fdviper": 0.34,
     # V12 — race / stacks (short)
     "mf1": 0.17, "clkgtr": 0.14, "917": 0.12, "valk": 0.13, "vulcan": 0.16,
@@ -3435,7 +3503,7 @@ _INTAKE_RUNNER = {
 # --- detail-model lookups (audio) -------------------------------------------
 _CARB = frozenset({"z28", "250cal", "countach", "crs27", "930", "gt40", "w154",
                    "boneshaker", "917", "t100", "speed12", "diablo"})
-_MECH_INJ = frozenset({"7", "f2007", "mp44", "cgt", "r390", "clkgtr", "zonda",
+_MECH_INJ = frozenset({"7", "r25", "f2007", "mp44", "cgt", "r390", "clkgtr", "zonda",
                        "zondar", "mf1", "f50gt", "f40"})  # mech / slide-throttle race
 # dual (port + direct: Ford D-4S-style Coyote, Huracan iDS)
 _DUAL_INJ = frozenset({"3", "rtr", "hura"})
@@ -3455,7 +3523,7 @@ _NO_BALANCE = frozenset({"a3", "22b", "gdb", "gv", "vt15r", "evo7", "ae86",
 _INTEGRATED_MANIFOLD = frozenset({"a3", "2", "a45", "b48", "330i", "0", "fk8",
                                   "focus3",
                                   "giulia", "raptor", "hoonitruck", "fordgt"})
-_RACE_CAM = frozenset({"7", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12",
+_RACE_CAM = frozenset({"7", "r25", "f2007", "mp44", "atomv8", "valk", "f50gt", "speed12",
                        "clkgtr", "zondar", "r390", "cgt", "996gt1"})
 _HOT_CAM = frozenset({"4", "488", "pista", "f355", "nsx", "ek9", "ep3", "fk8",
                       "gt3", "991rs", "997rs4", "lafe", "enzo", "gt350r"})
@@ -3532,7 +3600,7 @@ _MID_ENGINE = frozenset({
     "one1", "valk", "valhalla", "zonda", "zondar", "fordgt", "gt40", "r390",
     "clkgtr", "xj220", "atomv8", "787b", "917", "veyron", "audiv8", "nsx",
     "rs200", "hoonrs", "deltas4", "p205", "996gt1", "funco",
-    "7", "f2007", "mp44", "sf25"})
+    "7", "r25", "f2007", "mp44", "sf25"})
 _REAR_ENGINE = frozenset({"1", "930", "991rs", "993gt2", "997rs4", "crs27",
                           "gt2rs", "gt3", "singer"})    # the 911s
 
