@@ -839,6 +839,52 @@ _TK_PASS = 1.9
 _TK_FULL = 1.0 / (0.6 * 1.5)
 
 
+class _Binaural:
+    """Two ears for one source at a bearing ``pan`` = sin(azimuth), -1 left ..
+    +1 right, moving across a block: Woodworth's interaural delay a/c (az +
+    sin az), a = 87.5 mm (up to 0.66 ms), and the head's shadow on the far ear
+    above ~1.5 kHz (up to -9 dB side-on; +2 dB of pressure build-up on the near
+    ear, a touch of level on each) -- a car at the side is heard AT the side,
+    not just louder there.  State carries across blocks."""
+
+    D = 48
+
+    def __init__(self, sr):
+        self.sr = sr
+        from scipy.signal import butter as _b
+        self.b, self.a = _b(2, 1500.0 / (sr / 2.0)) if _HAVE_SCIPY else (None, None)
+        self.zi = np.zeros(2)
+        self.hist = np.zeros(self.D)
+        self.hist_lo = np.zeros(self.D)
+        self.pan = 0.0
+
+    def process(self, x, pan1):
+        n = len(x)
+        pan = np.clip(np.linspace(self.pan, pan1, n + 1)[1:], -0.95, 0.95)
+        self.pan = float(pan1)
+        if self.b is not None:
+            lo, self.zi = lfilter(self.b, self.a, x, zi=self.zi)
+        else:
+            lo = x * 0.0
+        az = np.arcsin(pan)
+        itd = 0.0875 / 343.0 * (az + np.sin(az)) * self.sr     # +: right -> left ear later
+        xe = np.concatenate((self.hist, x))
+        le = np.concatenate((self.hist_lo, lo))
+        grid = np.arange(len(xe), dtype=np.float64)
+        idx = np.arange(n, dtype=np.float64) + self.D
+        dL = np.maximum(itd, 0.0); dR = np.maximum(-itd, 0.0)
+        full_L, full_R = np.interp(idx - dL, grid, xe), np.interp(idx - dR, grid, xe)
+        lo_L, lo_R = np.interp(idx - dL, grid, le), np.interp(idx - dR, grid, le)
+        hi_L, hi_R = full_L - lo_L, full_R - lo_R
+        sh = np.abs(np.sin(az)); right = az > 0.0
+        gfh, gnh = 10 ** (-9.0 * sh / 20), 10 ** (2.0 * sh / 20)
+        gf, gn = 10 ** (-1.5 * sh / 20), 10 ** (1.0 * sh / 20)
+        L = np.where(right, gf * (lo_L + gfh * hi_L), gn * (lo_L + gnh * hi_L))
+        R = np.where(right, gn * (lo_R + gnh * hi_R), gf * (lo_R + gfh * hi_R))
+        self.hist, self.hist_lo = xe[-self.D:], le[-self.D:]
+        return (L * 0.85).astype(np.float32), (R * 0.85).astype(np.float32)
+
+
 class _FlybyDelay:
     """Fractional delay line whose delay RAMPS per sample — a moving source's
     propagation delay.  Changing path length IS the Doppler effect (physically
@@ -4663,6 +4709,30 @@ class Synthesizer:
             # the air, the walls and the place's field
             tau1, xe1 = self._track.retarded(v, L * L + (hm - 0.5) ** 2)
             r1 = 343.0 * tau1
+            # THE SPATIAL CAM (Leo, 2026-09-29: the replica's "远近左右变化",
+            # accepted): the car's bearing where the arriving sound LEFT it,
+            # sin(azimuth) = x_e / r.  At a post change (the car half-way
+            # between two posts, as far as it gets) a new post may stand on
+            # the other side of the track: its direction is drawn afresh, and
+            # the image changes sides only there, gliding over 0.5 s -- no new
+            # left/right swing before the last pass has receded.
+            pn = float(xe1 / max(r1, 1.0))
+            pr = getattr(self, "_tk_pan_raw", pn)
+            if pr > 0.5 and pn < -0.5:             # the reception post changed
+                self._tk_posts = getattr(self, "_tk_posts", 0) + 1
+                rnd = np.random.default_rng(2026 + self._tk_posts)
+                self._tk_glide = (getattr(self, "_tk_pan_eff", 0.0), 0.0)
+                self._tk_dir = float(rnd.choice([-1.0, 1.0]))
+            self._tk_pan_raw = pn
+            tgt = getattr(self, "_tk_dir", 1.0) * pn
+            gl = getattr(self, "_tk_glide", None)
+            if gl is not None:
+                u = min(gl[1] / 0.5, 1.0)
+                w_ = 0.5 - 0.5 * math.cos(math.pi * u)
+                self._tk_pan_eff = gl[0] + (tgt - gl[0]) * w_
+                self._tk_glide = None if u >= 1.0 else (gl[0], gl[1] + frames / float(self.sample_rate))
+            else:
+                self._tk_pan_eff = tgt
             cv1 = (1.0 + M * xe1 / r1) ** -2
             if _HAVE_SCIPY:
                 # The bounce is only COHERENT up to a point.  At grazing
@@ -4924,6 +4994,12 @@ class Synthesizer:
                 self._scope_ring[idx % 8192] = v4
                 self._scope_n += len(v4)      # entries, each 4 samples apart
         self._tap("output", out)             # final post-master signal
+        if self.pov == "trackside" and getattr(self, "_tk_pan_eff", None) is not None:
+            if getattr(self, "_binaural", None) is None or self._binaural.sr != self.sample_rate:
+                self._binaural = _Binaural(self.sample_rate)
+            self._stereo = self._binaural.process(out.astype(np.float64), self._tk_pan_eff)
+        else:
+            self._stereo = None
         return out
 
     # ------------------------------------------------------------ callback
@@ -6950,7 +7026,13 @@ class Synthesizer:
     def _callback(self, outdata, frames, time_info, status):
         mono = self._render_block(frames)
         nch = outdata.shape[1]
-        if nch >= 2:
+        st = getattr(self, "_stereo", None)
+        if nch >= 2 and st is not None and len(st[0]) == frames:
+            outdata[:, 0] = np.clip(st[0], -1.0, 1.0)     # the fly-by's spatial cam
+            outdata[:, 1] = np.clip(st[1], -1.0, 1.0)
+            if nch > 2:
+                outdata[:, 2:] = 0.0
+        elif nch >= 2:
             # equal-power stereo pan from the spatial pad's X axis
             ang = self.params["spatial_x"] * (math.pi * 0.5)
             outdata[:, 0] = mono * math.cos(ang)
@@ -7059,9 +7141,13 @@ class Synthesizer:
             t_start = time.monotonic()
             try:
                 mono = self._render_block(CH)
-                ang = self.params["spatial_x"] * (math.pi * 0.5)
-                buf[:, 0] = mono * math.cos(ang)
-                buf[:, 1] = mono * math.sin(ang)
+                st = getattr(self, "_stereo", None)
+                if st is not None and len(st[0]) == CH:
+                    buf[:, 0], buf[:, 1] = st[0], st[1]
+                else:
+                    ang = self.params["spatial_x"] * (math.pi * 0.5)
+                    buf[:, 0] = mono * math.cos(ang)
+                    buf[:, 1] = mono * math.sin(ang)
                 np.clip(buf, -1.0, 1.0, out=buf)
                 spent = time.monotonic() - t_start   # render only, before the sink
                 self.load += (spent / period - self.load) * 0.05
@@ -7124,12 +7210,15 @@ class Synthesizer:
                     time.sleep(0.004)
                     continue
                 mono = self._render_block(CH)
-                ang = self.params["spatial_x"] * (math.pi * 0.5)
+                st = getattr(self, "_stereo", None)
+                if st is not None and len(st[0]) == CH:
+                    l_, r_ = st
+                else:
+                    ang = self.params["spatial_x"] * (math.pi * 0.5)
+                    l_, r_ = mono * math.cos(ang), mono * math.sin(ang)
                 stereo = np.empty((CH, 2), dtype=np.int16)
-                stereo[:, 0] = (np.clip(mono * math.cos(ang), -1.0, 1.0)
-                                * 32767.0).astype(np.int16)
-                stereo[:, 1] = (np.clip(mono * math.sin(ang), -1.0, 1.0)
-                                * 32767.0).astype(np.int16)
+                stereo[:, 0] = (np.clip(l_, -1.0, 1.0) * 32767.0).astype(np.int16)
+                stereo[:, 1] = (np.clip(r_, -1.0, 1.0) * 32767.0).astype(np.int16)
                 snd = pygame.sndarray.make_sound(stereo)
                 if self._pg_chan.get_busy():
                     self._pg_chan.queue(snd)
