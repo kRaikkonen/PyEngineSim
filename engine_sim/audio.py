@@ -3907,9 +3907,10 @@ class Synthesizer:
                     # ...at the level that gives the reference's balance: its
                     # chase-view 0.3-1 kHz share, 65 % (Leo: "更响/更厚")
                     c_prev = getattr(self, "_itb_cyc_phase", 0.0)
+                    ph_of = self._profile_phases(prof)
                     howl = _PROFILE_GAIN * self._cycle_whine(
                         f_cyc, frames,
-                        [(2.0 * o, 10.0 ** (db / 20.0), 0.0)
+                        [(2.0 * o, 10.0 ** (db / 20.0), ph_of.get(o, 0.0))
                          for o, db in sorted(prof.items())], "_itb_cyc_phase")
                     # TRACKSIDE: THE BANKS' LINES LEAVE BY THE EXHAUSTS.  Each
                     # bank's own collector carries its beat -- n/4 x odd orders
@@ -3934,7 +3935,7 @@ class Synthesizer:
                             self._itb_cyc_phase_b = c_prev
                             hb = _PROFILE_GAIN * self._cycle_whine(
                                 f_cyc, frames,
-                                [(2.0 * o, 10.0 ** (db / 20.0), 0.0)
+                                [(2.0 * o, 10.0 ** (db / 20.0), ph_of.get(o, 0.0))
                                  for o, db in sorted(bank)], "_itb_cyc_phase_b")
                             howl = howl - hb
                             self._tk_bank_howl = hb
@@ -3947,22 +3948,38 @@ class Synthesizer:
                     howl = self._pattern_whine(f_cyc, fire_hz, frames,
                                                hset, pat, "_itb_cyc_phase")
                 # the air tearing through the trumpets (_ITB_FLOW)
-                kf = P.get("itb_flow", _ITB_FLOW)
+                kf = P.get("itb_flow", None)
+                if kf is None:
+                    kf = getattr(sim.engine, "itb_flow", None)
+                if kf is None:
+                    kf = _ITB_FLOW
                 shp = getattr(self, "_inl_q", None)
                 g3 = getattr(self, "_inl_g3", None)
                 if kf > 0.0 and shp is not None and _HAVE_SCIPY \
                         and g3 is not None and len(g3) == frames:
                     g3 = g3 / max(float(np.sqrt(np.mean(g3 * g3))), 1e-30)
                     if getattr(self, "_itbn_ba", None) is None:
-                        self._itbn_ba = butter(2, [300.0 / (self.sample_rate / 2),
-                                                   min(5000.0, self.sample_rate * 0.45)
-                                                   / (self.sample_rate / 2)],
-                                               btype="band")
-                        self._itbn_zi = np.zeros(4)
+                        band = getattr(sim.engine, "itb_flow_band", None)
+                        self._itbn_g = None
+                        if band:
+                            self._itbn_ba, self._itbn_g = self._pink_band(*band)
+                        else:
+                            self._itbn_ba = butter(2, [300.0 / (self.sample_rate / 2),
+                                                       min(5000.0, self.sample_rate * 0.45)
+                                                       / (self.sample_rate / 2)],
+                                                   btype="band")
+                        self._itbn_zi = np.zeros(max(len(self._itbn_ba[0]),
+                                                     len(self._itbn_ba[1])) - 1)
                     nb, self._itbn_zi = lfilter(self._itbn_ba[0], self._itbn_ba[1],
                                                 self._rng.standard_normal(frames),
                                                 zi=self._itbn_zi)
-                    nb = nb / max(float(np.sqrt(np.mean(nb * nb))), 1e-12)
+                    if getattr(self, "_itbn_g", None) is None:
+                        nb = nb / max(float(np.sqrt(np.mean(nb * nb))), 1e-12)
+                    else:
+                        # the band's own rms, fixed: a block (5 ms) holds
+                        # less than one period of its low end, so its own
+                        # rms would re-gain it at the block rate -- a buzz
+                        nb = nb * self._itbn_g
                     hr = float(np.sqrt(np.mean(howl * howl)))
                     howl = howl + kf * hr * g3 * nb
                 bayi = bayi + howl_gain * howl  # trumpets: bright opening
@@ -4051,6 +4068,15 @@ class Synthesizer:
         if self._split_on() and dps > 1e-12 \
                 and getattr(self, "_phys_inflow", None) is None:
             bayi = bayi * self._struct_gain(crank, 0.0)
+        # ...and the mouth's own fixed resonance, where a recording of this
+        # engine measured one (Engine.mouth_formant): the lines that pass
+        # through it at any rpm swell there
+        mf = getattr(sim.engine, "mouth_formant", None)
+        if mf:
+            bF, aF = self._pk(float(mf[0]), float(mf[2]), float(mf[1]))
+            if getattr(self, "_mform_zi", None) is None:
+                self._mform_zi = np.zeros(2)
+            bayi, self._mform_zi = lfilter(bF, aF, bayi, zi=self._mform_zi)
         bayi_mouth = bayi
         if self.capture_stages:
             self._dbg_bayi1 = np.asarray(bayi, dtype=np.float64).copy()
@@ -5065,6 +5091,65 @@ class Synthesizer:
             dt[m] = self._fs_dt[j]
             am[m] = self._fs_a[j]
         return dt * 6.0 * max(rpm, 1.0), am
+
+    def _pink_band(self, lo, hi, shelf_db=0.0):
+        """Pink noise (-3 dB/oct: Kellet's three-pole fit) between a 2nd-order
+        high-pass at lo and low-pass at hi (+ shelf_db above ~5 kHz, first
+        order), and the gain that gives it unit rms (from its impulse
+        response: fixed, not per block)."""
+        sr = self.sample_rate
+        bp = np.array([0.049922035, -0.095993537, 0.050612699, -0.004408786])
+        ap = np.array([1.0, -2.494956002, 2.017265875, -0.522189400])
+        bh, ah = butter(2, min(max(lo, 5.0), sr * 0.2) / (sr / 2.0), btype="high")
+        bl, al = butter(2, min(hi, sr * 0.45) / (sr / 2.0), btype="low")
+        b = np.convolve(np.convolve(bp, bh), bl)
+        a = np.convolve(np.convolve(ap, ah), al)
+        if shelf_db > 0.0:
+            # (s/w1 + 1) / (s/w2 + 1), w2 = 5 kHz, w1 = w2 / 10^(dB/20), bilinear
+            f2 = min(5000.0, sr * 0.4)
+            f1 = f2 / 10.0 ** (shelf_db / 20.0)
+            k_ = 2.0 * sr
+            t1, t2 = 1.0 / (2.0 * math.pi * f1), 1.0 / (2.0 * math.pi * f2)
+            bs = np.array([t1 * k_ + 1.0, 1.0 - t1 * k_])
+            as_ = np.array([t2 * k_ + 1.0, 1.0 - t2 * k_])
+            b = np.convolve(b, bs / as_[0])
+            a = np.convolve(a, as_ / as_[0])
+        imp = np.zeros(int(2 * sr)); imp[0] = 1.0
+        h = lfilter(b, a, imp)
+        return (b, a), 1.0 / max(float(np.sqrt(np.sum(h * h))), 1e-12)
+
+    def _profile_phases(self, prof):
+        """Each measured line's phase at the airbox mouth (Engine.trumpet_paths):
+        every trumpet's intake pulse, at its cylinder's own point of the cycle,
+        reaches the mouth down its own path -- the trumpets stand along each
+        bank at the bore pitch (~1.1 bore), the second bank half a pitch
+        back (its rods share the crankpins), the mouth ahead of the front
+        pair -- so harmonic k of the cycle arrives in the phase of
+        sum_j exp(-i 2 pi k (theta_j / 720 + f d_j / c)), taken at 95 % of the
+        redline, where the lines were measured.  Fixed: the lines keep the
+        cycle's shape as the rpm moves.  {} without trumpet_paths (all in
+        phase, as before)."""
+        cached = getattr(self, "_prof_ph", None)
+        if cached is not None and cached[0] is prof:
+            return cached[1]
+        eng = self.sim.engine
+        out = {}
+        if getattr(eng, "trumpet_paths", False):
+            cyl = eng.cylinders
+            f_ref = 0.95 * eng.redline_rpm / 120.0
+            seen, d = {}, []
+            for j, c in enumerate(cyl):
+                b = 0 if getattr(c, "bank_angle_deg", 0.0) < 0.0 else 1
+                n = seen.get(b, 0); seen[b] = n + 1
+                d.append((n + 0.5 * b) * 1.1 * c.bore)
+            th = np.asarray(self._offsets, dtype=np.float64) / 720.0
+            dd = np.asarray(d) / 343.0 * f_ref
+            for o in prof:
+                k = 2.0 * float(o)
+                ck = np.sum(np.exp(-2j * np.pi * k * (th + dd)))
+                out[o] = float(np.angle(ck)) + 0.5 * math.pi
+        self._prof_ph = (prof, out)
+        return out
 
     def _cycle_whine(self, f_cyc, frames, harmonics, phase_attr):
         """A tonal layer at the engine's cycle rate (harmonics (k, a) of

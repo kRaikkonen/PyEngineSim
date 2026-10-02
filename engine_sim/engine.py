@@ -339,6 +339,30 @@ class Engine:
     # set -- for the lines no pulse model here derives (the F2004's 1.5th and
     # 4.5th, the 'chord' round its 2.5th).  None: modelled.
     order_profile: Optional[dict] = None
+    # MEASURED fixed resonance at the intake mouth, (Hz, dB, Q), read off a
+    # real recording of this engine: the peak its lines pass through at every
+    # rpm (the F2007's 1.6 kHz -- its 5.5th order at 18k, its 6th at 16k).
+    # None: none.
+    mouth_formant: Optional[tuple] = None
+    # The trumpets' flow noise re their howl (audio._ITB_FLOW, set on the
+    # F2004's onboard floor) where a real recording of this engine sets its
+    # own floor.  None: _ITB_FLOW.
+    itb_flow: Optional[float] = None
+    # The airbox mouth hears each trumpet from its own place along the V (a
+    # bank is ~3 bore pitches long, ~0.3 m, ~0.9 ms of path): the measured
+    # lines then arrive in the phases those paths give them, not all at one
+    # instant of the cycle (a sum of sines started together buzzes once per
+    # cycle -- the 'small motor', Leo 2026-09-29).  False: all in phase.
+    trumpet_paths: bool = False
+    # The trumpets' flow noise over its own broad band, (lo, hi) Hz, where a
+    # recording of this engine measured it: turbulent flow noise is pink --
+    # equal energy per octave -- from the airbox's low roar to the edges' hiss
+    # (the F2007 onboard's floor runs flat per third-octave 60 Hz - 5 kHz,
+    # and follows the engine: -25 dB at every cut).  None: the white
+    # 300-5000 Hz band the F2004 was voiced with.  An optional third number
+    # lifts the top by that many dB above ~5 kHz (a first-order shelf): the
+    # trumpets' lips add their edge noise there, over the airbox's roar.
+    itb_flow_band: Optional[tuple] = None
     # Compression-ignition engine.  None = the old rule (CR >= 14.5); an Otto
     # engine above it (the 2014+ F1 PUs run the FIA's 18:1 cap on jet ignition)
     # says False.

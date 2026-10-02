@@ -457,10 +457,35 @@ def renault_r25_v10() -> Engine:
         # FITTED on a replica of that video (same apparent rpm, the video's
         # floor band by band, its band levels): each line moved by what the
         # replica's (median of the same 995 frames, re the 5th) missed.
-        order_profile={1.0: -20.0, 1.5: -22.0, 2.0: -16.0, 2.5: 0.0,
-                       3.0: -16.0, 3.5: -17.0, 4.0: -19.0, 4.5: -17.0,
-                       5.0: -9.0, 5.5: -18.0, 6.0: -21.0, 7.5: -11.0,
-                       10.0: -31.0, 12.5: -17.0},
+        # ITS ONBOARD (Leo 2026-09-29, the F1s' two layers, then "小马达不像
+        # 澎湃动力的大引擎"): Alonso's own onboard, Spa 2005 (YouTube
+        # GP614Y-l1UQ, captured in-page, 262 steady frames at 16.5-19.2k).
+        # That video's set (in git before this: the bank's 2.5th 16 dB over
+        # the 2nd) left the car small from the cockpit: there the 2nd,
+        # 2.5th and 5th stand level, the 1.5th and 3rd just under, over a
+        # comb of every half order to the 24th 5-18 dB clear of the floor.
+        # Each line fitted so this onboard's output meets the lap's (1.5 dB
+        # rms over the 46).  Its 1st -- 10 dB over everything there -- is the
+        # 72-deg V10's primary couple shaking the camera (30 dB lower at
+        # trackside): structure-borne, held at the trackside value, as the
+        # 0.5th.  The trumpets reach the mouth down their own paths
+        # (trumpet_paths: the lines started in phase buzzed 0.5-0.7 deep at
+        # 2-16 kHz, the real 0.1-0.26) and their flow noise is broadband
+        # (itb_flow_band).  No fixed resonance: 10-19k places none.
+        order_profile={1.0: -20.1, 1.5: -8.4, 2.0: 0.2, 2.5: 0.3, 3.0: -2.5,
+                       3.5: -13.3, 4.0: -11.4, 4.5: -7.9, 5.0: 3.4, 5.5: -1.9,
+                       6.0: -14.3, 6.5: -3.8, 7.0: -8.3, 7.5: -4.8, 8.0: -5.1,
+                       8.5: -14.9, 9.0: -7.0, 9.5: -8.7, 10.0: -5.9,
+                       10.5: -17.1, 11.0: -18.9, 11.5: -14.0, 12.0: -13.2,
+                       12.5: -16.0, 13.0: -14.1, 13.5: -14.7, 14.0: -18.9,
+                       14.5: -14.2, 15.0: -20.1, 15.5: -18.1, 16.0: -17.5,
+                       16.5: -19.4, 17.0: -17.2, 17.5: -19.7, 18.0: -16.2,
+                       18.5: -15.4, 19.0: -16.7, 19.5: -18.4, 20.0: -15.1,
+                       20.5: -17.7, 21.5: -20.2, 22.0: -22.5, 22.5: -17.8,
+                       23.5: -22.2, 24.0: -21.4},
+        itb_flow=0.139,
+        trumpet_paths=True,
+        itb_flow_band=(60.0, 16000.0, 6.0),
         starter_torque=120.0,
         exhaust_tone=185.0,
         exhaust_primary_m=0.40, exhaust_total_m=0.85, exhaust_radius_m=0.020,
@@ -1953,18 +1978,46 @@ def ferrari_f2007_v8() -> Engine:
         megaphone=0.72,                          # open upswept race exit -> mid bark
         # THE F2007'S LINES (Leo 2026-09-29: "我们的f2007表现远不如..."):
         # Raikkonen's own onboard, Australia 2007 FP2 (YouTube 63UocghLeNo,
-        # a 104 s lap captured in-page), medians of 213 steady frames at
-        # 17.5-18.3k, dB re the loudest.  The 2nd order LEADS -- 11 dB over
+        # a 104 s lap captured in-page).  The 2nd order LEADS -- 11 dB over
         # the firing 4th -- with a 3rd/3.5th/4.5th chord round it; this
         # generic even-fire set had only the 4th, 8th and 12th.  (A flat-
         # plane V8 is two fours: its 2nd-order secondary force is free, and
-        # the engine is the chassis.)  The 5.5th and 6th sat on a FIXED
-        # ~1.6 kHz peak in that clip (they swap as the rpm moves), so theirs
-        # are the source-filter fit's over the lap (11-19k): -21.
-        order_profile={0.5: -22.0, 1.5: -25.0, 2.0: 0.0, 2.5: -20.0,
-                       3.0: -15.0, 3.5: -15.0, 4.0: -11.0, 4.5: -15.0,
-                       5.0: -19.0, 5.5: -21.0, 6.0: -21.0, 7.5: -24.0,
-                       8.0: -22.0, 9.0: -24.0},
+        # the engine is the chassis.)
+        # TWO LAYERS (Leo, the same day: "一层绵密但是紧实中坚的引擎配上一层
+        # trumpet过后的喇叭类似的排气声").  The same lap, 138 steady frames at
+        # 17-18.8k: EVERY half order up to the 16th stands 5-12 dB over the
+        # floor between them -- a dense comb, not a hiss (ours had no line
+        # past the 9th: 0-1 dB, the trumpets' flow noise alone).  So the set
+        # runs to the 24th, each line fitted so this onboard's output meets
+        # the lap's (1.4 dB rms over the 48), and the flow noise under them
+        # is this engine's own (itb_flow).  The HORN is the 2nd plus a FIXED
+        # resonance: a source-filter fit over 360 steady frames (10.8-18.9k)
+        # puts it at 1650 Hz, +10 dB, Q ~10 (8-13 fit alike) -- the 5.5th
+        # swells there at 18k, the 6th at 15.9k, as they cross it.
+        order_profile={0.5: -23.8, 1.5: -24.4, 2.0: 0.0, 2.5: -21.0,
+                       3.0: -16.4, 3.5: -20.1, 4.0: -9.9, 4.5: -15.1,
+                       5.0: -20.0, 5.5: -15.8, 6.0: -15.8, 6.5: -28.6,
+                       7.0: -27.9, 7.5: -22.1, 8.0: -17.6, 8.5: -22.1,
+                       9.0: -20.7, 9.5: -22.0, 10.0: -23.7, 10.5: -27.4,
+                       11.0: -31.2, 11.5: -28.0, 12.0: -39.1, 12.5: -29.5,
+                       13.0: -34.2, 13.5: -29.9, 14.0: -27.5, 14.5: -28.8,
+                       15.0: -26.8, 15.5: -26.8, 16.0: -32.7, 16.5: -31.1,
+                       17.0: -32.4, 17.5: -26.1, 18.0: -30.4, 18.5: -30.0,
+                       19.0: -27.5, 19.5: -23.7, 20.0: -27.0, 20.5: -27.4,
+                       21.0: -26.7, 21.5: -25.1, 23.0: -27.3, 24.0: -30.4},
+        mouth_formant=(1650.0, 10.0, 10.0),
+        itb_flow=0.196,
+        # ...and the ENGINE under them, not a small motor (Leo, on the first
+        # cut: "本身的engine声像个小马达不像澎湃动力的大引擎").  Measured on
+        # the same lap: (1) the lines started in phase buzzed once per cycle
+        # -- 2-16 kHz envelopes 0.3-0.5 deep at the 0.5th order, the real
+        # 0.1-0.2 -- the mouth hears each trumpet from its own place
+        # (trumpet_paths); (2) its floor is broadband and follows the engine
+        # (-25 dB at every cut): flat per third-octave from 60 Hz to 5 kHz,
+        # rising above -- ours stopped at 300 Hz and 5 kHz, 12-16 dB short
+        # of the low body -- the flow noise over that band (itb_flow_band).
+        trumpet_paths=True,
+        itb_flow_band=(60.0, 16000.0, 6.0),
         wall_material="titanium", gear_grain=0.38, upshift_rpm=18500.0,
         # real F1 close-ratio 7-speed: 1st redlines ~140 km/h, 7th ~350 km/h
         # (was too tall -> 1st hit 200 km/h without reaching the limiter).
@@ -2019,6 +2072,36 @@ def ferrari_sf25_v6_hybrid() -> Engine:
         hybrid_kw=120.0, hybrid_base_rpm=3000.0, ers_capacity_mj=4.0,  # small F1 store
         regen_kw=120.0,                  # MGU-K harvest under braking
         mgu_whine=1.0, upshift_rpm=12000.0,   # loud MGU-H/K whistle; short-shifts
+        # THE SF-25'S LINES, its two layers (Leo 2026-09-29, the F1s but the
+        # F2004: a dense, tight engine under a horn).  Hamilton's sprint pole
+        # lap, China 2025 (YouTube 7N5D0UFGRIY, the official onboard, captured
+        # in-page): 316 steady frames at 11-12k (median 11390).  Not the
+        # generic firing 3rd: the 2nd leads the bottom, and a pair at the
+        # 9.5th / 10.5th (1.8-2.0 kHz) matches it on top, over a comb of every
+        # half order 7-14 dB clear of the floor.  The lap spans only
+        # 10-12.8k, so a fixed resonance barely separates from the orders:
+        # the best, 1775 Hz, +6 dB, Q 8.  Then the ENGINE under them (Leo:
+        # "小马达不像澎湃动力的大引擎"): the lines started in phase throbbed
+        # 0.3-0.9 deep where the lap's run 0.1-0.4 (trumpet_paths), and the
+        # lap's floor carries a low body -- 63-160 Hz at -21..-26 dB, ours
+        # 10 dB short -- that follows the engine (itb_flow_band).  Each line
+        # and the floor fitted so this onboard's output meets the lap's: 1.6
+        # dB rms over the 48 half orders, 63 Hz - 12.8 kHz within 3 dB.
+        order_profile={0.5: -10.8, 1.0: -9.8, 1.5: -4.5, 2.0: 0.0, 2.5: -15.0,
+                       3.0: -18.1, 3.5: -6.7, 4.0: -6.2, 4.5: -6.6,
+                       5.0: -11.2, 5.5: -4.9, 6.0: -7.3, 6.5: -10.1,
+                       7.0: -11.0, 7.5: -6.6, 8.0: -11.0, 8.5: -7.8,
+                       9.0: -14.3, 9.5: -0.6, 10.0: -7.3, 10.5: 4.0,
+                       11.0: -5.0, 11.5: -8.5, 12.0: -9.9, 12.5: -10.5,
+                       13.0: -13.6, 13.5: -7.9, 14.0: -12.4, 14.5: -9.7,
+                       15.0: -12.9, 15.5: -10.4, 16.5: -8.5, 17.0: -11.6,
+                       17.5: -8.5, 18.0: -9.4, 18.5: -11.5, 19.0: -9.1,
+                       19.5: -13.1, 20.0: -11.8, 21.5: -12.6, 22.0: -15.4,
+                       24.0: -15.7},
+        mouth_formant=(1775.0, 6.0, 8.0),
+        itb_flow=0.503,
+        trumpet_paths=True,
+        itb_flow_band=(60.0, 16000.0, 6.0),
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         gear_grain=0.3,
         # 8-speed.  Drag area from ~345 km/h (Monza trim) on 597 kW + the
@@ -2065,6 +2148,25 @@ def mclaren_mp44_honda_v6() -> Engine:
         induction="turbo", boost_bar=2.6, turbo_lag=0.4, turbo_spool_frac=0.16,
         valvetrain="dohc", valves_per_cyl=4, has_cat=False, straight_cut=True,
         wall_material="titanium", gear_grain=0.3, upshift_rpm=11800.0,
+        # ITS LINES (Leo 2026-09-29, the F1s' two layers): Honda's own run of
+        # a late-1988 car (YouTube IcmKJ5MhDh8, captured in-page), 73 frames
+        # of its full-throttle passes at 8.8-11.8k apparent rpm.  One turbo
+        # per bank, each bank's gas through its own turbine: the bank beat
+        # and its odd multiples lead (1.5th, 4.5th +3 dB, 7.5th, 10.5th) with
+        # the firing 3rd, over a SPARSE comb -- the other half orders 3-6 dB
+        # off the floor (the NA V8/V10s' dense layer is not this engine's).
+        # Fitted in the fly-by view (the recording's), 3.4 dB rms over the 40,
+        # with the trumpets down their own paths and their flow noise
+        # broadband, as the F2007's (no onboard of it to measure those on).
+        order_profile={0.5: -28.0, 1.0: -20.9, 1.5: 0.0, 2.0: -14.4,
+                       2.5: -20.1, 3.0: -3.7, 3.5: -9.9, 4.0: -4.8, 4.5: 2.0,
+                       5.0: -28.2, 5.5: -14.9, 6.0: -8.1, 7.0: -13.8,
+                       7.5: -11.2, 8.0: -13.6, 8.5: -30.5, 9.0: -5.7,
+                       10.5: -12.2, 11.0: -15.8, 12.0: -11.9, 13.5: -19.1,
+                       15.0: -14.8, 16.5: -31.3, 18.0: -29.1, 19.5: -28.9},
+        itb_flow=0.180,
+        trumpet_paths=True,
+        itb_flow_band=(60.0, 16000.0, 6.0),
         gear_ratios=[2.9, 2.2, 1.8, 1.5, 1.3, 1.1], final_drive=4.0,
         vehicle_mass=540.0, wheel_radius=0.33, clutch_capacity=550.0,
         gearbox_type="manual",
