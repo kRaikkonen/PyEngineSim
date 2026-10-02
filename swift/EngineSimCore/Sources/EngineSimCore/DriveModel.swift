@@ -15,12 +15,13 @@
 //    BMEP model the desktop dyno uses, plus the engine's own friction
 //    polynomial and its ECU torque and power caps.  Nothing here is invented.
 //
-//    the VEHICLE is a plain longitudinal model with GENERIC coefficients: one
-//    drag area, one rolling coefficient, one driveline efficiency.  The
-//    presets carry mass, wheel radius and the real gear ratios, but not a
-//    drag figure, so these three are stand-ins.  They decide how fast the car
-//    gets down the road; they do not touch what the engine sounds like at a
-//    given rpm and throttle, which is the part that matters here.
+//    the VEHICLE is a plain longitudinal model: the car's own drag area (the
+//    presets carry it now -- Engine.drag_cda, exported with the torque
+//    table; 0.62 m^2 for a table without one), mass, wheel radius and real
+//    gear ratios, and GENERIC rolling and driveline coefficients.  They
+//    decide how fast the car gets down the road (an F1 tops out where its
+//    gearing meets its drag, not on the limiter); they do not touch what the
+//    engine sounds like at a given rpm and throttle.
 //
 
 import Foundation
@@ -43,6 +44,9 @@ public struct TorqueTable: Decodable {
     public let final_drive: Double
     public let wheel_radius: Double
     public let vehicle_mass: Double
+    /// The car's own drag area, Cd*A in m^2 (Engine.drag_cda, as the Python
+    /// drivetrain uses it).  Tables exported before it existed carry none.
+    public let drag_cda: Double?
 
     public static func load(jsonData: Data) throws -> [String: TorqueTable] {
         try JSONDecoder().decode([String: TorqueTable].self, from: jsonData)
@@ -99,7 +103,7 @@ public final class PedalSource: TelemetrySource {
     let table: TorqueTable
 
     // --- the vehicle side: generic, and labelled as such ------------------
-    let dragArea = 0.62          // Cd*A, m^2 -- a saloon
+    var dragArea: Double { table.drag_cda ?? 0.62 }   // Cd*A, m^2 (a saloon without one)
     let rollingCoefficient = 0.013
     let drivelineEfficiency = 0.88
     let airDensity = 1.2

@@ -30,9 +30,8 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 N_RPM, N_THR = 22, 9
 
 
-def main():
-    data = {}
-    for key in sorted(presets.ALL):
+def torque_for(key):
+    if True:
         eng = presets.ALL[key]()
         sim = Simulator(eng)
         lo, hi = 300.0, eng.redline_rpm * 1.08
@@ -55,7 +54,7 @@ def main():
                 else:
                     row.append(float(eng.boost_bar * t))
             boost.append(row)
-        data[key] = {
+        return {
             "rpm": rpms,
             "throttle": thrs,
             "gas": grid,                       # [throttle][rpm]
@@ -73,7 +72,14 @@ def main():
             "final_drive": float(eng.final_drive),
             "wheel_radius": float(eng.wheel_radius),
             "vehicle_mass": float(eng.vehicle_mass),
+            # the car's own drag area, as the Python drivetrain uses it
+            # (Engine.drag_cda, or its 0.31 x 2.2 m^2 default)
+            "drag_cda": float(getattr(eng, "drag_cda", 0.0) or 0.31 * 2.2),
         }
+
+
+def main():
+    data = {key: torque_for(key) for key in sorted(presets.ALL)}
     with open(OUT, "w", encoding="ascii") as fh:
         json.dump(data, fh)
     print("wrote %s (%.0f KB): %d cars, %dx%d grid"
