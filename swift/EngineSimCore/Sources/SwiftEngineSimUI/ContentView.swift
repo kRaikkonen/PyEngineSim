@@ -634,6 +634,13 @@ public struct ContentView: View {
                     } label: {
                         HStack {
                             Text(d.name).font(.caption)
+                                .foregroundColor(d.likely ? .primary : .secondary)
+                            if d.likely {
+                                Text("OBD").font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 4).padding(.vertical, 1)
+                                    .background(Color.accentColor.opacity(0.25))
+                                    .cornerRadius(3)
+                            }
                             Spacer()
                             Text("\(d.rssi) dBm")
                                 .font(.system(size: 10, design: .monospaced))

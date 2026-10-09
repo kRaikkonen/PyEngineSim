@@ -487,6 +487,8 @@ public final class AppModel: ObservableObject {
         public let id: UUID
         public let name: String
         public let rssi: Int
+        /// Named like a dongle or advertising a dongle's service.
+        public var likely = false
     }
 
     /// Turn the engine-bay animation on or off.
@@ -558,21 +560,25 @@ public final class AppModel: ObservableObject {
         scanning = true
         let l = ble ?? BLELink()
         ble = l
-        l.scan(seconds: 6.0) { [weak self] found in
+        // returns at once: the wait for the radio (and, the first time, for
+        // the permission prompt) happens off the main thread
+        l.scan(seconds: 8.0, onUpdate: { [weak self] found in
             self?.bleFound = found.map {
-                BLEDevice(id: $0.id, name: $0.name, rssi: $0.rssi)
+                BLEDevice(id: $0.id, name: $0.name, rssi: $0.rssi,
+                          likely: $0.likely)
             }
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 6_200_000_000)
-            self?.scanning = false
-            if self?.bleFound.isEmpty == true {
-                self?.errorText = "No BLE dongle found.  If yours shows up in "
-                    + "Settings > Bluetooth it is a CLASSIC (SPP) adapter, and "
-                    + "iOS cannot talk to those from any app -- it has to be a "
-                    + "BLE one."
+        }, onDone: { [weak self] failure in
+            guard let self else { return }
+            self.scanning = false
+            if let failure {
+                self.errorText = failure
+            } else if self.bleFound.isEmpty {
+                self.errorText = "No BLE device found.  Is the dongle plugged "
+                    + "in with the ignition on?  If it shows up in Settings > "
+                    + "Bluetooth it is a CLASSIC (SPP) adapter, and iOS cannot "
+                    + "talk to those from any app -- it has to be a BLE one."
             }
-        }
+        })
         #else
         errorText = "no Bluetooth on this platform"
         #endif
