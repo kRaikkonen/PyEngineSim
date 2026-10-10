@@ -144,6 +144,7 @@ public final class OBDTelemetry {
     public private(set) var protocolUsed = ""
     /// The car answers only UDS (22 F4xx) on the engine ECU's own address.
     var uds = false
+    var triedColdStart = false
 
     /// A request for these PIDs in whatever form the car answers.
     func request(_ pids: [Int]) -> String {
@@ -304,6 +305,21 @@ public final class OBDTelemetry {
         command("ATSH7DF", 1.5)
         command("ATSP0", 2.0)                   // let the adapter search
         if answers0100(command("0100", 15.0)) { protocolUsed = "adapter's search"; return true }
+        // Last resort, once per connection: the FULL reset every other app
+        // opens with (ATZ), then the broadcast and 7E0 again -- in case this
+        // clone's CAN side only comes up after a cold start.  Its radio is a
+        // separate chip (it survived ATD), and if the reset does drop the
+        // link, stay-on-LIVE reconnects.
+        if !triedColdStart {
+            triedColdStart = true
+            command("ATZ", 4.0)
+            for c in ["ATE0", "ATL0", "ATS0", "ATH0", "ATSP6"] { command(c, 1.5) }
+            if status == "link lost" { return false }
+            command("ATSH7DF", 1.5)
+            if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, broadcast (after ATZ)"; return true }
+            command("ATSH7E0", 1.5)
+            if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, engine ECU 7E0 (after ATZ)"; return true }
+        }
         // nothing answered (ignition off?).  Leave it on the engine ECU's own
         // address, the likeliest on a VW-group car; polling re-probes.
         command("ATSP6", 2.0)
