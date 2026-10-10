@@ -65,7 +65,7 @@ private let obdNameHints = ["OBD", "ELM", "VGATE", "ICAR", "VEEPEAK", "LELINK",
                             "VLINK", "V-LINK", "OBDII", "KONNWEI", "CARISTA",
                             "VIECAR", "BLUEDRIVER", "IOS-", "SCAN", "CAR"]
 
-public final class BLELink: NSObject, OBDLink, ResetSensitiveLink {
+public final class BLELink: NSObject, OBDLink, ResetSensitiveLink, FlushableLink {
     /// What a scan found, for a picker.
     public struct Found: Identifiable, Equatable {
         public let id: UUID
@@ -277,6 +277,16 @@ public final class BLELink: NSObject, OBDLink, ResetSensitiveLink {
                 p.writeValue(data.subdata(in: i..<j), for: c, type: mode)
                 i = j
             }
+        }
+    }
+
+    public func flushInput() {
+        lock.lock()
+        let stale = buffer
+        buffer.removeAll()
+        lock.unlock()
+        if !stale.isEmpty {
+            note("(dropped unasked: " + BLELink.show(String(decoding: stale, as: UTF8.self)) + ")")
         }
     }
 

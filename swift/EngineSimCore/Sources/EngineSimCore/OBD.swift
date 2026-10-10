@@ -93,6 +93,37 @@ public enum OBDParse {
         return out
     }
 
+    /// The same values out of a UDS ReadDataByIdentifier reply -- "62", then
+    /// each DID (F4 + the OBD PID: ISO 27145's mirror of mode 01) and its
+    /// data -- so a car that only answers UDS feeds the same channels.
+    public static func udsPids(_ hex: String,
+                               lengths: [Int: Int] = pidLength) -> [Int: [Int]] {
+        let h = Array(hex.utf8)
+        func byte(_ i: Int) -> Int? {
+            guard i + 2 <= h.count,
+                  let v = Int(String(decoding: h[i..<(i + 2)], as: UTF8.self),
+                              radix: 16) else { return nil }
+            return v
+        }
+        var out = [Int: [Int]]()
+        var i = 0
+        while i + 6 <= h.count {
+            guard byte(i) == 0x62 else { i += 2; continue }
+            i += 2                                  // past the reply header
+            while i + 4 <= h.count, byte(i) == 0xF4,
+                  let pid = byte(i + 2), let ln = lengths[pid],
+                  i + 4 + 2 * ln <= h.count {
+                var vals = [Int]()
+                for k in 0..<ln {
+                    if let v = byte(i + 4 + 2 * k) { vals.append(v) }
+                }
+                out[pid] = vals
+                i += 4 + 2 * ln
+            }
+        }
+        return out
+    }
+
     /// Decode a 4-byte "PIDs supported" bitmask (the 0x00/0x20/0x40 replies).
     public static func supported(_ data: [Int], base: Int) -> Set<Int> {
         var got = Set<Int>()

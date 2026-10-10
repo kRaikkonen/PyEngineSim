@@ -40,6 +40,15 @@ public protocol OBDLink: AnyObject {
 /// A link an ATZ (full chip reboot) would drop: the BLE ones.
 public protocol ResetSensitiveLink {}
 
+/// A link that can throw away whatever arrived unasked.  Some clones send a
+/// reply TWICE after a failed protocol search (Leo's "ELM327 v2.1",
+/// 2026-10-11: ATI got "UNABLE TO CONNECT", ATDP got ATI's "ELM327 v2.1",
+/// and every answer after that belonged to the command before) -- emptying
+/// the input before each command keeps every reply with its own request.
+public protocol FlushableLink {
+    func flushInput()
+}
+
 #if canImport(Network)
 /// A WiFi ELM327 -- a raw TCP socket, no third-party dependency.
 public final class TCPLink: OBDLink {
@@ -133,6 +142,21 @@ public final class OBDTelemetry {
     /// The protocol the car answered on ("6" fixed, "0" the adapter's search;
     /// empty if it has not answered yet).
     public private(set) var protocolUsed = ""
+    /// The car answers only UDS (22 F4xx) on the engine ECU's own address.
+    var uds = false
+
+    /// A request for these PIDs in whatever form the car answers.
+    func request(_ pids: [Int]) -> String {
+        uds ? "22" + pids.map { String(format: "F4%02X", $0) }.joined()
+            : "01" + pids.map { String(format: "%02X", $0) }.joined()
+    }
+
+    /// The values out of a reply in that form.
+    func parse(_ raw: String, lengths: [Int: Int] = pidLength) -> [Int: [Int]] {
+        let hex = OBDParse.cleanFrames(raw)
+        return uds ? OBDParse.udsPids(hex, lengths: lengths)
+                   : OBDParse.pids(hex, lengths: lengths)
+    }
     /// What the adapter said instead of the car's reply -- "UNABLE TO
     /// CONNECT", "NO DATA", "CAN ERROR"... -- shown with "no reply from car".
     public private(set) var lastCarReply = ""
@@ -172,6 +196,7 @@ public final class OBDTelemetry {
     // ------------------------------------------------------------ commands
     @discardableResult
     func command(_ s: String, _ timeout: TimeInterval) -> String {
+        (link as? FlushableLink)?.flushInput()
         do {
             try link.write(s)
         } catch {
@@ -206,25 +231,8 @@ public final class OBDTelemetry {
                   "ATAT1"] {    // adaptive timing: back off only when needed
             command(c, 1.5)
         }
-        // ISO 15765-4 CAN 11-bit / 500 kbaud is what every MQB-platform VAG car
-        // speaks -- but the CAR is the authority, and some clones will not
-        // talk on a protocol they were told rather than found (Leo's BLE
-        // dongle, 2026-10-11: "UNABLE TO CONNECT" to every request on "6",
-        // while Car Scanner, which lets the adapter search, reads the car).
-        // So: the fixed one first, and if the car does not answer the first
-        // request on it, the adapter's own search ("0"), which takes a few
-        // seconds the first time and then remembers what it found.
-        for code in (protocolCode == "0" ? ["0"] : [protocolCode, "0"]) {
-            command("ATSP" + code, 2.0)
-            let r = command("0100", code == "0" ? 15.0 : 4.0)
-            if OBDParse.pids(OBDParse.cleanFrames(r), lengths: [0x00: 4])[0x00] != nil {
-                protocolUsed = code
-                lastCarReply = ""
-                break
-            }
-            lastCarReply = OBDTelemetry.firstLine(r)
-            if status == "link lost" { return false }
-        }
+        _ = probeCar()
+        if status == "link lost" { return false }
         adapterID = command("ATI", 1.5).split(separator: "\r")
             .joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         protocolName = command("ATDP", 2.0).split(separator: "\r")
@@ -235,12 +243,57 @@ public final class OBDTelemetry {
         return true
     }
 
+    /// Find a way to the car's engine control unit, cheapest first.
+    ///
+    /// 1. The generic OBD broadcast (7DF, mode 01) on CAN 11-bit/500k -- what
+    ///    any OBD-II car answers.
+    /// 2. The engine ECU's OWN address (7E0, answers on 7E8), mode 01.  A
+    ///    VW-group MQB Evo (Golf 8, A3 8Y, Octavia 4...) gateway refuses the
+    ///    broadcast: Leo's A3, 2026-10-11, got "UNABLE TO CONNECT" in 0.15 s
+    ///    -- the bus awake and acknowledging, nobody answering -- and Car
+    ///    Scanner only reads it once told "MQB Evo, EA211 1.4/1.5".
+    /// 3. The same address in UDS (22 F4xx, ISO 27145's mirror of mode 01),
+    ///    for a unit that has dropped the old service.
+    /// 4. The adapter's own protocol search, slow, for anything else.
+    func probeCar() -> Bool {
+        func answers0100(_ r: String) -> Bool {
+            lastCarReply = OBDTelemetry.firstLine(r)
+            return OBDParse.pids(OBDParse.cleanFrames(r), lengths: [0x00: 4])[0x00] != nil
+        }
+        uds = false
+        command("ATSP" + (protocolCode == "0" ? "6" : protocolCode), 2.0)
+        command("ATSH7DF", 1.5)                 // the broadcast address
+        if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, broadcast"; return true }
+        if status == "link lost" { return false }
+
+        command("ATSH7E0", 1.5)                 // the engine ECU itself
+        command("ATFCSH7E0", 1.5)               // ...and its flow control
+        if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, engine ECU 7E0"; return true }
+        let u = command("22F400", 4.0)
+        lastCarReply = OBDTelemetry.firstLine(u)
+        if OBDParse.udsPids(OBDParse.cleanFrames(u), lengths: [0x00: 4])[0x00] != nil {
+            uds = true
+            protocolUsed = "CAN, engine ECU 7E0, UDS"
+            return true
+        }
+        if status == "link lost" { return false }
+
+        command("ATSH7DF", 1.5)
+        command("ATSP0", 2.0)                   // let the adapter search
+        if answers0100(command("0100", 15.0)) { protocolUsed = "adapter's search"; return true }
+        // nothing answered (ignition off?).  Leave it on the engine ECU's own
+        // address, the likeliest on a VW-group car; polling re-probes.
+        command("ATSP6", 2.0)
+        command("ATSH7E0", 1.5)
+        protocolUsed = ""
+        return false
+    }
+
     /// Read the car's own supported-PID bitmasks, then pick our channels.
     func discover() {
         var sup = Set<Int>()
-        for (base, req) in [(0x00, "0100"), (0x20, "0120"), (0x40, "0140")] {
-            let got = OBDParse.pids(OBDParse.cleanFrames(command(req, 2.0)),
-                                    lengths: [base: 4])
+        for base in [0x00, 0x20, 0x40] {
+            let got = parse(command(request([base]), 2.0), lengths: [base: 4])
             guard let data = got[base] else { break }
             sup.formUnion(OBDParse.supported(data, base: base))
             if !sup.contains(base + 0x20) { break }   // no continuation bit
@@ -252,8 +305,7 @@ public final class OBDTelemetry {
         speedValid = supported.contains(pidSpeed)
 
         if supported.contains(pidBaro) {        // ambient reference for boost
-            let got = OBDParse.pids(OBDParse.cleanFrames(
-                command(String(format: "01%02X", pidBaro), 1.5)))
+            let got = parse(command(request([pidBaro]), 1.5))
             if let v = got[pidBaro]?.first { baroKPa = Double(v) }
         }
         pollPIDs = [pidRPM]
@@ -263,9 +315,7 @@ public final class OBDTelemetry {
         }
         // A multi-PID request answers every channel in ONE round trip.  Cheap
         // clones reject it, so it is tried rather than assumed.
-        let probe = "01" + pollPIDs.map { String(format: "%02X", $0) }.joined()
-        multiPID = OBDParse.pids(OBDParse.cleanFrames(command(probe, 2.0))).count
-            >= pollPIDs.count
+        multiPID = parse(command(request(pollPIDs), 2.0)).count >= pollPIDs.count
     }
 
     // ------------------------------------------------------------ polling
@@ -294,13 +344,13 @@ public final class OBDTelemetry {
         let t0 = Date().timeIntervalSinceReferenceDate
         let req: String
         if multiPID {
-            req = "01" + pollPIDs.map { String(format: "%02X", $0) }.joined()
+            req = request(pollPIDs)
         } else {
-            req = String(format: "01%02X", pollPIDs[roundRobin % pollPIDs.count])
+            req = request([pollPIDs[roundRobin % pollPIDs.count]])
             roundRobin += 1
         }
-        let raw = command(req, protocolUsed.isEmpty ? 6.0 : 1.0)
-        let got = OBDParse.pids(OBDParse.cleanFrames(raw))
+        let raw = command(req, protocolUsed.isEmpty ? 3.0 : 1.0)
+        let got = parse(raw)
         let t1 = Date().timeIntervalSinceReferenceDate
         guard !got.isEmpty else {
             silent += 1
@@ -308,6 +358,13 @@ public final class OBDTelemetry {
             if silent >= 8 && (status == "live" || status.hasPrefix("no reply")) {
                 status = "no reply from car"
                     + (lastCarReply.isEmpty ? "" : ": " + lastCarReply)
+            }
+            // the car may have woken up (ignition on) since the last probe:
+            // look for the way in again every 15 silent polls
+            if silent % 15 == 0 && probeCar() {
+                discover()
+                silent = 0
+                status = "live"
             }
             return
         }

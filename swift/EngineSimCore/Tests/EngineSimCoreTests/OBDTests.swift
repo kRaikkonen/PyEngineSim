@@ -196,4 +196,23 @@ final class OBDTests: XCTestCase {
         XCTAssertEqual(sd.shifts, 2, "the lift-off must NOT count as a shift")
         XCTAssertGreaterThan(fired, 0)
     }
+    /// UDS ReadDataByIdentifier replies (the engine ECU's own address on a
+    /// VW-group MQB Evo car) feed the same channels as mode 01.
+    func testUDSRepliesParse() {
+        // rpm 0x0BB8 / 4 = 750
+        let one = OBDParse.udsPids(OBDParse.cleanFrames("62F40C0BB8\r\r>"))
+        XCTAssertEqual(one[0x0C], [0x0B, 0xB8])
+        // several DIDs in one reply, with spaces as some adapters send them
+        let many = OBDParse.udsPids(OBDParse.cleanFrames("62 F4 0C 1A F8 F4 0D 32 F4 49 40"))
+        XCTAssertEqual(many[0x0C], [0x1A, 0xF8])
+        XCTAssertEqual(many[0x0D], [0x32])
+        XCTAssertEqual(many[0x49], [0x40])
+        // a refusal (7F 22 31: request out of range) is no data, not garbage
+        XCTAssertTrue(OBDParse.udsPids(OBDParse.cleanFrames("7F2231")).isEmpty)
+        // the supported-PID bitmask through UDS
+        let mask = OBDParse.udsPids(OBDParse.cleanFrames("62F400BE3FA813"),
+                                    lengths: [0x00: 4])
+        XCTAssertEqual(mask[0x00], [0xBE, 0x3F, 0xA8, 0x13])
+    }
 }
+
