@@ -37,6 +37,9 @@ public protocol OBDLink: AnyObject {
     func close()
 }
 
+/// A link an ATZ (full chip reboot) would drop: the BLE ones.
+public protocol ResetSensitiveLink {}
+
 #if canImport(Network)
 /// A WiFi ELM327 -- a raw TCP socket, no third-party dependency.
 public final class TCPLink: OBDLink {
@@ -141,6 +144,9 @@ public final class OBDTelemetry {
     var dRPM = 0.0
     var lastRPMTime: TimeInterval = 0
     var lastPacket: TimeInterval = 0
+    /// Polls in a row that got nothing back: the adapter is there, the car
+    /// is not answering (engine control unit asleep, ignition off).
+    var silent = 0
     var thread: Thread?
     var running = false
     public var pollInterval = 1.0 / 50.0
@@ -153,7 +159,15 @@ public final class OBDTelemetry {
     // ------------------------------------------------------------ commands
     @discardableResult
     func command(_ s: String, _ timeout: TimeInterval) -> String {
-        try? link.write(s)
+        do {
+            try link.write(s)
+        } catch {
+            // the link itself is gone (a BLE drop): say so and stop polling,
+            // so the app can reconnect instead of polling a dead socket
+            status = "link lost"
+            running = false
+            return ""
+        }
         return link.readPrompt(timeout)
     }
 
@@ -164,7 +178,14 @@ public final class OBDTelemetry {
         // the difference between live telemetry and telemetry one command
         // behind, which looks like lag and is actually an off-by-one.
         _ = link.readPrompt(0.4)
-        command("ATZ", 4.0)                     // reset; the chip reboots
+        // ATZ reboots the chip -- and on a BLE clone whose radio shares that
+        // chip it reboots the RADIO, dropping the link it arrived on.  ATD
+        // (defaults, no reboot) clears the same settings there.
+        if link is ResetSensitiveLink {
+            command("ATD", 2.0)
+        } else {
+            command("ATZ", 4.0)                 // reset; the chip reboots
+        }
         for c in ["ATE0",       // echo off, or every reply arrives doubled
                   "ATL0",       // no linefeeds
                   "ATS0",       // no spaces: shorter frames, less parsing
@@ -181,6 +202,7 @@ public final class OBDTelemetry {
         protocolName = command("ATDP", 2.0).split(separator: "\r")
             .joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         discover()
+        guard status != "link lost" else { return false }
         status = "live"
         return true
     }
@@ -251,7 +273,13 @@ public final class OBDTelemetry {
         }
         let got = OBDParse.pids(OBDParse.cleanFrames(command(req, 1.0)))
         let t1 = Date().timeIntervalSinceReferenceDate
-        guard !got.isEmpty else { return }
+        guard !got.isEmpty else {
+            silent += 1
+            if silent >= 8 && status == "live" { status = "no reply from car" }
+            return
+        }
+        silent = 0
+        if status == "no reply from car" { status = "live" }
         rtt += ((t1 - t0) - rtt) * 0.2
         if lastPacket > 0 {
             let dt = max(t1 - lastPacket, 1e-3)

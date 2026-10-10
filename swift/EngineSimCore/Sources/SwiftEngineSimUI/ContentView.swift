@@ -616,6 +616,19 @@ public struct ContentView: View {
                 }
                 Spacer()
             }
+            HStack(alignment: .top) {
+                Toggle("stay on LIVE", isOn: Binding(get: { model.stayLive },
+                                                     set: { model.setStayLive($0) }))
+                    .labelsHidden()
+                Text("if the dongle will not connect or drops, stay on LIVE and "
+                     + "keep retrying instead of falling back to demo")
+                    .font(.caption2).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let e = model.errorText {
+                Text(e).font(.caption2).foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if model.linkKind == "ble" {
                 HStack {
                     Text(model.bleDeviceName.isEmpty ? "no dongle picked"
@@ -656,6 +669,18 @@ public struct ContentView: View {
                      + "be a BLE one.")
                     .font(.system(size: 10)).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if !model.linkLog.isEmpty {
+                    HStack {
+                        Text("link log").font(.caption2).foregroundColor(.secondary)
+                        Spacer()
+                        Button("copy") { model.copyLinkLog() }.font(.caption2)
+                    }
+                    Text(model.linkLog.suffix(16).joined(separator: "\n"))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
             } else {
                 Text("dongle at \(model.host):\(String(model.port))")
                     .font(.caption2).foregroundColor(.secondary)

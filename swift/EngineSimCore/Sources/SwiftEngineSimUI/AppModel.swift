@@ -11,6 +11,9 @@
 import Foundation
 import Combine
 import EngineSimCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 public final class AppModel: ObservableObject {
@@ -55,6 +58,14 @@ public final class AppModel: ObservableObject {
     @Published public var linkKind = "ble"
     @Published public var bleFound: [BLEDevice] = []
     @Published public var scanning = false
+    /// A link that will not open, or drops, keeps the app on LIVE and is
+    /// retried every few seconds instead of falling back to demo (Leo:
+    /// "做一个防止连接不成功就跳过demo的设置").
+    @Published public var stayLive = true
+    /// The BLE link's own log, newest last, for reading a failure in the car.
+    @Published public var linkLog: [String] = []
+    var retryTask: Task<Void, Never>?
+    var lastLogPull = 0.0
     public var bleDeviceName = ""
     var bleDeviceID = ""
     /// What the audio session actually handed over, which is not always what
@@ -146,6 +157,7 @@ public final class AppModel: ObservableObject {
             linkKind = saved.linkKind
             bleDeviceID = saved.bleDeviceID
             bleDeviceName = saved.bleDeviceName
+            stayLive = saved.stayLive
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
@@ -236,6 +248,25 @@ public final class AppModel: ObservableObject {
         engineName = s.engine
         if let a = audio { renderLoad = a.renderLoad; underruns = a.underruns }
         syncRangeFromMap()
+        if source == .live && obd == nil {
+            linkState = retryTask != nil ? "retrying" : "connecting"
+        }
+        // a link that dropped while polling: reconnect (or demo, if asked)
+        if source == .live, let o = obd, o.status == "link lost" {
+            o.stop()
+            obd = nil
+            car.telemetry = nil
+            linkFailed("the dongle dropped the link")
+        }
+        if now - lastLogPull > 0.5 {
+            lastLogPull = now
+            #if canImport(CoreBluetooth)
+            if let b = ble {
+                let l = b.log
+                if l != linkLog { linkLog = l }
+            }
+            #endif
+        }
     }
 
     // ---------------------------------------------------------------- edits
@@ -350,6 +381,7 @@ public final class AppModel: ObservableObject {
         s.linkKind = linkKind
         s.bleDeviceID = bleDeviceID
         s.bleDeviceName = bleDeviceName
+        s.stayLive = stayLive
         s.showBay = showBay
         s.bayTimeScale = bayTimeScale
         s.eqLow = eqLow; s.eqMid = eqMid
@@ -375,6 +407,7 @@ public final class AppModel: ObservableObject {
         linkKind = s.linkKind
         bleDeviceID = s.bleDeviceID
         bleDeviceName = s.bleDeviceName
+        stayLive = s.stayLive
         showBay = s.showBay
         bayTimeScale = s.bayTimeScale
         eqLow = s.eqLow; eqMid = s.eqMid
@@ -424,7 +457,10 @@ public final class AppModel: ObservableObject {
 
     public func setSource(_ s: Source) {
         source = s
-        if s != .live { obd?.stop(); obd = nil }
+        if s != .live {
+            obd?.stop(); obd = nil
+            retryTask?.cancel(); retryTask = nil
+        }
         switch s {
         case .demo:
             makePedal()
@@ -545,6 +581,43 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    public func setStayLive(_ on: Bool) {
+        stayLive = on
+        persist()
+    }
+
+    /// A link that would not open, or dropped.  Demo -- unless the listener
+    /// asked to stay live: then the engine idles on LIVE and the link is tried
+    /// again in three seconds, for as long as it takes.
+    func linkFailed(_ why: String) {
+        guard stayLive else {
+            errorText = why
+            linkState = "offline"
+            setSource(.demo)
+            return
+        }
+        errorText = why + " -- retrying"
+        if source != .live {
+            source = .live
+            pedalSource = nil
+            car?.telemetry = nil         // idles while it waits
+            persist()
+        }
+        retryTask?.cancel()
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, !Task.isCancelled, self.source == .live,
+                  self.obd == nil else { return }
+            self.connect()
+        }
+    }
+
+    public func copyLinkLog() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = linkLog.joined(separator: "\n")
+        #endif
+    }
+
     public func setLinkKind(_ k: String) {
         linkKind = k
         persist()
@@ -617,18 +690,14 @@ public final class AppModel: ObservableObject {
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live
+                    self.retryTask = nil
+                    self.errorText = nil
                 }
                 t.start()
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    self.errorText = error.localizedDescription
-                    self.linkState = "offline"
-                    // a link that will not open falls back to the sliders
-                    // rather than leaving the app with no source at all
-                    // a link that will not open falls back to demo rather
-                    // than leaving the app with no source at all
-                    self.setSource(.demo)
+                    self.linkFailed(error.localizedDescription)
                 }
             }
         }
@@ -660,14 +729,14 @@ public final class AppModel: ObservableObject {
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live
+                    self.retryTask = nil
+                    self.errorText = nil
                 }
                 t.start()
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    self.errorText = error.localizedDescription
-                    self.linkState = "offline"
-                    self.setSource(.demo)
+                    self.linkFailed(error.localizedDescription)
                 }
             }
         }

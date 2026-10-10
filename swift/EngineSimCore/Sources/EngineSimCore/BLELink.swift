@@ -65,7 +65,7 @@ private let obdNameHints = ["OBD", "ELM", "VGATE", "ICAR", "VEEPEAK", "LELINK",
                             "VLINK", "V-LINK", "OBDII", "KONNWEI", "CARISTA",
                             "VIECAR", "BLUEDRIVER", "IOS-", "SCAN", "CAR"]
 
-public final class BLELink: NSObject, OBDLink {
+public final class BLELink: NSObject, OBDLink, ResetSensitiveLink {
     /// What a scan found, for a picker.
     public struct Found: Identifiable, Equatable {
         public let id: UUID
@@ -97,6 +97,30 @@ public final class BLELink: NSObject, OBDLink {
 
     public private(set) var deviceName = ""
     public private(set) var failure: String?
+
+    /// What happened on the link, newest last -- radio state, what the dongle
+    /// offered and what was picked, every command and reply, every drop.  On
+    /// screen, so a failure in a running car can be READ instead of guessed.
+    private var logLines: [String] = []
+    private let logLock = NSLock()
+    private let t0 = Date()
+    public var log: [String] {
+        logLock.lock(); defer { logLock.unlock() }
+        return logLines
+    }
+    func note(_ s: String) {
+        let line = String(format: "%6.2f ", Date().timeIntervalSince(t0)) + s
+        logLock.lock()
+        logLines.append(line)
+        if logLines.count > 120 { logLines.removeFirst(logLines.count - 120) }
+        logLock.unlock()
+    }
+    /// Short and printable: replies carry CRs and the odd control byte.
+    static func show(_ s: String) -> String {
+        let t = s.replacingOccurrences(of: "\r", with: "|")
+            .replacingOccurrences(of: "\n", with: "")
+        return t.count > 70 ? String(t.prefix(70)) + "..." : t
+    }
 
     override public init() {
         super.init()
@@ -200,12 +224,15 @@ public final class BLELink: NSObject, OBDLink {
             // only an unknown one has to be found by scanning first
             if let p = self.central.retrievePeripherals(withIdentifiers: [id]).first {
                 self.central.stopScan()
+                self.note("connect " + (p.name ?? "?") + " (known device)")
                 self.attach(p, name: p.name ?? "")
             } else {
+                self.note("connect: scanning for it")
                 self.central.scanForPeripherals(withServices: nil, options: nil)
             }
         }
         guard done.wait(timeout: .now() + timeout) == .success, ready else {
+            note("connect FAILED: " + (failure ?? "no answer in \(Int(timeout)) s"))
             queue.sync {
                 self.central.stopScan()
                 if let p = self.peripheral, !self.ready {
@@ -235,6 +262,7 @@ public final class BLELink: NSObject, OBDLink {
                 NSLocalizedDescriptionKey: failure ?? "not connected"])
         }
         let data = Data((s + "\r").utf8)
+        note("> " + s)
         // withoutResponse where the dongle allows it: an ELM327 is a stream of
         // short commands and waiting for an ack on each one halves the rate
         let mode: CBCharacteristicWriteType =
@@ -260,7 +288,9 @@ public final class BLELink: NSObject, OBDLink {
                 let out = buffer[..<i]
                 buffer.removeSubrange(...i)
                 lock.unlock()
-                return String(decoding: out, as: UTF8.self)
+                let r = String(decoding: out, as: UTF8.self)
+                note("< " + BLELink.show(r))
+                return r
             }
             lock.unlock()
             usleep(2000)
@@ -269,6 +299,8 @@ public final class BLELink: NSObject, OBDLink {
         let out = String(decoding: buffer, as: UTF8.self)
         buffer.removeAll()
         lock.unlock()
+        note("< (no prompt in " + String(format: "%.1f", timeout) + " s) "
+             + BLELink.show(out))
         return out
     }
 
@@ -286,6 +318,10 @@ public final class BLELink: NSObject, OBDLink {
 
 extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
     public func centralManagerDidUpdateState(_ c: CBCentralManager) {
+        let names: [CBManagerState: String] = [
+            .unknown: "unknown", .resetting: "resetting", .unsupported: "unsupported",
+            .unauthorized: "NOT ALLOWED", .poweredOff: "off", .poweredOn: "on"]
+        note("bluetooth " + (names[c.state] ?? "?"))
         stateChanged.signal()
     }
 
@@ -328,6 +364,7 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     public func centralManager(_ c: CBCentralManager,
                                didConnect p: CBPeripheral) {
+        note("connected; discovering services")
         p.discoverServices(nil)
     }
 
@@ -335,6 +372,7 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
                                didFailToConnect p: CBPeripheral,
                                error: Error?) {
         failure = error?.localizedDescription ?? "could not connect"
+        note("connect refused: " + (failure ?? ""))
         connected.signal()
     }
 
@@ -346,11 +384,15 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
         ready = false
         failure = "the dongle disconnected"
             + (error.map { " (\($0.localizedDescription))" } ?? "")
+        note("DISCONNECTED" + (error.map { ": " + $0.localizedDescription } ?? ""))
         if !wasReady { connected.signal() }
     }
 
     public func peripheral(_ p: CBPeripheral,
                            didDiscoverServices error: Error?) {
+        note("services: " + (p.services ?? []).map { $0.uuid.uuidString }
+                .joined(separator: " ")
+             + (error.map { " (error " + $0.localizedDescription + ")" } ?? ""))
         let all = (p.services ?? []).filter { !genericServiceUUIDs.contains($0.uuid) }
         if all.isEmpty {
             failure = "this device has no data service -- not an OBD dongle?"
@@ -370,6 +412,18 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
         // a dongle nobody has seen before.  A known OBD service wins over any
         // other that happens to have the same shape.
         let chars = service.characteristics ?? []
+        func props(_ c: CBCharacteristic) -> String {
+            var t = ""
+            if c.properties.contains(.read) { t += "r" }
+            if c.properties.contains(.write) { t += "w" }
+            if c.properties.contains(.writeWithoutResponse) { t += "W" }
+            if c.properties.contains(.notify) { t += "n" }
+            if c.properties.contains(.indicate) { t += "i" }
+            return t
+        }
+        note("  " + service.uuid.uuidString + ": "
+             + chars.map { $0.uuid.uuidString + "[" + props($0) + "]" }
+                .joined(separator: " "))
         let w = chars.first { $0.properties.contains(.writeWithoutResponse)
                               || $0.properties.contains(.write) }
         let n = chars.first { $0.properties.contains(.notify)
@@ -381,6 +435,8 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
         writeChar = w
         notifyChar = n
         chosenPreferred = preferred
+        note("using " + service.uuid.uuidString + ": write " + w.uuid.uuidString
+             + ", notify " + n.uuid.uuidString)
         p.setNotifyValue(true, for: n)
     }
 
@@ -390,10 +446,12 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard ch == notifyChar else { return }
         if let error {
             failure = "the dongle refused notifications: \(error.localizedDescription)"
+            note(failure ?? "")
             connected.signal()
             return
         }
         if ch.isNotifying && !ready {
+            note("notifications on -- ready")
             ready = true
             connected.signal()
         }

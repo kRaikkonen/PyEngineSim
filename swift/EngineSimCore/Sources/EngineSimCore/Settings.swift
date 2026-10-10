@@ -44,6 +44,9 @@ public struct Settings: Codable, Equatable {
     public var bleDeviceName = ""
     /// wifi | ble.  Two completely different radios; only one is plugged in.
     public var linkKind = "ble"
+    /// When the link will not open or drops: stay on LIVE and retry, rather
+    /// than falling back to demo (Leo, 2026-10-11).  On by default.
+    public var stayLive = true
     public var carIdle = 760.0
     public var carRedline = 6500.0
     /// Whether the rev range keeps learning from the car.  Set by hand once
@@ -103,6 +106,7 @@ public struct Settings: Codable, Equatable {
         bleDeviceID = str(.bleDeviceID, "")
         bleDeviceName = str(.bleDeviceName, "")
         linkKind = str(.linkKind, "ble")
+        stayLive = bul(.stayLive, true)
         carIdle = dbl(.carIdle, 760.0)
         carRedline = dbl(.carRedline, 6500.0)
         learnRange = bul(.learnRange, true)
@@ -116,7 +120,7 @@ public struct Settings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
-        case host, port, bleDeviceID, bleDeviceName, linkKind
+        case host, port, bleDeviceID, bleDeviceName, linkKind, stayLive
         case carIdle, carRedline, learnRange, showBay, bayTimeScale
         case eqLow, eqMid, eqHigh, eqPresence
     }
