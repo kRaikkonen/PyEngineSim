@@ -130,6 +130,19 @@ public final class OBDTelemetry {
     public private(set) var hz = 0.0           // achieved sample rate
     public private(set) var adapterID = ""
     public private(set) var protocolName = ""
+    /// The protocol the car answered on ("6" fixed, "0" the adapter's search;
+    /// empty if it has not answered yet).
+    public private(set) var protocolUsed = ""
+    /// What the adapter said instead of the car's reply -- "UNABLE TO
+    /// CONNECT", "NO DATA", "CAN ERROR"... -- shown with "no reply from car".
+    public private(set) var lastCarReply = ""
+
+    static func firstLine(_ r: String) -> String {
+        let t = r.split(whereSeparator: { $0 == "\r" || $0 == "\n" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && $0 != "SEARCHING..." } ?? ""
+        return t.count > 40 ? String(t.prefix(40)) : t
+    }
     public private(set) var status = "idle"
     public private(set) var error: String?
 
@@ -194,9 +207,24 @@ public final class OBDTelemetry {
             command(c, 1.5)
         }
         // ISO 15765-4 CAN 11-bit / 500 kbaud is what every MQB-platform VAG car
-        // speaks.  Protocol "0" lets the adapter hunt instead, at the cost of a
-        // slow first request.
-        command("ATSP" + protocolCode, 2.0)
+        // speaks -- but the CAR is the authority, and some clones will not
+        // talk on a protocol they were told rather than found (Leo's BLE
+        // dongle, 2026-10-11: "UNABLE TO CONNECT" to every request on "6",
+        // while Car Scanner, which lets the adapter search, reads the car).
+        // So: the fixed one first, and if the car does not answer the first
+        // request on it, the adapter's own search ("0"), which takes a few
+        // seconds the first time and then remembers what it found.
+        for code in (protocolCode == "0" ? ["0"] : [protocolCode, "0"]) {
+            command("ATSP" + code, 2.0)
+            let r = command("0100", code == "0" ? 15.0 : 4.0)
+            if OBDParse.pids(OBDParse.cleanFrames(r), lengths: [0x00: 4])[0x00] != nil {
+                protocolUsed = code
+                lastCarReply = ""
+                break
+            }
+            lastCarReply = OBDTelemetry.firstLine(r)
+            if status == "link lost" { return false }
+        }
         adapterID = command("ATI", 1.5).split(separator: "\r")
             .joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         protocolName = command("ATDP", 2.0).split(separator: "\r")
@@ -271,15 +299,21 @@ public final class OBDTelemetry {
             req = String(format: "01%02X", pollPIDs[roundRobin % pollPIDs.count])
             roundRobin += 1
         }
-        let got = OBDParse.pids(OBDParse.cleanFrames(command(req, 1.0)))
+        let raw = command(req, protocolUsed.isEmpty ? 6.0 : 1.0)
+        let got = OBDParse.pids(OBDParse.cleanFrames(raw))
         let t1 = Date().timeIntervalSinceReferenceDate
         guard !got.isEmpty else {
             silent += 1
-            if silent >= 8 && status == "live" { status = "no reply from car" }
+            lastCarReply = OBDTelemetry.firstLine(raw)
+            if silent >= 8 && (status == "live" || status.hasPrefix("no reply")) {
+                status = "no reply from car"
+                    + (lastCarReply.isEmpty ? "" : ": " + lastCarReply)
+            }
             return
         }
         silent = 0
-        if status == "no reply from car" { status = "live" }
+        if protocolUsed.isEmpty { protocolUsed = "?" }
+        if status.hasPrefix("no reply") { status = "live" }
         rtt += ((t1 - t0) - rtt) * 0.2
         if lastPacket > 0 {
             let dt = max(t1 - lastPacket, 1e-3)
