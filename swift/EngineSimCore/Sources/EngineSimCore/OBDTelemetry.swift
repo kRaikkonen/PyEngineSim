@@ -160,6 +160,28 @@ public final class OBDTelemetry {
     /// What the adapter said instead of the car's reply -- "UNABLE TO
     /// CONNECT", "NO DATA", "CAN ERROR"... -- shown with "no reply from car".
     public private(set) var lastCarReply = ""
+    /// The OBD port's supply as the adapter measures it (ATRV), volts; 0 if
+    /// unread.  The one objective answer to "is the engine running": ~12.0-
+    /// 12.7 V on the battery alone, ~13.5-14.7 V with the alternator charging.
+    public private(set) var batteryVolts = 0.0
+
+    func readVolts() {
+        let r = command("ATRV", 1.5).uppercased()
+        let num = r.filter { $0.isNumber || $0 == "." }
+        if let v = Double(num), v > 5, v < 20 { batteryVolts = v }
+    }
+
+    /// "no reply from car", with what the adapter said and what the voltage
+    /// says about the engine.
+    func noReplyStatus() -> String {
+        var t = "no reply from car"
+        if !lastCarReply.isEmpty { t += ": " + lastCarReply }
+        if batteryVolts > 0 {
+            t += String(format: " (%.1f V", batteryVolts)
+            t += batteryVolts < 13.2 ? " -- engine OFF?)" : " -- engine running)"
+        }
+        return t
+    }
 
     static func firstLine(_ r: String) -> String {
         let t = r.split(whereSeparator: { $0 == "\r" || $0 == "\n" })
@@ -231,6 +253,7 @@ public final class OBDTelemetry {
                   "ATAT1"] {    // adaptive timing: back off only when needed
             command(c, 1.5)
         }
+        readVolts()
         _ = probeCar()
         if status == "link lost" { return false }
         adapterID = command("ATI", 1.5).split(separator: "\r")
@@ -356,11 +379,11 @@ public final class OBDTelemetry {
             silent += 1
             lastCarReply = OBDTelemetry.firstLine(raw)
             if silent >= 8 && (status == "live" || status.hasPrefix("no reply")) {
-                status = "no reply from car"
-                    + (lastCarReply.isEmpty ? "" : ": " + lastCarReply)
+                status = noReplyStatus()
             }
             // the car may have woken up (ignition on) since the last probe:
             // look for the way in again every 15 silent polls
+            if silent % 15 == 0 { readVolts() }
             if silent % 15 == 0 && probeCar() {
                 discover()
                 silent = 0
