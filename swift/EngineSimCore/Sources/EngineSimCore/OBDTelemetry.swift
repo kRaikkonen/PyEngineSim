@@ -385,7 +385,14 @@ public final class OBDTelemetry {
         if multiPID {
             req = request(pollPIDs)
         } else {
-            req = request([pollPIDs[roundRobin % pollPIDs.count]])
+            // rpm is the one that matters (Leo: "我他妈只要你能读取rpm就够了"):
+            // every other request is rpm, the rest take turns in between
+            let others = pollPIDs.filter { $0 != pidRPM }
+            if roundRobin % 2 == 0 || others.isEmpty {
+                req = request([pidRPM])
+            } else {
+                req = request([others[(roundRobin / 2) % others.count]])
+            }
             roundRobin += 1
         }
         let raw = command(req, protocolUsed.isEmpty ? 3.0 : 1.0)
