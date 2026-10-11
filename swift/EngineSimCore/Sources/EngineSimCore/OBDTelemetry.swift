@@ -239,14 +239,12 @@ public final class OBDTelemetry {
         // the difference between live telemetry and telemetry one command
         // behind, which looks like lag and is actually an off-by-one.
         _ = link.readPrompt(0.4)
-        // ATZ reboots the chip -- and on a BLE clone whose radio shares that
-        // chip it reboots the RADIO, dropping the link it arrived on.  ATD
-        // (defaults, no reboot) clears the same settings there.
-        if link is ResetSensitiveLink {
-            command("ATD", 2.0)
-        } else {
-            command("ATZ", 4.0)                 // reset; the chip reboots
-        }
+        // ATZ: the full reset every app opens with.  (ATD was tried in its
+        // place on BLE, on the guess that ATZ would drop the radio; Leo's
+        // clone keeps its radio through a reset, and with ATD the car never
+        // answered while Car Scanner -- ATZ -- reads it.)
+        command("ATZ", 4.0)                     // reset; the chip reboots
+        _ = link.readPrompt(0.5)                // a clone may print its banner twice
         for c in ["ATE0",       // echo off, or every reply arrives doubled
                   "ATL0",       // no linefeeds
                   "ATS0",       // no spaces: shorter frames, less parsing

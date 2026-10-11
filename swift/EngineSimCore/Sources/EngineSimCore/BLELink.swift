@@ -434,10 +434,16 @@ extension BLELink: CBCentralManagerDelegate, CBPeripheralDelegate {
         note("  " + service.uuid.uuidString + ": "
              + chars.map { $0.uuid.uuidString + "[" + props($0) + "]" }
                 .joined(separator: " "))
-        let w = chars.first { $0.properties.contains(.writeWithoutResponse)
-                              || $0.properties.contains(.write) }
-        let n = chars.first { $0.properties.contains(.notify)
-                              || $0.properties.contains(.indicate) }
+        let canWrite = { (c: CBCharacteristic) in
+            c.properties.contains(.writeWithoutResponse) || c.properties.contains(.write) }
+        let canNotify = { (c: CBCharacteristic) in
+            c.properties.contains(.notify) || c.properties.contains(.indicate) }
+        let n = chars.first(where: canNotify)
+        // the dongle's own write channel if it has one (FFF2 next to FFF1, as
+        // every app uses it); the notify channel only when it is the only
+        // writable one (an FFE1-style single characteristic)
+        let w = chars.first { canWrite($0) && !canNotify($0) }
+            ?? chars.first(where: canWrite)
         guard let w, let n else { return }
         let preferred = obdServiceUUIDs.contains(service.uuid)
         if notifyChar != nil && (chosenPreferred || !preferred) { return }
