@@ -65,7 +65,8 @@ private let obdNameHints = ["OBD", "ELM", "VGATE", "ICAR", "VEEPEAK", "LELINK",
                             "VLINK", "V-LINK", "OBDII", "KONNWEI", "CARISTA",
                             "VIECAR", "BLUEDRIVER", "IOS-", "SCAN", "CAR"]
 
-public final class BLELink: NSObject, OBDLink, ResetSensitiveLink, FlushableLink {
+public final class BLELink: NSObject, OBDLink, ResetSensitiveLink, FlushableLink,
+                              LinkNotes, WriteModeSwitchable {
     /// What a scan found, for a picker.
     public struct Found: Identifiable, Equatable {
         public let id: UUID
@@ -101,20 +102,37 @@ public final class BLELink: NSObject, OBDLink, ResetSensitiveLink, FlushableLink
     /// What happened on the link, newest last -- radio state, what the dongle
     /// offered and what was picked, every command and reply, every drop.  On
     /// screen, so a failure in a running car can be READ instead of guessed.
+    /// The first lines (the connection and the setup: what a failure is
+    /// usually about) are KEPT; after them, the newest 150.
+    private var logHead: [String] = []
     private var logLines: [String] = []
+    private var logDropped = 0
     private let logLock = NSLock()
     private let t0 = Date()
     public var log: [String] {
         logLock.lock(); defer { logLock.unlock() }
-        return logLines
+        return logDropped > 0
+            ? logHead + ["   ... \(logDropped) lines ..."] + logLines
+            : logHead + logLines
     }
-    func note(_ s: String) {
+    public func note(_ s: String) {
         let line = String(format: "%6.2f ", Date().timeIntervalSince(t0)) + s
         logLock.lock()
-        logLines.append(line)
-        if logLines.count > 120 { logLines.removeFirst(logLines.count - 120) }
+        if logHead.count < 70 {
+            logHead.append(line)
+        } else {
+            logLines.append(line)
+            if logLines.count > 150 {
+                logLines.removeFirst(logLines.count - 150)
+                logDropped += 1
+            }
+        }
         logLock.unlock()
     }
+
+    /// Acknowledged writes (withResponse) instead of the faster unacknowledged
+    /// ones -- some bridges drop or mangle the latter.
+    public var writeWithResponse = false
     /// Short and printable: replies carry CRs and the odd control byte.
     static func show(_ s: String) -> String {
         let t = s.replacingOccurrences(of: "\r", with: "|")
@@ -265,9 +283,10 @@ public final class BLELink: NSObject, OBDLink, ResetSensitiveLink, FlushableLink
         note("> " + s)
         // withoutResponse where the dongle allows it: an ELM327 is a stream of
         // short commands and waiting for an ack on each one halves the rate
+        let canAck = c.properties.contains(.write)
         let mode: CBCharacteristicWriteType =
-            c.properties.contains(.writeWithoutResponse) ? .withoutResponse
-                                                         : .withResponse
+            (writeWithResponse && canAck) || !c.properties.contains(.writeWithoutResponse)
+            ? .withResponse : .withoutResponse
         queue.async {
             // a command longer than one ATT packet goes in pieces
             let mtu = max(p.maximumWriteValueLength(for: mode), 20)

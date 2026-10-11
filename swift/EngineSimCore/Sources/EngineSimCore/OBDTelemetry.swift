@@ -49,6 +49,16 @@ public protocol FlushableLink {
     func flushInput()
 }
 
+/// A link that keeps a readable log the telemetry can add to.
+public protocol LinkNotes {
+    func note(_ s: String)
+}
+
+/// A link whose writes can be switched to acknowledged ones.
+public protocol WriteModeSwitchable: AnyObject {
+    var writeWithResponse: Bool { get set }
+}
+
 #if canImport(Network)
 /// A WiFi ELM327 -- a raw TCP socket, no third-party dependency.
 public final class TCPLink: OBDLink {
@@ -145,11 +155,17 @@ public final class OBDTelemetry {
     /// The car answers only UDS (22 F4xx) on the engine ECU's own address.
     var uds = false
     var triedColdStart = false
+    /// Append the ELM327's "expect one reply" digit to mode-01 requests, so
+    /// it returns the moment the reply lands instead of waiting out ST.
+    var oneReply = false
+
+    func note(_ s: String) { (link as? LinkNotes)?.note("-- " + s) }
 
     /// A request for these PIDs in whatever form the car answers.
     func request(_ pids: [Int]) -> String {
         uds ? "22" + pids.map { String(format: "F4%02X", $0) }.joined()
             : "01" + pids.map { String(format: "%02X", $0) }.joined()
+              + (oneReply ? "1" : "")
     }
 
     /// The values out of a reply in that form.
@@ -255,6 +271,7 @@ public final class OBDTelemetry {
         readVolts()
         _ = probeCar()
         if status == "link lost" { return false }
+        if !protocolUsed.isEmpty { tuneTiming() }
         adapterID = command("ATI", 1.5).split(separator: "\r")
             .joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         protocolName = command("ATDP", 2.0).split(separator: "\r")
@@ -278,52 +295,80 @@ public final class OBDTelemetry {
     ///    for a unit that has dropped the old service.
     /// 4. The adapter's own protocol search, slow, for anything else.
     func probeCar() -> Bool {
-        func answers0100(_ r: String) -> Bool {
+        // Leo's A3 8Y, engine running (14.2 V at the port), 2026-10-11: every
+        // request below refused in ~60 ms -- while Car Scanner reads rpm
+        // through the same dongle.  So each variant a working app might be
+        // using is tried in turn, and the one that answers is kept and named
+        // in the log.  First the most likely: a gateway slower than this
+        // clone's timeout (Car Scanner has a setting just for "send ATST").
+        func attempt(_ name: String, _ setup: [String], _ req: String = "0100",
+                     uds u: Bool = false, timeout: TimeInterval = 4.0) -> Bool {
+            guard status != "link lost" else { return false }
+            note("try " + name)
+            for c in setup { command(c, c == "ATZ" ? 3.0 : 1.5) }
+            let r = command(req, timeout)
             lastCarReply = OBDTelemetry.firstLine(r)
-            return OBDParse.pids(OBDParse.cleanFrames(r), lengths: [0x00: 4])[0x00] != nil
-        }
-        uds = false
-        command("ATSP" + (protocolCode == "0" ? "6" : protocolCode), 2.0)
-        command("ATSH7DF", 1.5)                 // the broadcast address
-        if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, broadcast"; return true }
-        if status == "link lost" { return false }
-
-        command("ATSH7E0", 1.5)                 // the engine ECU itself
-        command("ATFCSH7E0", 1.5)               // ...and its flow control
-        if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, engine ECU 7E0"; return true }
-        let u = command("22F400", 4.0)
-        lastCarReply = OBDTelemetry.firstLine(u)
-        if OBDParse.udsPids(OBDParse.cleanFrames(u), lengths: [0x00: 4])[0x00] != nil {
-            uds = true
-            protocolUsed = "CAN, engine ECU 7E0, UDS"
+            let hex = OBDParse.cleanFrames(r)
+            let got = u ? OBDParse.udsPids(hex, lengths: [0x00: 4])
+                        : OBDParse.pids(hex, lengths: [0x00: 4])
+            guard got[0x00] != nil else { return false }
+            uds = u
+            protocolUsed = name
+            note("ANSWERED: " + name)
             return true
         }
-        if status == "link lost" { return false }
-
-        command("ATSH7DF", 1.5)
-        command("ATSP0", 2.0)                   // let the adapter search
-        if answers0100(command("0100", 15.0)) { protocolUsed = "adapter's search"; return true }
-        // Last resort, once per connection: the FULL reset every other app
-        // opens with (ATZ), then the broadcast and 7E0 again -- in case this
-        // clone's CAN side only comes up after a cold start.  Its radio is a
-        // separate chip (it survived ATD), and if the reset does drop the
-        // link, stay-on-LIVE reconnects.
+        uds = false
+        oneReply = false
+        let slow = ["ATAT0", "ATSTFF"]          // no adaptive timing, ~1 s
+        if attempt("CAN 11/500 broadcast", ["ATAT1", "ATST32", "ATSP6", "ATSH7DF"]) { return true }
+        if attempt("CAN 11/500 broadcast, 1 s timeout", slow + ["ATSP6", "ATSH7DF"]) { return true }
+        if attempt("CAN 11/500 engine ECU 7E0, 1 s", ["ATSH7E0", "ATFCSH7E0"]) { return true }
+        if attempt("CAN 11/500 engine ECU 7E0 UDS, 1 s", [], "22F400", uds: true) { return true }
+        if attempt("CAN 29/500, 1 s", ["ATSP7", "ATSHDB33F1"]) { return true }
+        if attempt("CAN 11/250, 1 s", ["ATSP8", "ATSH7DF"]) { return true }
+        if attempt("CAN 29/250, 1 s", ["ATSP9", "ATSHDB33F1"]) { return true }
+        if attempt("adapter's own search", ["ATSH7DF", "ATSP0"], timeout: 15.0) { return true }
         if !triedColdStart {
             triedColdStart = true
-            command("ATZ", 4.0)
-            for c in ["ATE0", "ATL0", "ATS0", "ATH0", "ATSP6"] { command(c, 1.5) }
-            if status == "link lost" { return false }
-            command("ATSH7DF", 1.5)
-            if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, broadcast (after ATZ)"; return true }
-            command("ATSH7E0", 1.5)
-            if answers0100(command("0100", 4.0)) { protocolUsed = "CAN, engine ECU 7E0 (after ATZ)"; return true }
+            // the plainest session an app opens: reset, echo off, search --
+            // nothing else changed from the chip's own defaults
+            if attempt("plain: ATZ, ATE0, search", ["ATZ", "ATE0", "ATSP0"], timeout: 15.0) { return true }
+            if attempt("plain: ATZ, ATE0, CAN 11/500", ["ATZ", "ATE0", "ATSP6"]) { return true }
+            // and the same with acknowledged Bluetooth writes
+            if let w = link as? WriteModeSwitchable {
+                w.writeWithResponse = true
+                note("writes now acknowledged (withResponse)")
+                if attempt("acked writes: CAN 11/500, 1 s", ["ATZ", "ATE0"] + slow + ["ATSP6", "ATSH7DF"]) { return true }
+                if attempt("acked writes: search", ["ATSP0"], timeout: 15.0) { return true }
+                w.writeWithResponse = false
+                note("writes back to unacknowledged")
+            }
+            for c in ["ATE0", "ATL0", "ATS0", "ATH0"] { command(c, 1.5) }
         }
-        // nothing answered (ignition off?).  Leave it on the engine ECU's own
-        // address, the likeliest on a VW-group car; polling re-probes.
-        command("ATSP6", 2.0)
-        command("ATSH7E0", 1.5)
+        // nothing answered: the standard broadcast, waiting long; polling
+        // re-probes every 15 silent polls
+        for c in slow + ["ATSP6", "ATSH7DF"] { command(c, 1.5) }
         protocolUsed = ""
+        note("nothing answered")
         return false
+    }
+
+    /// The probe may have needed a long timeout; polling wants it short.
+    func tuneTiming() {
+        guard !uds else { return }
+        for c in ["ATAT1", "ATST32"] { command(c, 1.5) }
+        if !parse(command(request([pidRPM]), 2.0)).isEmpty {
+            note("timing: adaptive (fast)")
+            return
+        }
+        for c in ["ATAT0", "ATSTFF"] { command(c, 1.5) }
+        oneReply = true
+        if !parse(command(request([pidRPM]), 2.0)).isEmpty {
+            note("timing: 1 s timeout + one-reply digit")
+            return
+        }
+        oneReply = false
+        note("timing: 1 s timeout")
     }
 
     /// Read the car's own supported-PID bitmasks, then pick our channels.
@@ -406,6 +451,7 @@ public final class OBDTelemetry {
             // look for the way in again every 15 silent polls
             if silent % 15 == 0 { readVolts() }
             if silent % 15 == 0 && probeCar() {
+                tuneTiming()
                 discover()
                 silent = 0
                 status = "live"
