@@ -31,6 +31,7 @@ public struct ContentView: View {
                 ignition
                 bay
                 if model.source == .demo { pedalControls }
+                if model.hasTurboMachine { turboControls }
                 engineChooser
                 slots
                 layers
@@ -753,6 +754,36 @@ public struct ContentView: View {
     // -------------------------------------------------------------- source
     // At the TOP, because it is the first decision: everything below it means
     // something different depending on which of the three is driving.
+    /// The turbo machine's blow-off hardware and its blade whistle -- the
+    /// Python app's Flutter / SSQV switches and its "Turbo blade whistle".
+    private var turboControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("turbo").font(.caption).foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                ForEach([("recirc", "recirc"), ("atmo", "SSQV"), ("none", "flutter")],
+                        id: \.0) { v, label in
+                    Button(label) { model.setTurboValve(v) }
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(model.turboValve == v
+                                    ? Color.accentColor.opacity(0.25)
+                                    : Color.secondary.opacity(0.12))
+                        .cornerRadius(7)
+                }
+            }
+            .font(.caption)
+            HStack(spacing: 8) {
+                Text("blade whistle").font(.system(size: 11))
+                    .frame(width: 86, alignment: .leading)
+                Slider(value: Binding(get: { model.bladeVol },
+                                      set: { model.setBladeVol($0) }),
+                       in: 0...2, step: 0.05)
+                Text(String(Int((model.bladeVol * 100).rounded())) + "%")
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(width: 44, alignment: .trailing)
+            }
+        }
+    }
+
     private var sourceSwitch: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {

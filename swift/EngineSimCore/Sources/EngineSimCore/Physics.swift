@@ -114,6 +114,10 @@ public final class EnginePhysics {
     public var blip: Double = 0
     public var fuelCut: Bool = false
     public var coolantC: Double = 88.0
+    /// A turbo machine feeds the plate: the manifold is fed from its plenum
+    /// whatever it holds -- a big turbo off boost holds a slight vacuum
+    /// (Simulator._map_at's fed=True).
+    public var fedByTurbo = false
     /// The blowdown pressure captured as each cylinder's exhaust valve
     /// actually opened.  Starts at ambient; the simulator updates it as
     /// cylinders fire, which is how a cut cylinder goes quiet on its own.
@@ -159,7 +163,7 @@ public final class EnginePhysics {
         let frac = MapModel.solveMapFraction(throttle: t, rpm: rpm,
                                              redline: engine.redlineRpm,
                                              ve: ve, idleArea: idleArea)
-        if boostPa > 0.0 {
+        if fedByTurbo || boostPa > 0.0 {
             // The plate draws from the COMPRESSOR OUTLET, not the atmosphere,
             // so the same orifice fraction scales the boosted upstream --
             // anchored to the WOT fraction so rated boost is preserved.

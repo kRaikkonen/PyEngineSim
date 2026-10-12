@@ -47,6 +47,8 @@ public struct Settings: Codable, Equatable {
     /// When the link will not open or drops: stay on LIVE and retry, rather
     /// than falling back to demo (Leo, 2026-10-11).  On by default.
     public var stayLive = true
+    /// The turbo's blade whistle on top of the turbo layer (blade_vol).
+    public var bladeVol = 1.0
     public var carIdle = 760.0
     public var carRedline = 6500.0
     /// Whether the rev range keeps learning from the car.  Set by hand once
@@ -107,6 +109,7 @@ public struct Settings: Codable, Equatable {
         bleDeviceName = str(.bleDeviceName, "")
         linkKind = str(.linkKind, "ble")
         stayLive = bul(.stayLive, true)
+        bladeVol = dbl(.bladeVol, 1.0)
         carIdle = dbl(.carIdle, 760.0)
         carRedline = dbl(.carRedline, 6500.0)
         learnRange = bul(.learnRange, true)
@@ -120,7 +123,7 @@ public struct Settings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
-        case host, port, bleDeviceID, bleDeviceName, linkKind, stayLive
+        case host, port, bleDeviceID, bleDeviceName, linkKind, stayLive, bladeVol
         case carIdle, carRedline, learnRange, showBay, bayTimeScale
         case eqLow, eqMid, eqHigh, eqPresence
     }

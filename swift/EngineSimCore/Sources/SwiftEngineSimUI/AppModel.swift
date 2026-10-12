@@ -62,6 +62,12 @@ public final class AppModel: ObservableObject {
     /// retried every few seconds instead of falling back to demo (Leo:
     /// "做一个防止连接不成功就跳过demo的设置").
     @Published public var stayLive = true
+    /// The turbo machine's blow-off valve: "recirc" | "atmo" (SSQV) | "none"
+    /// (it surges -- the flutter).  Back to the car's own on every car change,
+    /// as the Python app's toggles are.
+    @Published public var turboValve = "recirc"
+    @Published public private(set) var hasTurboMachine = false
+    @Published public var bladeVol = 1.0
     /// The BLE link's own log, newest last, for reading a failure in the car.
     @Published public var linkLog: [String] = []
     var retryTask: Task<Void, Never>?
@@ -158,6 +164,7 @@ public final class AppModel: ObservableObject {
             bleDeviceID = saved.bleDeviceID
             bleDeviceName = saved.bleDeviceName
             stayLive = saved.stayLive
+            bladeVol = saved.bladeVol
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
@@ -175,12 +182,18 @@ public final class AppModel: ObservableObject {
                 rpmMap: RpmMap(mode: mapMode, carIdle: saved.carIdle,
                                carRedline: saved.carRedline,
                                learn: saved.learnRange)
-            ) { engine, tables, voicing in
-                Synthesizer(engine: engine, tables: tables, voicing: voicing,
-                            sampleRate: out.renderRate, block: out.blockFrames)
+            ) { [weak self] engine, tables, voicing in
+                let sy = Synthesizer(engine: engine, tables: tables, voicing: voicing,
+                                     sampleRate: out.renderRate, block: out.blockFrames)
+                // every synth starts with the car's own blow-off valve, and
+                // the blade whistle where the listener left it
+                sy.params["blade_vol"] = self?.bladeVol ?? 1.0
+                return sy
             }
             car = mode
             mode.start()
+            turboValve = car?.synth?.turboValveDefault ?? "recirc"
+            applyTurbo()
             // The synth's own idea of how much lag is downstream: the OBD
             // extrapolation uses it to project the crank forward, so getting
             // it from the actual buffer rather than a guess is the difference
@@ -282,6 +295,27 @@ public final class AppModel: ObservableObject {
         }
         applyPops()                           // and a new synth needs re-arming
         applySustain()
+        turboValve = car?.synth?.turboValveDefault ?? "recirc"
+        applyTurbo()
+        persist()
+    }
+
+    /// The turbo controls onto the (possibly new) synth.
+    func applyTurbo() {
+        guard let sy = car?.synth else { hasTurboMachine = false; return }
+        hasTurboMachine = sy.turbo != nil
+        sy.turboValve = turboValve
+        sy.params["blade_vol"] = bladeVol
+    }
+
+    public func setTurboValve(_ v: String) {
+        turboValve = v
+        applyTurbo()
+    }
+
+    public func setBladeVol(_ v: Double) {
+        bladeVol = v
+        applyTurbo()
         persist()
     }
 
@@ -382,6 +416,7 @@ public final class AppModel: ObservableObject {
         s.bleDeviceID = bleDeviceID
         s.bleDeviceName = bleDeviceName
         s.stayLive = stayLive
+        s.bladeVol = bladeVol
         s.showBay = showBay
         s.bayTimeScale = bayTimeScale
         s.eqLow = eqLow; s.eqMid = eqMid
@@ -408,6 +443,8 @@ public final class AppModel: ObservableObject {
         bleDeviceID = s.bleDeviceID
         bleDeviceName = s.bleDeviceName
         stayLive = s.stayLive
+        bladeVol = s.bladeVol
+        applyTurbo()
         showBay = s.showBay
         bayTimeScale = s.bayTimeScale
         eqLow = s.eqLow; eqMid = s.eqMid

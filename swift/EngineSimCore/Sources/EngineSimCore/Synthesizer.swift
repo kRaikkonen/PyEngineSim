@@ -124,6 +124,32 @@ public final class Synthesizer {
     var cold = 1.0
     var lastLevelForBlowout = 0.0
 
+    // --- the turbocharger as a machine (Turbo.swift), when the car has one ---
+    /// Its compressor map, shafts, wastegate, valve and plenum, stepped every
+    /// block; its plenum IS the boost.  nil for a car without a turbo, and on
+    /// tables that do not carry the baked sizing (the frozen test fixtures).
+    public private(set) var turbo: TurboSystem?
+    var breathing: EngineBreathing?
+    /// Car mode's REAL boost (bar gauge, from the car's MAP): the machine then
+    /// FOLLOWS it -- the plenum held on it, the shafts relaxing to the speed
+    /// their compressors need -- instead of running free.
+    public var externalBoost: Double?
+    /// The turbo layer reads the combustion load the previous block left (the
+    /// AGC's gain is the master's, also the previous block's).
+    var lastCombLoad = 1.0
+    /// The machine's valve: "none" -- it surges, the JDM flutter; "atmo" -- an
+    /// atmospheric dump (SSQV); "recirc".  Defaults to the car's own.
+    public var turboValve: String {
+        get { induction.turbo.map { $0.flutter ? "none" : ($0.ssqv ? "atmo" : "recirc") }
+              ?? "recirc" }
+        set {
+            induction.turbo?.flutter = newValue == "none"
+            induction.turbo?.ssqv = newValue == "atmo"
+        }
+    }
+    /// The car's own valve hardware.
+    public var turboValveDefault: String { turbo?.spec.bov_mode ?? "recirc" }
+
     public init(engine: EnginePreset, tables: EngineTables,
                 voicing: VoicingSetup, sampleRate: Double = 32000,
                 block: Int = 256, seed: UInt64 = 1) {
@@ -168,6 +194,44 @@ public final class Synthesizer {
         for (k, v) in Synthesizer.defaultParams where params[k] == nil {
             params[k] = v
         }
+        if engine.induction == "turbo" && engine.boostBar > 0.0, let spec = tables.turbo {
+            let b = EngineBreathing(engine: engine, tables: tables, spec: spec)
+            let ts = TurboSystem(spec: spec, hooks: b)
+            breathing = b
+            turbo = ts
+            physics.fedByTurbo = true
+            muffler.turbo = ts
+            induction.turbo = TurboStage(engine: engine, ve: tables.veTable, turbo: ts,
+                                         sampleRate: sampleRate, cache: cache, rng: rng)
+        }
+    }
+
+    /// Advance the machine one block (Simulator._update_boost's turbo branch,
+    /// or set_external_boost's observer in car mode).
+    func stepTurbo(dt: Double) {
+        guard let ts = turbo, let b = breathing else { return }
+        b.coolantC = physics.coolantC
+        let thr = physics.effectiveThrottle
+        let rpm = physics.rpm
+        if let ext = externalBoost {
+            ts.follow(boostBarGauge: ext, rpm: rpm, thr: thr, dt: dt)
+        } else {
+            // an MGU-H / e-turbo motors the shaft toward the target and
+            // harvests above it (its store taken as charged)
+            var mguh = 0.0
+            if ts.eTurbo {
+                let pMax = 1000.0 * (ts.spec.mguh_kw > 0.0 ? ts.spec.mguh_kw
+                                     : 0.4 * max(engine.hybridKw, 50.0))
+                let tgt = Turbo.pAtm + engine.boostBar * 1.0e5 * thr
+                let err = (tgt - ts.air.pP) / 0.3e5
+                mguh = pMax * min(max(err, -0.5), 1.0)
+            }
+            ts.step(dt: dt, rpm: rpm, thr: thr, fuelCut: physics.fuelCut, mguhW: mguh)
+        }
+        // the plenum's gauge -- a slight vacuum off boost is real (the plate
+        // is fed from it)
+        physics.boost = max(ts.boost, -0.9)
+        b.updateHeatSoak(dt: dt, boost: physics.boost, boostBar: engine.boostBar)
     }
 
     /// Everything the mixer exposes, with the values the Python ships.
@@ -182,9 +246,12 @@ public final class Synthesizer {
         "shear": 0.10, "gear_grain": 1.0, "mech": 0.30,
         "eq_low": 0.0, "eq_mid": 0.0, "eq_high": 0.0, "presence": 0.0,
         "reverb": 0.2, "spatial_y": 0.5, "road_noise": 0.22,
-        "super_vol": 0.5, "turbo_vol": 0.5, "gearbox_vol": 0.5,
+        // the forced-induction mix as the Python ships it now: the turbo
+        // layer's sources are anchored (measured, s.17) at turbo_vol 0.40
+        // through the 0.30 spool reverb
+        "super_vol": 0.6, "turbo_vol": 0.40, "blade_vol": 1.0, "gearbox_vol": 0.375,
         "gear_mesh": 0.10, "hybrid_vol": 0.5,
-        "spool_reverb": 0.0, "gearbox_reverb": 0.0,
+        "spool_reverb": 0.30, "gearbox_reverb": 0.12,
     ]
 
     // ---------------------------------------------------------------- state
@@ -192,7 +259,8 @@ public final class Synthesizer {
     public func set(rpm: Double, throttle: Double, boost: Double? = nil) {
         physics.rpm = rpm
         physics.throttle = throttle
-        if let b = boost { physics.boost = b }
+        // a machine car's boost is its plenum's: set externalBoost to drive it
+        if let b = boost, turbo == nil { physics.boost = b }
     }
 
     public var drive = DriveState()
@@ -251,6 +319,7 @@ public final class Synthesizer {
 
     public func render(frames: Int) -> [Float] {
         let sr = sampleRate
+        stepTurbo(dt: Double(frames) / sr * timeScale)
         let rpm = physics.rpm
         let dps = physics.omega * 180.0 / Double.pi / sr * timeScale
 
@@ -392,6 +461,11 @@ public final class Synthesizer {
         var ist = InductionState()
         ist.rpm = rpm; ist.throttle = physics.throttle; ist.boost = physics.boost
         ist.degPerSample = dps; ist.drive = drive
+        if induction.turbo != nil {
+            induction.turboInput.gain = master.gain
+            induction.turboInput.combLoad = lastCombLoad
+            induction.turboInput.mapPa = physics.manifoldPressure()
+        }
         let ind = induction.process(frames: frames, state: ist, params: params)
         // hidden as a layer means "not fitted", not "passed through": the bay is
         // ADDED to the mix, it is not a filter in series
@@ -440,6 +514,7 @@ public final class Synthesizer {
         var out = master.process(sig, state: ms, params: params)
         applyToneControls(&out)
         lastLevelForBlowout = master.lastLevel
+        lastCombLoad = combLoad
         _ = combustion; _ = voiced           // taps already recorded them
         return out
     }

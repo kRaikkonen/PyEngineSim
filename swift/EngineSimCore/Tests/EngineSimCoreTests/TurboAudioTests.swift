@@ -70,6 +70,44 @@ final class TurboAudioTests: XCTestCase {
         return 10.0 * log10(max(num / den, 1e-300))
     }
 
+    /// The app's path: a Synthesizer on the SHIPPED data builds the machine,
+    /// steps it every block, and a lift with no valve makes it surge.
+    func testTheSynthRunsTheMachine() throws {
+        let lib = try EngineLibrary(presets: try shipped("presets"),
+                                    tables: try shipped("engine_tables"),
+                                    voicing: try shipped("engine_voicing"))
+        for key in ["a3", "2jzst", "veyron"] {
+            guard let eng = lib.engine(key), let tab = lib.tables(key),
+                  let voi = lib.voicing(key) else { XCTFail("\(key)"); continue }
+            let sy = Synthesizer(engine: eng, tables: tab, voicing: voi,
+                                 sampleRate: 44100, block: 512, seed: 1)
+            XCTAssertNotNil(sy.turbo, "\(key): no machine")
+            guard let ts = sy.turbo else { continue }
+            XCTAssertEqual(sy.turboValve, sy.turboValveDefault)
+            let blocks = Int(44100.0 / 512.0 * 3.0)
+            var peak = 0.0, surged = false
+            let t0 = Date()
+            for k in 0..<(2 * blocks) {
+                let pull = k < blocks
+                let x = Double(k % blocks) / Double(blocks)
+                sy.set(rpm: (pull ? 0.35 + 0.55 * x : 0.9 - 0.3 * x) * eng.redlineRpm,
+                       throttle: pull ? 1.0 : 0.0)
+                let out = sy.render(frames: 512)
+                for v in out { XCTAssertTrue(v.isFinite); if !v.isFinite { break } }
+                if pull { peak = max(peak, sy.physics.boost) }
+                if !pull && ts.units.contains(where: { $0.wC < 0 }) { surged = true }
+            }
+            let rt = Date().timeIntervalSince(t0) / 6.0
+            print(String(format: "  synth %-7@ peak boost %.2f bar (spec %.2f), surged %@, %.2f x real time",
+                         key, peak, eng.boostBar, surged ? "yes" : "no", rt))
+            XCTAssertGreaterThan(peak, 0.5 * eng.boostBar, "\(key): never spooled")
+            XCTAssertEqual(surged, ts.air.bovMode == "none", "\(key): surge iff no valve")
+            #if !DEBUG      // speed means nothing unoptimised (PerformanceTests)
+            XCTAssertLessThan(rt, 0.25, "\(key): too slow for the phone")
+            #endif
+        }
+    }
+
     func testTheTurboLayerMatchesThePython() throws {
         let cases = try fixture()
         let presets = try PresetLibrary.load(jsonData: try shipped("presets"))

@@ -132,6 +132,7 @@ public final class CarMode {
         }
         engineKey = key
         engine = e
+        boost = 0.0      // never carry a turbo car's boost into the next engine
         synth = nil
         if running { synth = makeSynth(e, t, v) }   // rebuilt, never rebound
     }
@@ -160,12 +161,24 @@ public final class CarMode {
             let target = rpmOut * 2.0 * Double.pi / 60.0
             omega += (target - omega) * min(CarMode.rpmTrack * dt, 1.0)
 
-            if engine.induction != "na" && tm.mapKPa > 0 {
-                // YOUR real boost drives the simulated compressor
+            // YOUR real boost, when the car reports its manifold (the demo
+            // pedal's MAP is its own invention, not a measurement)
+            let measured = !(tm is PedalSource) && tm.mapKPa > 0
+            if engine.induction == "na" {
+                boost = 0.0
+            } else if measured {
                 boost = max(0.0, (tm.mapKPa - tm.baroKPa) * 0.01)
             }
             if let s = synth {
-                s.set(rpm: rpmOut, throttle: throttle, boost: boost)
+                if s.turbo != nil {
+                    // the turbo MACHINE: it follows the car's real plenum
+                    // (vacuum too -- the plate is fed from it), or, with no
+                    // measurement, runs on its own from rpm and pedal
+                    s.externalBoost = measured ? (tm.mapKPa - tm.baroKPa) * 0.01 : nil
+                    s.set(rpm: rpmOut, throttle: throttle)
+                } else {
+                    s.set(rpm: rpmOut, throttle: throttle, boost: boost)
+                }
                 s.speed = tm.speedValid ? tm.speed : 0.0
                 s.drive.gear = max(tm.gear, 0)
                 s.drive.speed = s.speed
@@ -174,6 +187,7 @@ public final class CarMode {
             shifting = false
             omega += (idleOmega - omega) * min(CarMode.idleTrack * dt, 1.0)
             rpmOut = omega * 60.0 / (2.0 * Double.pi)
+            synth?.externalBoost = nil
             synth?.set(rpm: rpmOut, throttle: 0.0, boost: 0.0)
         }
         return rpmOut
@@ -192,6 +206,8 @@ public final class CarMode {
         s.gear = tm?.gear ?? 0
         s.speedKmh = (tm?.speed ?? 0) * 3.6
         if let t = tm, t.mapKPa > 0 { s.boostBar = (t.mapKPa - t.baroKPa) * 0.01 }
+        // a turbo machine's gauge is its plenum (in car mode: following yours)
+        if let syn = synth, syn.turbo != nil { s.boostBar = syn.physics.boost }
         s.hz = tm?.hz ?? 0
         s.shifting = shifting
         s.engine = engine.name

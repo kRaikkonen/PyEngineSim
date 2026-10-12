@@ -93,6 +93,9 @@ public final class MufflerStage {
     var muffDL1: BlockDelay
     var muffDL2: BlockDelay
     var xc: [ExhaustWaveguide]
+    /// The turbo machine, when the car has one: the turbine's real loading
+    /// and its wastegate's real bypass replace the boost-fraction proxies.
+    public var turbo: TurboSystem?
 
     // per-engine constants
     let whineAmt: Double
@@ -169,9 +172,17 @@ public final class MufflerStage {
         // --- turbine: the hot-side wheel smears the pulses ------------------
         // this is why a turbo car is not "NA plus a boost number"
         if eng.induction == "turbo" {
-            let bf = eng.boostBar != 0.0
+            var bf = eng.boostBar != 0.0
                 ? min(s.boost / max(eng.boostBar, 0.05), 1.0) : 0.0
             let rpmFrac = min(s.rpm / max(eng.redlineRpm, 1.0), 1.0)
+            if let tsm = turbo {
+                // the machine's turbine: its LOADING is its pressure ratio (the
+                // transmission loss grows with flow and ratio -- Tiikoja, Abom
+                // & Boden), on the same 0..1 scale (1 = the rated ratio)
+                let u0 = tsm.units[0]
+                let pit = u0.p03 / max(tsm.p04, 1.0)
+                bf = min(max((pit - 1.0) / max(tsm.pitRated - 1.0, 0.05), 0.0), 1.0)
+            }
             // loading (boost) muffles, speed (rpm) keeps the impeller bright, so
             // high-rpm/low-boost and low-rpm/high-boost no longer sound alike
             var tcut = 9000.0 - 4800.0 * bf + 2200.0 * rpmFrac
@@ -185,8 +196,16 @@ public final class MufflerStage {
             turbine.process(&sig)
             // wastegate bypass: gas that skips the turbine keeps its raw edge,
             // so peak boost gets angrier instead of only woollier
-            let wg = min(max((bf - 0.78) / 0.22, 0.0), 1.0)
-            let m = 0.28 * wg
+            var wg = min(max((bf - 0.78) / 0.22, 0.0), 1.0)
+            var m = 0.28 * wg
+            if let tsm = turbo {
+                // the REAL bypass: the share of the exhaust the open gate
+                // passes around the wheel keeps its raw pulse edge
+                var wgf = 0.0
+                for u in tsm.units { wgf += u.wWGF }
+                wg = min(max(wgf / max(tsm.wEx, 1e-6) / 0.35, 0.0), 1.0)
+                m = 0.28 * wg
+            }
             if m > 1e-3 {
                 for i in 0..<n { sig[i] = (1.0 - m) * sig[i] + m * preTurbine[i] }
             }

@@ -79,8 +79,14 @@ public final class InductionStage {
     public var flutter = false        // no valve: compressor surge
     public var oChord = false         // the hidden chord easter egg
 
-    /// The blow-off envelope, read by the caller to duck the exhaust note.
-    public var bovEnvelope: Double { bovEnv }
+    /// The white-box turbo (TurboStage): when the car has a machine, its
+    /// sound replaces the old whistle and lift-off model, and nothing is
+    /// ducked -- the flutter and the dump keep the gain the engine fired at.
+    public var turbo: TurboStage?
+    public var turboInput = TurboBlockInput()
+
+    /// The blow-off envelope (the machine's valve and surge activity).
+    public var bovEnvelope: Double { turbo?.bovEnv ?? bovEnv }
     /// The bay bus after the intake roar and the trumpets, before the spool --
     /// the split the Python taps, used to localise a mismatch.
     public private(set) var dbgIntakeOnly = [Double]()
@@ -180,7 +186,7 @@ public final class InductionStage {
         }
 
         dbgIntakeOnly = bay
-        let mouth = bay                  // what leaves through the intake mouth
+        var mouth = bay                  // what leaves through the intake mouth
         // --- forced induction and the gearbox -------------------------------
         var gw = gearboxAudio(frames: frames, state: s, params: P)
         var ind = inductionAudio(frames: frames, state: s, params: P)
@@ -196,6 +202,12 @@ public final class InductionStage {
         }
         dbgInd = ind; dbgGw = gw
         for i in 0..<frames { bay[i] += ind[i] + gw[i] }
+        if turbo != nil {
+            // the compressor's inlet noise -- its whistle through the filter,
+            // the surge, the recirculated dump -- leaves by the intake MOUTH
+            for i in 0..<frames { mouth[i] += ind[i] }
+            return (bay, mouth, 0.0)
+        }
 
         // the driver has just LIFTED, so the note collapses and the valve event
         // is what is actually heard -- duck the exhaust rather than bury it
@@ -231,7 +243,17 @@ public final class InductionStage {
             }
         }
 
-        if tv > 1e-3 && eng.induction == "turbo" {
+        if tv > 1e-3 && eng.induction == "turbo", let ts = turbo {
+            // THE MACHINE: tones at the shaft's real speed, the twin's surge,
+            // the valve's jet (TurboStage)
+            turboInput.rpm = rpm
+            turboInput.turboVol = tv
+            turboInput.superVol = sv
+            turboInput.bladeVol = p("blade_vol", 1.0)
+            ts.oChord = oChord
+            let t = ts.process(frames: frames, input: turboInput)
+            for i in 0..<frames { out[i] += t[i] }
+        } else if tv > 1e-3 && eng.induction == "turbo" {
             let voicing = oChord ? turboV7 : perfectFifth
             let sub = eng.inductionSubtype
             if bfrac > 0.02 {
