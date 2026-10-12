@@ -108,6 +108,14 @@ public struct EnginePreset: Codable {
     public let mguWhine: Double          // F1 PU: prominent MGU whines
     public let wallMaterial: String      // the pipe formants ARE this
     public let megaphone: Double         // diverging exit cone, 0..1
+    // --- the turbo's inlet and valve (optional: newer than the frozen
+    // fixtures, which decode without them) --------------------------------
+    public let intakeFilter: String?     // "airbox" | "pod" (a cone filter)
+    let podPipeMRaw: Double?             // the pod's own pipe (m), 0 = default
+    let bovFlutterRaw: Bool?             // no blow-off valve: it surges
+    public var podIntake: Bool { intakeFilter == "pod" }
+    public var podPipeM: Double { podPipeMRaw ?? 0.0 }
+    public var bovFlutter: Bool { bovFlutterRaw ?? false }
 
     enum CodingKeys: String, CodingKey {
         case name, cylinders, induction
@@ -166,6 +174,9 @@ public struct EnginePreset: Codable {
         case mguWhine = "mgu_whine"
         case wallMaterial = "wall_material"
         case megaphone
+        case intakeFilter = "intake_filter"
+        case podPipeMRaw = "pod_pipe_m"
+        case bovFlutterRaw = "bov_flutter"
     }
 
     // --- derived, matching engine.Engine's properties --------------------

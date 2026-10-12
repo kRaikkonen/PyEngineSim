@@ -36,6 +36,9 @@ public struct Biquad {
 
     public mutating func reset() { s1 = 0; s2 = 0 }
 
+    /// Seed the state (scipy's zi) -- a filter started on its steady state.
+    public mutating func setState(_ z1: Double, _ z2: Double = 0) { s1 = z1; s2 = z2 }
+
     /// Retune WITHOUT clearing the state.  scipy's `lfilter(b, a, x, zi=zi)`
     /// carries zi across a coefficient change, and every sliding filter in the
     /// chain relies on that: rebuilding instead would zero the history and
