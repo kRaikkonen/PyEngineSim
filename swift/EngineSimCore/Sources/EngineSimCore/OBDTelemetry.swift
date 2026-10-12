@@ -334,6 +334,10 @@ public final class OBDTelemetry {
         if attempt("no handshake: 010C engine ECU 7E0", ["ATSH7E0", "ATFCSH7E0"], "010C", want: 0x0C) { return true }
         if attempt("no handshake: WWH-OBD rpm engine ECU 7E0", [], "22F40C", uds: true, want: 0x0C) { return true }
         if attempt("CAN 11/500 broadcast, 1 s timeout", slow + ["ATSP6", "ATSH7DF"]) { return true }
+        // the UDS rpm again with the long timeout: P3's add-on gauge needs a
+        // separate car setting (cc.H) for 2025+ A3 8Y / Golf 8 -- the
+        // facelift moved to UDS-based OBD (SAE J1979-2, the same 22 F4xx)
+        if attempt("WWH-OBD rpm broadcast, 1 s", [], "22F40C", uds: true, want: 0x0C) { return true }
         if attempt("CAN 11/500 engine ECU 7E0, 1 s", ["ATSH7E0", "ATFCSH7E0"]) { return true }
         if attempt("CAN 11/500 engine ECU 7E0 UDS, 1 s", [], "22F400", uds: true) { return true }
         if attempt("CAN 29/500, 1 s", ["ATSP7", "ATSHDB33F1"]) { return true }
