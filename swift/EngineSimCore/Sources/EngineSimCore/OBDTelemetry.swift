@@ -302,16 +302,18 @@ public final class OBDTelemetry {
         // in the log.  First the most likely: a gateway slower than this
         // clone's timeout (Car Scanner has a setting just for "send ATST").
         func attempt(_ name: String, _ setup: [String], _ req: String = "0100",
-                     uds u: Bool = false, timeout: TimeInterval = 4.0) -> Bool {
+                     uds u: Bool = false, want: Int = 0x00,
+                     timeout: TimeInterval = 4.0) -> Bool {
             guard status != "link lost" else { return false }
             note("try " + name)
             for c in setup { command(c, c == "ATZ" ? 3.0 : 1.5) }
             let r = command(req, timeout)
             lastCarReply = OBDTelemetry.firstLine(r)
             let hex = OBDParse.cleanFrames(r)
-            let got = u ? OBDParse.udsPids(hex, lengths: [0x00: 4])
-                        : OBDParse.pids(hex, lengths: [0x00: 4])
-            guard got[0x00] != nil else { return false }
+            let lengths = want == 0x00 ? [0x00: 4] : pidLength
+            let got = u ? OBDParse.udsPids(hex, lengths: lengths)
+                        : OBDParse.pids(hex, lengths: lengths)
+            guard got[want] != nil else { return false }
             uds = u
             protocolUsed = name
             note("ANSWERED: " + name)
@@ -321,6 +323,16 @@ public final class OBDTelemetry {
         oneReply = false
         let slow = ["ATAT0", "ATSTFF"]          // no adaptive timing, ~1 s
         if attempt("CAN 11/500 broadcast", ["ATAT1", "ATST32", "ATSP6", "ATSH7DF"]) { return true }
+        // WWH-OBD (ISO 27145: UDS, rpm = 22 F40C) -- a car that ignores the
+        // classic 01 service answers only this (Car Scanner keeps a separate
+        // "Audi: WWH-OBD (CAN 11 bit)" profile).  And a clone that checks the
+        // bus with its own 0100 first never sends anything to such a car:
+        // ATBI makes the protocol active without that check (ELM327 datasheet).
+        if attempt("WWH-OBD rpm, broadcast", ["ATSP6", "ATSH7DF"], "22F40C", uds: true, want: 0x0C) { return true }
+        if attempt("no handshake (ATBI): 010C broadcast", ["ATSP6", "ATSH7DF", "ATBI"], "010C", want: 0x0C) { return true }
+        if attempt("no handshake: WWH-OBD rpm broadcast", [], "22F40C", uds: true, want: 0x0C) { return true }
+        if attempt("no handshake: 010C engine ECU 7E0", ["ATSH7E0", "ATFCSH7E0"], "010C", want: 0x0C) { return true }
+        if attempt("no handshake: WWH-OBD rpm engine ECU 7E0", [], "22F40C", uds: true, want: 0x0C) { return true }
         if attempt("CAN 11/500 broadcast, 1 s timeout", slow + ["ATSP6", "ATSH7DF"]) { return true }
         if attempt("CAN 11/500 engine ECU 7E0, 1 s", ["ATSH7E0", "ATFCSH7E0"]) { return true }
         if attempt("CAN 11/500 engine ECU 7E0 UDS, 1 s", [], "22F400", uds: true) { return true }
