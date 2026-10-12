@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine_sim import presets                                    # noqa: E402
 from engine_sim.simulator import Simulator                        # noqa: E402
+from export_turbo import spec_for as turbo_spec_for               # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "docs", "engine_tables.json")
@@ -71,7 +72,7 @@ def tables_for(key):
     # showed up as a 1e-4 wobble in the solved MAP
     ve_vals = [[float(v) for v in row] for row in lut.values]
 
-    return {
+    out = {
         "rpm_axis": [float(v) for v in rpms],
         "map_axis": [float(v) for v in mapfs],
         "ve_rpm_axis": ve_axes[0],
@@ -83,6 +84,11 @@ def tables_for(key):
         # heat-soak; sampled on the same MAP axis
         "charge_temp": [r6(sim_charge_temp(sim, float(mf))) for mf in mapfs],
     }
+    # the turbo machine's sizing (export_turbo.py): the phone runs the machine
+    spec = turbo_spec_for(sim)
+    if spec is not None:
+        out["turbo"] = spec
+    return out
 
 
 # NO try/except around this import.  It was wrong once (charge_temp lives in

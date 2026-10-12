@@ -67,6 +67,9 @@ public struct EngineTables: Decodable {
     public let k_burn: [[Double]]
     public let map_idle_area: Double
     public let charge_temp: [Double]
+    /// The turbo machine's baked sizing (tools/export_turbo.py); nil for a
+    /// car without one -- and in the frozen Fixtures/ copy, which predates it.
+    public let turbo: TurboSpec?
 
     public var veTable: Table2D {
         Table2D(rows: ve_rpm_axis, cols: ve_map_axis, values: ve)

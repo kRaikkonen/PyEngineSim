@@ -42,11 +42,13 @@ public enum MapModel {
 
     /// Effective plate open-area fraction.  A butterfly's projected opening
     /// goes as 1 - cos(angle); the idle bleed sets the floor.
+    /// `wotArea`: the tract's wide-open area in fleet units (1 = the fleet's
+    /// lumped road intake; > 1 a race ITB tract -- map_model.wot_area_for).
     public static func throttleArea(_ throttle: Double,
-                                    idleArea: Double) -> Double {
+                                    idleArea: Double, wotArea: Double = 1.0) -> Double {
         let t = min(max(throttle, 0.0), 1.0)
         let plate = 1.0 - cos(0.5 * Double.pi * t)
-        return idleArea + (1.0 - idleArea) * plate
+        return idleArea + (wotArea - idleArea) * plate
     }
 
     /// Solve MAP/P_atm where inflow meets pumping.  Bisection, because the
@@ -54,8 +56,9 @@ public enum MapModel {
     /// ~6e-5, far finer than anything downstream can hear.
     public static func solveMapFraction(throttle: Double, rpm: Double,
                                         redline: Double, ve: Double,
-                                        idleArea: Double) -> Double {
-        let aEff = throttleArea(throttle, idleArea: idleArea)
+                                        idleArea: Double,
+                                        wotArea: Double = 1.0) -> Double {
+        let aEff = throttleArea(throttle, idleArea: idleArea, wotArea: wotArea)
         let pump = kBalance * max(rpm, 1.0) / max(redline, 1.0) * max(ve, 0.05)
 
         func imbalance(_ pr: Double) -> Double {
