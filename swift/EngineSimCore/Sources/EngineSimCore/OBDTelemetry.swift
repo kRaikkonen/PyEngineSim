@@ -132,7 +132,20 @@ public final class TCPLink: OBDLink {
 
 /// The car, as the synth wants to see it.
 public final class OBDTelemetry {
-    public private(set) var rpm = 0.0          // EXTRAPOLATED: what you play
+    /// EXTRAPOLATED: what you play.  Between samples the last reading runs
+    /// on at its measured rate -- from when the car sampled it (half a round
+    /// trip before it arrived) to when the sound leaves the speaker, plus
+    /// the synth's glide -- so the note moves continuously instead of
+    /// stepping at the poll rate (Leo, 2026-10-21: in ratio mode, where the
+    /// map multiplies every step, "转速变化不够连续").  A stalled link stops
+    /// projecting after a quarter second.
+    public var rpm: Double {
+        guard lastRPMTime > 0 else { return rawRPM }
+        let now = Date().timeIntervalSinceReferenceDate
+        let age = min(max(now - lastRPMTime, 0.0), 0.25)
+        let ahead = min(age + 0.5 * rtt + outLatency + CarMode.liveGlide, 0.45)
+        return max(rawRPM + max(min(dRPM * ahead, 800.0), -800.0), 0.0)
+    }
     public private(set) var rawRPM = 0.0       // un-projected, for shift detection
     public private(set) var throttle = 0.0
     public private(set) var speed = 0.0        // m/s
@@ -403,6 +416,16 @@ public final class OBDTelemetry {
     func tuneTiming() {
         guard !uds else { return }
         for c in ["ATAT1", "ATST32"] { command(c, 1.5) }
+        // ONE reply expected: the adapter hands it over the moment it lands
+        // instead of waiting out the timeout for more -- on a 2025+ MQB Evo
+        // four modules answer the broadcast, and that wait was most of the
+        // lag (Leo: "延迟比较大").  A clone without the digit answers '?'.
+        oneReply = true
+        if !parse(command(request([pidRPM]), 2.0)).isEmpty {
+            note("timing: adaptive + one-reply digit")
+            return
+        }
+        oneReply = false
         if !parse(command(request([pidRPM]), 2.0)).isEmpty {
             note("timing: adaptive (fast)")
             return
@@ -472,7 +495,14 @@ public final class OBDTelemetry {
         let t0 = Date().timeIntervalSinceReferenceDate
         let req: String
         if multiPID {
-            req = request(pollPIDs)
+            // rpm EVERY poll with one other channel riding along: two
+            // one-byte-or-rpm PIDs answer in ONE CAN frame (41 0C a b xx c),
+            // where all four went multi-frame -- a flow control and a
+            // second frame more per poll, on the one value that matters
+            let others = pollPIDs.filter { $0 != pidRPM }
+            req = others.isEmpty ? request([pidRPM])
+                : request([pidRPM, others[roundRobin % others.count]])
+            roundRobin += 1
         } else {
             // rpm is the one that matters (Leo: "我他妈只要你能读取rpm就够了"):
             // every other request is rpm, the rest take turns in between
@@ -526,11 +556,7 @@ public final class OBDTelemetry {
                 dRPM += ((r - rawRPM) / dt - dRPM) * 0.35
             }
             lastRPMTime = now
-            rawRPM = r
-            // project forward over the WHOLE pipeline lag, capped so a noisy
-            // derivative cannot throw the note across the rev range
-            let lead = min(rtt + outLatency, 0.35)
-            rpm = max(r + max(min(dRPM * lead, 800.0), -800.0), 0.0)
+            rawRPM = r                 // `rpm` projects it, continuously
             if r > maxRPM { maxRPM = r }
         }
         if let p = pedalSource, let v = got[p]?.first {

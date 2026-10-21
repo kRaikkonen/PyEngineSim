@@ -71,6 +71,10 @@ public final class CarMode {
     /// feel connected, slow enough that a single bad OBD sample is a wobble
     /// rather than a click.
     static let rpmTrack = 14.0
+    /// The synth's glide toward a LIVE car's rpm (s): the telemetry arrives
+    /// at the tick rate, the note moves block by block.  OBDTelemetry
+    /// projects this far ahead too, so it costs no lag.
+    public static let liveGlide = 0.03
     static let idleTrack = 3.0
 
     public private(set) var engineKey: String
@@ -170,6 +174,7 @@ public final class CarMode {
                 boost = max(0.0, (tm.mapKPa - tm.baroKPa) * 0.01)
             }
             if let s = synth {
+                s.rpmGlide = tm is OBDTelemetry ? CarMode.liveGlide : 0.0
                 if s.turbo != nil {
                     // the turbo MACHINE: it follows the car's real plenum
                     // (vacuum too -- the plate is fed from it), or, with no

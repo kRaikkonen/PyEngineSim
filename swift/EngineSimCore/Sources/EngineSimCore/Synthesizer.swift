@@ -256,8 +256,19 @@ public final class Synthesizer {
 
     // ---------------------------------------------------------------- state
     /// Set the operating point.  The physics derives everything else.
+    /// Glide toward the set rpm over this time constant (s), block by block:
+    /// a live car's rpm arrives at the tick rate and would otherwise step.
+    /// 0 = jump to it (the default, and what every reference test drives).
+    public var rpmGlide = 0.0
+    var rpmTarget: Double?
+
     public func set(rpm: Double, throttle: Double, boost: Double? = nil) {
-        physics.rpm = rpm
+        if rpmGlide > 0.0 {
+            rpmTarget = rpm
+        } else {
+            rpmTarget = nil
+            physics.rpm = rpm
+        }
         physics.throttle = throttle
         // a machine car's boost is its plenum's: set externalBoost to drive it
         if let b = boost, turbo == nil { physics.boost = b }
@@ -319,6 +330,9 @@ public final class Synthesizer {
 
     public func render(frames: Int) -> [Float] {
         let sr = sampleRate
+        if let t = rpmTarget, rpmGlide > 0.0 {
+            physics.rpm += (t - physics.rpm) * min(Double(frames) / sr / rpmGlide, 1.0)
+        }
         stepTurbo(dt: Double(frames) / sr * timeScale)
         let rpm = physics.rpm
         let dps = physics.omega * 180.0 / Double.pi / sr * timeScale
