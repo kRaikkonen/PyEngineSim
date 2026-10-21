@@ -13,8 +13,12 @@ The project deliberately holds almost nothing:
   * the three JSON fixtures, referenced IN PLACE under docs/ rather than
     copied, so regenerating them updates the app instead of leaving two
     copies to disagree
-  * UIBackgroundModes = audio, without which the sound stops at screen lock,
-    which in a car is most of the time
+  * an Info.plist holding UIBackgroundModes = audio + bluetooth-central,
+    merged with the generated keys: without audio the sound stops at screen
+    lock, which in a car is most of the time; without bluetooth-central the
+    OBD dongle goes quiet in the background.  (It was once an
+    INFOPLIST_KEY_UIBackgroundModes build setting -- which Xcode silently
+    IGNORES: the shipped app had no background mode at all.)
 
     py tools/make_xcodeproj.py
 
@@ -137,9 +141,9 @@ def main():
         'CURRENT_PROJECT_VERSION = 1',
         'DEVELOPMENT_TEAM = %s' % TEAM,
         'GENERATE_INFOPLIST_FILE = YES',
-        # the one Info.plist key that matters: without it the audio stops the
-        # moment the screen locks, and in a car the screen is locked
-        'INFOPLIST_KEY_UIBackgroundModes = audio',
+        # the background modes live in a real file, merged with the generated
+        # keys -- Xcode has no INFOPLIST_KEY_ for them and drops one silently
+        'INFOPLIST_FILE = %s/Info.plist' % APP,
         # touching CoreBluetooth without this string does not warn,
         # it TERMINATES the app -- and the crash says nothing useful
         'INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = '
@@ -218,6 +222,20 @@ def main():
     with open(os.path.join(PROJ_DIR, "project.pbxproj"), "w",
               encoding="utf-8", newline="\n") as fh:
         fh.write(text)
+
+    # ---- the Info.plist the generated keys are merged with ------------------
+    # (INFOPLIST_FILE above): the background modes, which have no
+    # INFOPLIST_KEY_ build setting
+    with open(os.path.join(os.path.dirname(PROJ_DIR), APP, "Info.plist"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write('<?xml version="1.0" encoding="UTF-8"?>\n'
+                 '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                 '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                 '<plist version="1.0">\n<dict>\n'
+                 '\t<key>UIBackgroundModes</key>\n\t<array>\n'
+                 '\t\t<string>audio</string>\n'
+                 '\t\t<string>bluetooth-central</string>\n'
+                 '\t</array>\n</dict>\n</plist>\n')
 
     # ---- the scheme, set to RUN IN RELEASE ---------------------------------
     # Xcode's default scheme runs Debug, and an unoptimised build of this chain

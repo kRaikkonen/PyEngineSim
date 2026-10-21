@@ -107,6 +107,9 @@ public final class AudioOutput {
         try engine.start()
         player.play()
         running = true
+        #if os(iOS)
+        observeSession()
+        #endif
         let t = Thread { [weak self] in self?.renderLoop() }
         t.name = "enginesim.render"
         t.qualityOfService = .userInitiated
@@ -120,6 +123,48 @@ public final class AudioOutput {
         player.stop()
         engine.stop()
     }
+
+    #if os(iOS)
+    var observers = [NSObjectProtocol]()
+
+    /// Back on after anything that took the sound away: a call, Siri, a
+    /// navigation prompt (an INTERRUPTION), or the output moving -- the car's
+    /// Bluetooth or CarPlay connecting, headphones out -- which stops the
+    /// engine (a CONFIGURATION CHANGE).  Without this the note simply never
+    /// came back, and in a car both happen all the time.  The queued buffers
+    /// are still scheduled, so restarting the engine and the player is all.
+    func observeSession() {
+        guard observers.isEmpty else { return }
+        let nc = NotificationCenter.default
+        observers.append(nc.addObserver(forName: AVAudioSession.interruptionNotification,
+                                        object: nil, queue: .main) { [weak self] n in
+            guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            self?.resume()
+        })
+        observers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange,
+                                        object: engine, queue: .main) { [weak self] _ in
+            self?.resume()
+        })
+        observers.append(nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            self?.resume()
+        })
+    }
+
+    func resume() {
+        guard running else { return }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AVAudioSession.sharedInstance().setActive(true)
+            if !engine.isRunning { try engine.start() }
+            if !player.isPlaying { player.play() }
+            sessionNote = nil
+        } catch {
+            sessionNote = "could not resume audio: \(error.localizedDescription)"
+        }
+    }
+    #endif
 
     // ------------------------------------------------------------ the loop
     private func renderLoop() {
