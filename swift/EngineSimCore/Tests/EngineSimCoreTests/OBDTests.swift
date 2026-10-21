@@ -214,5 +214,22 @@ final class OBDTests: XCTestCase {
                                     lengths: [0x00: 4])
         XCTAssertEqual(mask[0x00], [0xBE, 0x3F, 0xA8, 0x13])
     }
+
+    /// A 2025+ MQB Evo answers the 29-bit broadcast from FOUR modules at
+    /// once (a 2025 A3's real capture, OBDb Audi-A3: 18DAF101/02/03/04, the
+    /// engine 01).  With headers off the adapter prints one reply per line;
+    /// every one is an rpm, and none may be read as anything else.
+    func test29BitMultiModuleRpm() {
+        // 18DAF10104410C0C76.. 18DAF10304410C0C70.. etc, headers off
+        let r = "410C0C76\r410C0C70\r410C0C70\r410C0C80\r\r>"
+        let got = OBDParse.pids(OBDParse.cleanFrames(r))
+        let rpm = Double((got[0x0C]?[0] ?? 0) * 256 + (got[0x0C]?[1] ?? 0)) / 4.0
+        XCTAssertEqual(got.keys.sorted(), [0x0C], "only rpm, no phantom PIDs")
+        XCTAssertEqual(rpm, 796.0, accuracy: 6.0, "one module's idle rpm (787-800)")
+        // with the engine-only filter (ATCRA 18DAF101) it is one line
+        let one = OBDParse.pids(OBDParse.cleanFrames("410C1CA4\r\r>"))
+        XCTAssertEqual(Double(0x1C * 256 + 0xA4) / 4.0, 1833.0)
+        XCTAssertEqual(one[0x0C], [0x1C, 0xA4])
+    }
 }
 

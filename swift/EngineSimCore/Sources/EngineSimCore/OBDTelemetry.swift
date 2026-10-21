@@ -322,6 +322,23 @@ public final class OBDTelemetry {
         uds = false
         oneReply = false
         let slow = ["ATAT0", "ATSTFF"]          // no adaptive timing, ~1 s
+        // THE 2025+ MQB EVO (Leo's 2026 A3 8Y facelift, the 2025 Octavia):
+        // its emissions OBD answers ONLY on ISO 15765-4 CAN 29-bit 500k --
+        // the functional request to 18DB33F1, the engine ECU replying from
+        // 18DAF101 (modules 02..04 answer too) -- and every 11-bit address,
+        // 7DF and 7E0, mode 01 and UDS 22 F40C alike, stays silent.  Real
+        // cars' captured replies in OBDb (github.com/OBDb/Audi-A3, model
+        // years 2025 and 2026; Skoda-Octavia 2025), where the 2024s still
+        // answered on 7E0.  So it goes FIRST: a few seconds on any other car.
+        let can29 = ["ATSP7", "ATCP18", "ATSHDB33F1"]
+        if attempt("CAN 29-bit broadcast (2025+ MQB Evo)", ["ATAT1", "ATST32"] + can29,
+                   "010C", want: 0x0C) { engineOnly29(); return true }
+        if attempt("CAN 29-bit broadcast, 1 s", slow + can29, "010C", want: 0x0C) {
+            engineOnly29(); return true
+        }
+        if attempt("CAN 29-bit, no handshake (ATBI)", can29 + ["ATBI"], "010C", want: 0x0C) {
+            engineOnly29(); return true
+        }
         if attempt("CAN 11/500 broadcast", ["ATAT1", "ATST32", "ATSP6", "ATSH7DF"]) { return true }
         // WWH-OBD (ISO 27145: UDS, rpm = 22 F40C) -- a car that ignores the
         // classic 01 service answers only this (Car Scanner keeps a separate
@@ -367,6 +384,19 @@ public final class OBDTelemetry {
         protocolUsed = ""
         note("nothing answered")
         return false
+    }
+
+    /// Four modules answer the 29-bit broadcast (OBDb: 18DAF101..04); keep
+    /// only the engine's, so a multi-PID poll is one module's reply.  A clone
+    /// that cannot filter keeps them all (each carries the rpm).
+    func engineOnly29() {
+        let r = command("ATCRA18DAF101", 1.5)
+        if r.contains("OK") && !parse(command(request([pidRPM]), 2.0)).isEmpty {
+            note("engine ECU only (ATCRA 18DAF101)")
+        } else {
+            command("ATCRA", 1.5)               // the filter off: every module
+            note("all modules answer (no receive filter)")
+        }
     }
 
     /// The probe may have needed a long timeout; polling wants it short.
