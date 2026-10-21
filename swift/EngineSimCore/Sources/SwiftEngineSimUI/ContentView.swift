@@ -567,6 +567,29 @@ public struct ContentView: View {
             Text(mappingBlurb)
                 .font(.system(size: 10)).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text("low-rev lift").font(.system(size: 11))
+                    .frame(width: 86, alignment: .leading)
+                Slider(value: Binding(get: { model.lowRevLift },
+                                      set: { model.setLowRevLift($0) }),
+                       in: 0...1, step: 0.05)
+                Text(String(Int((model.lowRevLift * 100).rounded())) + "%")
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(width: 44, alignment: .trailing)
+            }
+            Text("everyday revs (under ~2500) moved up the engine's range, "
+                 + "where it sounds good · idle and redline stay put · 0 = off")
+                .font(.system(size: 10)).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Toggle("pedal predict", isOn: Binding(get: { model.pedalPredict },
+                                                      set: { model.setPedalPredict($0) }))
+                    .font(.system(size: 11))
+            }
+            Text("the pedal moves before the revs do: predict them from it, "
+                 + "for less lag on a stab · compare it on and off")
+                .font(.system(size: 10)).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             // what the mapping WILL do, before driving off with it
             HStack(spacing: 12) {
                 ForEach(Array(model.mapPreview().enumerated()), id: \.offset) { _, p in

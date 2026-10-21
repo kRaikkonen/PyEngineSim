@@ -163,6 +163,13 @@ public final class RpmMap {
     /// higher or lower than exact.  1.0 is exact.
     public var ratio: Double
     public var learn: Bool
+    /// LOW-REV LIFT, 0..1 (0 = off): everyday driving rarely passes 2500 rpm
+    /// (eco mode less), and the engines sound their worst down there (Leo,
+    /// 2026-10-21).  The car's range is BENT before the mode maps it: idle
+    /// stays idle and the redline the redline, but the everyday revs move up
+    /// -- u -> (1 - e^-a u) / (1 - e^-a), a = 4 x lift (at 1, a car's 2500
+    /// lands 71 % up the target's range; at 0.5, 52 %).
+    public var lift = 0.0
     public private(set) var seenIdle: Double?
     public private(set) var seenMax = 0.0
 
@@ -194,8 +201,15 @@ public final class RpmMap {
         }
     }
 
-    public func callAsFunction(_ rpm: Double, engIdle: Double,
+    public func callAsFunction(_ rpmIn: Double, engIdle: Double,
                                engRedline: Double) -> Double {
+        var rpm = rpmIn
+        if lift > 1e-3 && rpmIn > carIdle && rpmIn < carRedline {
+            let span = max(carRedline - carIdle, 500.0)
+            let u = (rpmIn - carIdle) / span
+            let a = 4.0 * min(lift, 1.0)
+            rpm = carIdle + span * (1.0 - exp(-a * u)) / (1.0 - exp(-a))
+        }
         var out: Double
         switch mode {
         case .direct: out = rpm

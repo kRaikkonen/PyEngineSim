@@ -68,6 +68,10 @@ public final class AppModel: ObservableObject {
     @Published public var turboValve = "recirc"
     @Published public private(set) var hasTurboMachine = false
     @Published public var bladeVol = 1.0
+    /// Predict the rpm from the pedal -- a mode, to compare in the car.
+    @Published public var pedalPredict = false
+    /// Move everyday revs up the target engine's range (0 = off).
+    @Published public var lowRevLift = 0.0
     /// The BLE link's own log, newest last, for reading a failure in the car.
     @Published public var linkLog: [String] = []
     var retryTask: Task<Void, Never>?
@@ -165,6 +169,8 @@ public final class AppModel: ObservableObject {
             bleDeviceName = saved.bleDeviceName
             stayLive = saved.stayLive
             bladeVol = saved.bladeVol
+            pedalPredict = saved.pedalPredict
+            lowRevLift = saved.lowRevLift
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
@@ -191,6 +197,7 @@ public final class AppModel: ObservableObject {
                 return sy
             }
             car = mode
+            mode.rpmMap.lift = lowRevLift
             mode.start()
             turboValve = car?.synth?.turboValveDefault ?? "recirc"
             applyTurbo()
@@ -308,6 +315,19 @@ public final class AppModel: ObservableObject {
         sy.params["blade_vol"] = bladeVol
     }
 
+    public func setPedalPredict(_ on: Bool) {
+        pedalPredict = on
+        obd?.predictFromPedal = on
+        persist()
+    }
+
+    public func setLowRevLift(_ v: Double) {
+        lowRevLift = min(max(v, 0.0), 1.0)
+        car?.rpmMap.lift = lowRevLift
+        objectWillChange.send()          // the mapping preview follows
+        persist()
+    }
+
     public func setTurboValve(_ v: String) {
         turboValve = v
         applyTurbo()
@@ -417,6 +437,8 @@ public final class AppModel: ObservableObject {
         s.bleDeviceName = bleDeviceName
         s.stayLive = stayLive
         s.bladeVol = bladeVol
+        s.pedalPredict = pedalPredict
+        s.lowRevLift = lowRevLift
         s.showBay = showBay
         s.bayTimeScale = bayTimeScale
         s.eqLow = eqLow; s.eqMid = eqMid
@@ -445,6 +467,10 @@ public final class AppModel: ObservableObject {
         stayLive = s.stayLive
         bladeVol = s.bladeVol
         applyTurbo()
+        pedalPredict = s.pedalPredict
+        obd?.predictFromPedal = pedalPredict
+        lowRevLift = s.lowRevLift
+        car?.rpmMap.lift = lowRevLift
         showBay = s.showBay
         bayTimeScale = s.bayTimeScale
         eqLow = s.eqLow; eqMid = s.eqMid
@@ -724,6 +750,7 @@ public final class AppModel: ObservableObject {
                     // guess at it
                     t.outLatency = Double(self.audio?.blockFrames ?? 512)
                         / (self.audio?.renderRate ?? 32000) * 3.0
+                    t.predictFromPedal = self.pedalPredict
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live
@@ -763,6 +790,7 @@ public final class AppModel: ObservableObject {
                     guard let self else { return }
                     t.outLatency = Double(self.audio?.blockFrames ?? 512)
                         / (self.audio?.renderRate ?? 32000) * 3.0
+                    t.predictFromPedal = self.pedalPredict
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live

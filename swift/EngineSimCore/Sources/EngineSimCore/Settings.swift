@@ -49,6 +49,10 @@ public struct Settings: Codable, Equatable {
     public var stayLive = true
     /// The turbo's blade whistle on top of the turbo layer (blade_vol).
     public var bladeVol = 1.0
+    /// Predict the rpm from the pedal (OBDTelemetry.predictFromPedal).
+    public var pedalPredict = false
+    /// Low-rev lift, 0..1 (RpmMap.lift): everyday revs moved up the target's.
+    public var lowRevLift = 0.0
     public var carIdle = 760.0
     public var carRedline = 6500.0
     /// Whether the rev range keeps learning from the car.  Set by hand once
@@ -110,6 +114,8 @@ public struct Settings: Codable, Equatable {
         linkKind = str(.linkKind, "ble")
         stayLive = bul(.stayLive, true)
         bladeVol = dbl(.bladeVol, 1.0)
+        pedalPredict = bul(.pedalPredict, false)
+        lowRevLift = dbl(.lowRevLift, 0.0)
         carIdle = dbl(.carIdle, 760.0)
         carRedline = dbl(.carRedline, 6500.0)
         learnRange = bul(.learnRange, true)
@@ -124,6 +130,7 @@ public struct Settings: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
         case host, port, bleDeviceID, bleDeviceName, linkKind, stayLive, bladeVol
+        case pedalPredict, lowRevLift
         case carIdle, carRedline, learnRange, showBay, bayTimeScale
         case eqLow, eqMid, eqHigh, eqPresence
     }

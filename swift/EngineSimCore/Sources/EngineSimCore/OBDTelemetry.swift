@@ -144,8 +144,29 @@ public final class OBDTelemetry {
         let now = Date().timeIntervalSinceReferenceDate
         let age = min(max(now - lastRPMTime, 0.0), 0.25)
         let ahead = min(age + 0.5 * rtt + outLatency + CarMode.liveGlide, 0.45)
-        return max(rawRPM + max(min(dRPM * ahead, 800.0), -800.0), 0.0)
+        var d = max(min(dRPM * ahead, 800.0), -800.0)
+        if predictFromPedal && rpmSampleT > 0 {
+            // the pedal's head start: what its change since that rpm sample
+            // will have done to the revs by the time the sound plays
+            d += predictor.extraRPM(from: rpmSampleT, to: rpmSampleT + ahead,
+                                    gainRising: gainUp, gainFalling: gainDown)
+            d = max(min(d, 1500.0), -1500.0)
+        }
+        return max(rawRPM + d, 0.0)
     }
+
+    /// PEDAL PREDICTION (a mode, off by default): the pedal leads the rpm by
+    /// the engine's response time, so its changes are projected into the rpm
+    /// before the rpm itself shows them (PedalPredictor).
+    public var predictFromPedal = false
+    let predictor = PedalPredictor()
+    var rpmSampleT: TimeInterval = 0
+    /// How much each new rate difference moves the smoothed rate (dRPM).
+    static let rateSmoothing = 0.35
+    /// The current gear's gains, kept as plain numbers by the poll thread so
+    /// the projection (read on the main thread) never touches its tables.
+    var gainUp = PedalPredictor.prior(rpmPerKmh: 0)
+    var gainDown = 0.5 * PedalPredictor.prior(rpmPerKmh: 0)
     public private(set) var rawRPM = 0.0       // un-projected, for shift detection
     public private(set) var throttle = 0.0
     public private(set) var speed = 0.0        // m/s
@@ -499,14 +520,14 @@ public final class OBDTelemetry {
             // one-byte-or-rpm PIDs answer in ONE CAN frame (41 0C a b xx c),
             // where all four went multi-frame -- a flow control and a
             // second frame more per poll, on the one value that matters
-            let others = pollPIDs.filter { $0 != pidRPM }
+            let others = rotation()
             req = others.isEmpty ? request([pidRPM])
                 : request([pidRPM, others[roundRobin % others.count]])
             roundRobin += 1
         } else {
             // rpm is the one that matters (Leo: "我他妈只要你能读取rpm就够了"):
             // every other request is rpm, the rest take turns in between
-            let others = pollPIDs.filter { $0 != pidRPM }
+            let others = rotation()
             if roundRobin % 2 == 0 || others.isEmpty {
                 req = request([pidRPM])
             } else {
@@ -548,19 +569,45 @@ public final class OBDTelemetry {
         if left > 0 { usleep(useconds_t(left * 1e6)) }
     }
 
+    /// The channels that take turns beside the rpm.  Predicting from the
+    /// pedal, every other turn is the pedal's -- it is the early signal.
+    func rotation() -> [Int] {
+        let others = pollPIDs.filter { $0 != pidRPM }
+        guard predictFromPedal, let p = pedalSource, others.contains(p) else { return others }
+        let rest = others.filter { $0 != p }
+        if rest.isEmpty { return [p] }
+        return rest.flatMap { [p, $0] }
+    }
+
     func ingest(_ got: [Int: [Int]], now: TimeInterval) {
+        // the car took these readings about half a round trip ago
+        let taken = now - 0.5 * rtt
+        if let p = pedalSource, let v = got[p]?.first {
+            throttle = min(max(Double(v) / 255.0, 0.0), 1.0)
+            predictor.pedalSample(throttle, at: taken)
+        }
         if let v = got[pidRPM], v.count >= 2 {
             let r = Double(v[0] * 256 + v[1]) / 4.0
             let dt = lastRPMTime > 0 ? now - lastRPMTime : 0.0
-            if dt > 0.0 && dt < 0.5 {
-                dRPM += ((r - rawRPM) / dt - dRPM) * 0.35
+            let rate0 = dRPM
+            let fresh = dt > 0.0 && dt < 0.5
+            if fresh {
+                dRPM += ((r - rawRPM) / dt - dRPM) * Self.rateSmoothing
             }
+            // the pedal's model: the effort this smoothed rate reflects, and
+            // the gain learned from how the two moved together
+            let dE = predictor.rpmSample(taken: taken,
+                                         previous: fresh && rpmSampleT > 0 ? rpmSampleT : nil,
+                                         smoothing: Self.rateSmoothing)
+            if fresh { predictor.learn(gear: gear, dRate: dRPM - rate0, dEffort: dE) }
+            rpmSampleT = taken
+            let n = (gear >= 1 && speed > 0.3 && gear <= gears.centres.count)
+                ? gears.centres[gear - 1] : 0.0
+            gainUp = predictor.gain(gear: gear, rpmPerKmh: n, rising: true)
+            gainDown = predictor.gain(gear: gear, rpmPerKmh: n, rising: false)
             lastRPMTime = now
-            rawRPM = r                 // `rpm` projects it, continuously
+            rawRPM = r                 // projected continuously by `rpm`
             if r > maxRPM { maxRPM = r }
-        }
-        if let p = pedalSource, let v = got[p]?.first {
-            throttle = min(max(Double(v) / 255.0, 0.0), 1.0)
         }
         if let v = got[pidSpeed]?.first {
             let kmh = Double(v)
