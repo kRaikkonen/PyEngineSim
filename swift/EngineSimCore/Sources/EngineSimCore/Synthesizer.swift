@@ -256,6 +256,23 @@ public final class Synthesizer {
 
     // ---------------------------------------------------------------- state
     /// Set the operating point.  The physics derives everything else.
+    /// REAL LOUDNESS (a mode, off by default): the auto-level holds the note
+    /// at one level whatever the engine does -- every car audible at any rpm,
+    /// but a real one is ~40 dB louder flat out at the top than at idle (Leo,
+    /// 2026-10-21: "真车音量是不是会随着转速变化").  On, its target follows
+    /// the engine: +30 log10 rpm (~9 dB per doubling: combustion and exhaust
+    /// noise at a fixed load) and +20 log10 of the manifold pressure (the
+    /// pulses' pressure: a part-throttle cruise ~-6..-8 dB under wide open,
+    /// boost above it), 0 dB at three quarters of the redline wide open,
+    /// held to -24..+3 dB -- quiet cruising, a pull that swells.
+    public var realLoudness = false
+
+    public static func loudnessDB(rpm: Double, redline: Double, mapFraction: Double) -> Double {
+        let r = max(rpm, 100.0) / max(0.75 * redline, 500.0)
+        let m = min(max(mapFraction, 0.1), 2.5)
+        return min(max(30.0 * log10(r) + 20.0 * log10(m), -24.0), 3.0)
+    }
+
     /// Glide toward the set rpm over this time constant (s), block by block:
     /// a live car's rpm arrives at the tick rate and would otherwise step.
     /// 0 = jump to it (the default, and what every reference test drives).
@@ -525,6 +542,11 @@ public final class Synthesizer {
         ms.combLoad = combLoad
         ms.camLump = r.camLump + r.balanceRough
         ms.wobW = r.wobW; ms.pov = pov
+        if realLoudness {
+            ms.loudnessDB = Synthesizer.loudnessDB(
+                rpm: rpm, redline: engine.redlineRpm,
+                mapFraction: physics.manifoldPressure() / pAtm)
+        }
         var out = master.process(sig, state: ms, params: params)
         applyToneControls(&out)
         lastLevelForBlowout = master.lastLevel

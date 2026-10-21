@@ -25,6 +25,9 @@ public struct MasterState {
     public var camLump = 0.0          // cam overlap chop + balance-shaft buzz
     public var wobW = 0.0             // firing-rate wobble, rad/sample
     public var pov = "chase"
+    /// The auto-level's target, dB re its usual one (Synthesizer.realLoudness;
+    /// 0 = the classic constant level).
+    public var loudnessDB = 0.0
     public init() {}
 }
 
@@ -92,7 +95,8 @@ public final class MasterStage {
             // on the overrun a real car gets quieter, so the ceiling falls with
             // combustion rather than letting the noise floors fill the hole
             let gmax = 2.2 + 3.8 * s.combLoad
-            let want = min(0.22 / (level + 1e-6), gmax)
+            let target = 0.22 * pow(10.0, s.loudnessDB / 20.0)
+            let want = min(target / (level + 1e-6), gmax)
             var rate = want > gain ? 0.05 : 0.2        // rise SLOW: no pump-up
             if s.pov == "trackside" {
                 // near-freeze: the fly-by's 1/r sweep IS the drama, and a

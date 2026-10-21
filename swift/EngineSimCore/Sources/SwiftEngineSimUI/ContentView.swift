@@ -825,6 +825,10 @@ public struct ContentView: View {
                                              set: { model.setPops($0) }))
                     .labelsHidden()
                 Text("pops").font(.caption2).foregroundColor(.secondary)
+                Toggle("real volume", isOn: Binding(get: { model.realLoudness },
+                                                    set: { model.setRealLoudness($0) }))
+                    .labelsHidden()
+                Text("real vol").font(.caption2).foregroundColor(.secondary)
             }
             .font(.caption)
             if model.source == .live { dongle }

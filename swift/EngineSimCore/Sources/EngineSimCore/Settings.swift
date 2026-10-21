@@ -53,6 +53,8 @@ public struct Settings: Codable, Equatable {
     public var pedalPredict = false
     /// Low-rev lift, 0..1 (RpmMap.lift): everyday revs moved up the target's.
     public var lowRevLift = 0.0
+    /// The volume follows rpm and load (Synthesizer.realLoudness).
+    public var realLoudness = false
     public var carIdle = 760.0
     public var carRedline = 6500.0
     /// Whether the rev range keeps learning from the car.  Set by hand once
@@ -116,6 +118,7 @@ public struct Settings: Codable, Equatable {
         bladeVol = dbl(.bladeVol, 1.0)
         pedalPredict = bul(.pedalPredict, false)
         lowRevLift = dbl(.lowRevLift, 0.0)
+        realLoudness = bul(.realLoudness, false)
         carIdle = dbl(.carIdle, 760.0)
         carRedline = dbl(.carRedline, 6500.0)
         learnRange = bul(.learnRange, true)
@@ -130,7 +133,7 @@ public struct Settings: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case engineKey, mapModeRaw, hidden, source, pops, sustainOnLift
         case host, port, bleDeviceID, bleDeviceName, linkKind, stayLive, bladeVol
-        case pedalPredict, lowRevLift
+        case pedalPredict, lowRevLift, realLoudness
         case carIdle, carRedline, learnRange, showBay, bayTimeScale
         case eqLow, eqMid, eqHigh, eqPresence
     }

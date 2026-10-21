@@ -72,6 +72,8 @@ public final class AppModel: ObservableObject {
     @Published public var pedalPredict = false
     /// Move everyday revs up the target engine's range (0 = off).
     @Published public var lowRevLift = 0.0
+    /// The volume follows rpm and load, as a real car's does.
+    @Published public var realLoudness = false
     /// The BLE link's own log, newest last, for reading a failure in the car.
     @Published public var linkLog: [String] = []
     var retryTask: Task<Void, Never>?
@@ -171,6 +173,7 @@ public final class AppModel: ObservableObject {
             bladeVol = saved.bladeVol
             pedalPredict = saved.pedalPredict
             lowRevLift = saved.lowRevLift
+            realLoudness = saved.realLoudness
             carIdle = saved.carIdle
             carRedline = saved.carRedline
             learnRange = saved.learnRange
@@ -194,6 +197,7 @@ public final class AppModel: ObservableObject {
                 // every synth starts with the car's own blow-off valve, and
                 // the blade whistle where the listener left it
                 sy.params["blade_vol"] = self?.bladeVol ?? 1.0
+                sy.realLoudness = self?.realLoudness ?? false
                 return sy
             }
             car = mode
@@ -321,6 +325,12 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    public func setRealLoudness(_ on: Bool) {
+        realLoudness = on
+        car?.synth?.realLoudness = on
+        persist()
+    }
+
     public func setLowRevLift(_ v: Double) {
         lowRevLift = min(max(v, 0.0), 1.0)
         car?.rpmMap.lift = lowRevLift
@@ -439,6 +449,7 @@ public final class AppModel: ObservableObject {
         s.bladeVol = bladeVol
         s.pedalPredict = pedalPredict
         s.lowRevLift = lowRevLift
+        s.realLoudness = realLoudness
         s.showBay = showBay
         s.bayTimeScale = bayTimeScale
         s.eqLow = eqLow; s.eqMid = eqMid
@@ -471,6 +482,8 @@ public final class AppModel: ObservableObject {
         obd?.predictFromPedal = pedalPredict
         lowRevLift = s.lowRevLift
         car?.rpmMap.lift = lowRevLift
+        realLoudness = s.realLoudness
+        car?.synth?.realLoudness = realLoudness
         showBay = s.showBay
         bayTimeScale = s.bayTimeScale
         eqLow = s.eqLow; eqMid = s.eqMid
