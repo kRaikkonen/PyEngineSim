@@ -436,6 +436,12 @@ struct Node {
     /// (the static pressure at the end of a pipe is that of the air outside)
     mach_per_q: f64,
     steady: f64,
+    /// an open end radiates as a point source (p ~ dq/dt) only while the
+    /// wavelength is longer than its rim: above k a = 1 it beams, and to a
+    /// listener off its axis the rise with frequency stops there.  One
+    /// pole at c / (2 pi a) of the air outside, and its state.
+    rad_k: f64,
+    rad: f64,
     /// an orifice's resistance now, and its change per sample while a
     /// control block re-aims it
     r_now: f64,
@@ -555,6 +561,14 @@ impl Network {
                 hiss,
                 mach_per_q: 0.0,
                 steady: 0.0,
+                rad_k: match *n {
+                    NodeSpec::Open { radius, .. } => {
+                        let c_air = c_of(&gas, spec.t_ambient);
+                        1.0 - math::exp(-c_air / (radius * rate))
+                    }
+                    _ => 1.0,
+                },
+                rad: 0.0,
                 r_now: 0.0,
                 k_now: 0.0,
                 d_r: 0.0,
@@ -602,6 +616,7 @@ impl Network {
             n.hiss.lp2 = 0.0;
             n.hiss.hp = 0.0;
             n.steady = 0.0;
+            n.rad = 0.0;
         }
         self.rng = 0x2545_F491_4F6C_DD1D;
         self.q_out = 0.0;
@@ -869,7 +884,8 @@ impl Network {
                         self.lines[e].write(back);
                         let q = (a_in - back) * self.y[e];
                         q_out += q;
-                        dq_out += (q - *q_prev) * self.rate;
+                        n.rad += n.rad_k * ((q - *q_prev) * self.rate - n.rad);
+                        dq_out += n.rad;
                         *q_prev = q;
                     }
                 }

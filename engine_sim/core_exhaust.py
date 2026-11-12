@@ -245,6 +245,7 @@ def exhaust_from_engine(eng):
         collectors = [merge]
 
     rest = total - primary
+    road = bool(getattr(eng, "has_cat", True))
     for i, col in enumerate(collectors):
         tag = "" if len(collectors) == 1 else " %d" % (i + 1)
         heat = 0.95
@@ -257,7 +258,7 @@ def exhaust_from_engine(eng):
             n.rated_flow, n.turbine_k = q_line, k
             heat = 0.85
         r_head = 0.5 * 1.2 * (q_line / (a_pipe * 0.55)) ** 2 / 0.55 / q_line  # one dynamic head
-        if getattr(eng, "has_cat", True) and openness < 0.97:
+        if road:
             x = n.pipe(x, 0.12, a_pipe, heat, name="downpipe" + tag)
             x = n.pipe(x, 0.10, 3.0 * a_pipe, heat - 0.03, 60.0, name="catalyst" + tag)
             n.make(x, ORIFICE, r=3.0e3 / q_line)
@@ -267,8 +268,11 @@ def exhaust_from_engine(eng):
             n.make(x, ORIFICE, r=6.0e3 / q_line)
             heat -= 0.06
         del r_head
-        vol = 12.0 * eng.total_displacement * (1.0 - openness / 0.9) / lines \
-            if openness < 0.9 else 0.0
+        # (`exhaust_openness` is a tone control of the old chain, not a
+        #  statement that a car has no silencer: a road car -- one with a
+        #  catalyst -- always has a box, 1.5 x its displacement at the least)
+        vol = eng.total_displacement * ((1.5 if road else 0.0)
+                                        + 10.5 * max(1.0 - openness / 0.9, 0.0)) / lines
         tail = min(max(0.15 * rest, 0.25), 0.6)
         front = max(rest - tail - (0.5 if vol > 0.0 else 0.0), 0.3)
         x = n.pipe(x, 0.55 * front, a_pipe, heat * 0.75, name="front pipe" + tag)
