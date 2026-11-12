@@ -38,8 +38,8 @@ CH_FLAP = 1
 # A3's hiss sits below its firing orders rather than over them.  They are
 # the first thing the tailpipe recordings will set (s.6.8).
 VALVE_NOISE = 0.006
-LOSS_NOISE = 0.008
-TAIL_NOISE = 0.008
+LOSS_NOISE = 0.004
+TAIL_NOISE = 0.004
 TURBINE_NOISE = 0.006
 
 

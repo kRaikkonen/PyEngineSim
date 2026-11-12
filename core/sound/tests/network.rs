@@ -47,6 +47,7 @@ fn a_closed_open_pipe_sings_its_quarter_waves() {
     // closed at the valve, open at the far end: f = (2n - 1) c / (4 (L + 0.6133 a))
     let (length, d) = (0.80, 0.05);
     let mut net = Network::new(&organ_pipe(length, d), 1, RATE).unwrap();
+    net.set_steepening(false); // the linear pipe is what the formula describes
     let mut h = vec![0.0; 1 << 15];
     for (i, v) in h.iter_mut().enumerate() {
         *v = step(&mut net, if i == 0 { 1.0 } else { 0.0 });
@@ -84,6 +85,9 @@ fn what_goes_in_comes_out() {
     let n = p.pipe(n, 0.6, circle(0.05), 0.4, 0.0);
     p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.0 });
     let mut net = Network::new(&p.spec, 1, RATE).unwrap();
+    // (exact to the last digit only in the linear pipe: a steepening wave
+    //  keeps its mass over a cycle, not sample by sample)
+    net.set_steepening(false);
     let gas = GasModel { gamma_const: 0.0 };
     net.set_gas(&gas, 900.0, &[1.0; 4], true);
 
@@ -148,6 +152,7 @@ fn through_chamber(chamber: Option<(f64, f64)>, s: f64) -> Vec<f64> {
     let n = p.pipe(n, 12.0, s, 0.0, 0.0);
     p.make(n, NodeSpec::Open { radius: 0.02, noise: 0.0 });
     let mut net = Network::new(&p.spec, 1, RATE).unwrap();
+    net.set_steepening(false);
     // before anything has come back from either far end
     let n_samples = (2.6 * 12.0 / c_of(293.0) * RATE) as usize;
     let mut out = Vec::with_capacity(n_samples);
@@ -300,4 +305,60 @@ fn the_hiss_rides_on_the_flow() {
     let hiss_idle = (i1 * i1 - i0 * i0).abs().sqrt();
     let hiss_full = (f1 * f1 - f0 * f0).sqrt();
     assert!(hiss_full > 50.0 * hiss_idle, "idle {hiss_idle}, full load {hiss_full}");
+}
+
+#[test]
+fn a_loud_wave_leans_forward() {
+    // Fubini: a sine of amplitude p sent down a pipe has grown harmonics
+    //   B_n = 2 J_n(n s) / (n s),   s = x / x_shock,
+    //   x_shock = c / (k p w),      k = (gamma + 1) / (2 gamma p0)
+    // by the time it has gone x.  At s = 0.5: B2/B1 = 0.237, B3/B1 = 0.084.
+    let gas = GasModel { gamma_const: 0.0 };
+    let g = gas.gamma(293.0);
+    let c = c_of(293.0);
+    let (f, amp) = (500.0, 2000.0);
+    let k = (g + 1.0) / (2.0 * g * P_ATM);
+    let x_shock = c / (k * amp * 2.0 * core::f64::consts::PI * f);
+    let len = 0.5 * x_shock;
+
+    let harmonics = |steepening: bool| {
+        let mut p = Plumber::new();
+        let v = p.node(NodeSpec::Valve { cylinder: 0 });
+        // wide, so its walls take next to nothing
+        let n = p.pipe(v, len, circle(0.2), 0.0, 0.0);
+        let n = p.pipe(n, 40.0, circle(0.2), 0.0, 0.0);
+        p.make(n, NodeSpec::Open { radius: 0.1, noise: 0.0 });
+        let mut net = Network::new(&p.spec, 1, RATE).unwrap();
+        net.set_steepening(steepening);
+        net.set_gas(&gas, 293.0, &[1.0; 4], true);
+        let z = {
+            net.arrive();
+            let z = net.port(0).z;
+            net.scatter(&[0.0]);
+            z
+        };
+        let per = (RATE / f) as usize; // 96 samples
+        let skip = (len / c * RATE) as usize + 20 * per;
+        let n_fft = 40 * per;
+        let mut x = Vec::with_capacity(n_fft);
+        for i in 0..skip + n_fft {
+            let w = 2.0 * core::f64::consts::PI * f * i as f64 / RATE;
+            // (eased in over ten periods)
+            let ease = (i as f64 / (10 * per) as f64).min(1.0);
+            step(&mut net, ease * amp / z * w.sin());
+            if i >= skip {
+                // the wave as it reaches the end of the first pipe
+                x.push(net.arriving(0, true));
+            }
+        }
+        [tone(&x, f), tone(&x, 2.0 * f), tone(&x, 3.0 * f)].map(|v| 2.0 * v / n_fft as f64)
+    };
+    let lin = harmonics(false);
+    let non = harmonics(true);
+    println!("shock distance {x_shock:.2} m, pipe {len:.2} m");
+    println!("linear:     {:.1} Pa, 2nd {:.4}, 3rd {:.4} of it", lin[0], lin[1] / lin[0], lin[2] / lin[0]);
+    println!("steepening: {:.1} Pa, 2nd {:.4}, 3rd {:.4} of it (Fubini: 0.237, 0.084)", non[0], non[1] / non[0], non[2] / non[0]);
+    assert!(lin[1] / lin[0] < 1.0e-3);
+    assert!((non[1] / non[0] / 0.237 - 1.0).abs() < 0.08);
+    assert!((non[2] / non[0] / 0.084 - 1.0).abs() < 0.15);
 }

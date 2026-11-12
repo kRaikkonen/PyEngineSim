@@ -28,8 +28,13 @@ pub const FULL_SCALE_PA: f64 = 200.0;
 pub const REFERENCE_LEVEL: f64 = 0.2;
 
 /// The loudness curve never lifts a sound more than this far below the
-/// reference (silence is not amplified into noise): -60 dB.
-const LEVEL_FLOOR: f64 = 1.0e-3;
+/// reference (silence is not amplified into noise): -30 dB.
+const LEVEL_FLOOR: f64 = 0.0316;
+
+/// The operating point is approached, not jumped to: whoever publishes it
+/// does so in steps (a simulator at 60 Hz, a car link slower still), and a
+/// staircase of engine speed is a warble.  s.
+const EASE_TIME: f64 = 0.008;
 
 /// Time constant of the level the loudness curve reads, s.
 const LEVEL_TIME: f64 = 0.25;
@@ -44,6 +49,12 @@ const EAR_HZ: f64 = 250.0;
 /// not played above this rms of full scale: a low engine speed at full load
 /// is mostly bass, quiet to the ear and huge to the loudspeaker.
 const HEADROOM_RMS: f64 = 0.25;
+
+/// ...nor may its peaks (held for a second) pass this: a steep-fronted
+/// pulse train has peaks five times its rms, and the limiter is there to
+/// protect, not to shape every cycle.
+const HEADROOM_PEAK: f64 = 0.85;
+const PEAK_HOLD: f64 = 1.0;
 
 /// Nothing below this is played (two poles): no loudspeaker moves there,
 /// and steady flow is not sound.
@@ -105,9 +116,15 @@ pub struct Engine {
     q_valve: Vec<f64>,
     q_exhaust_prev: f64,
 
+    /// share of the way to the target covered in one control block
+    ease: f64,
+    orifice: [f64; crate::network::ORIFICE_CHANNELS],
+
     // the output stage
     level_ms: f64,
     raw_ms: f64,
+    peak: f64,
+    peak_k: f64,
     level_k: f64,
     ear_k: f64,
     ear: [f64; 2],
@@ -163,8 +180,12 @@ impl Engine {
             exhaust_net: None,
             q_valve: vec![0.0; spec.firing_deg.len()],
             q_exhaust_prev: 0.0,
+            ease: 1.0 - math::exp(-(CONTROL_BLOCK as f64) / (EASE_TIME * sample_rate)),
+            orifice: target.orifice,
             level_ms: 0.0,
             raw_ms: 0.0,
+            peak: 0.0,
+            peak_k: math::exp(-1.0 / (PEAK_HOLD * sample_rate)),
             level_k: 1.0 - math::exp(-1.0 / (LEVEL_TIME * sample_rate)),
             ear_k: 1.0 - math::exp(-2.0 * core::f64::consts::PI * EAR_HZ / sample_rate),
             ear: [0.0; 2],
@@ -201,6 +222,7 @@ impl Engine {
         self.q_exhaust_prev = 0.0;
         self.level_ms = 0.0;
         self.raw_ms = 0.0;
+        self.peak = 0.0;
         self.ear = [0.0; 2];
         self.rumble = [0.0; 2];
         if let Some(net) = &mut self.exhaust_net {
@@ -235,6 +257,7 @@ impl Engine {
             self.p_intake = c.p_intake;
             self.p_exhaust = c.p_exhaust;
             self.pos = 0;
+            self.orifice = c.orifice;
             if let Some(net) = &mut self.exhaust_net {
                 net.set_gas(&self.gas, c.t_exhaust, &c.orifice, true);
             }
@@ -305,15 +328,19 @@ impl Engine {
         }
         let n = CONTROL_BLOCK as f64;
         let t = &self.target;
-        self.d_rpm = (t.rpm - self.rpm) / n;
-        self.d_p_intake = (t.p_intake - self.p_intake) / n;
-        self.d_p_exhaust = (t.p_exhaust - self.p_exhaust) / n;
+        let k = self.ease / n;
+        self.d_rpm = (t.rpm - self.rpm) * k;
+        self.d_p_intake = (t.p_intake - self.p_intake) * k;
+        self.d_p_exhaust = (t.p_exhaust - self.p_exhaust) * k;
+        for (now, want) in self.orifice.iter_mut().zip(t.orifice.iter()) {
+            *now += (want - *now) * self.ease;
+        }
         for p in &mut self.exhaust_ports {
             p.set_temperature(&self.gas, t.t_exhaust);
         }
         self.intake_port.set_temperature(&self.gas, t.t_intake);
         if let Some(net) = &mut self.exhaust_net {
-            net.set_gas(&self.gas, t.t_exhaust, &t.orifice, false);
+            net.set_gas(&self.gas, t.t_exhaust, &self.orifice, false);
         }
         // the loudness curve (s.6.6): played level = reference
         // x (physical level / reference)^dynamics
@@ -321,7 +348,8 @@ impl Engine {
             let rel = (self.level_ms.sqrt() / t.level_ref).max(LEVEL_FLOOR);
             let g = REFERENCE_LEVEL / t.level_ref * math::powf(rel, t.dynamics - 1.0);
             let raw = self.raw_ms.sqrt();
-            t.volume * if g * raw > HEADROOM_RMS { HEADROOM_RMS / raw } else { g }
+            let g = if g * raw > HEADROOM_RMS { HEADROOM_RMS / raw } else { g };
+            t.volume * if g * self.peak > HEADROOM_PEAK { HEADROOM_PEAK / self.peak } else { g }
         } else {
             t.volume / FULL_SCALE_PA
         };
@@ -434,6 +462,7 @@ impl Engine {
         let e = e1 - self.ear[1];
         self.level_ms += self.level_k * (e * e - self.level_ms);
         self.raw_ms += self.level_k * (out.p_far * out.p_far - self.raw_ms);
+        self.peak = (self.peak * self.peak_k).max(out.p_far.abs());
         out
     }
 

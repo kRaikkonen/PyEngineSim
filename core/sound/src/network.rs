@@ -21,6 +21,14 @@
 //! their own: a chamber is a fat pipe, a side branch a pipe with one end
 //! closed.
 //!
+//! Large waves steepen.  A wave of pressure p' moves its gas at
+//! u = p' / (rho c) and travels at c + (gamma + 1)/2 u: the crests of an
+//! exhaust pulse catch up with its troughs, the pulse leans forward into a
+//! shock, and harmonics appear that the valve never made -- the hardness of
+//! a loaded exhaust.  In a delay line this is exact for a wave travelling
+//! one way (Earnshaw): what arrives now left earlier or later by
+//! `delay x (gamma + 1)/(2 gamma) x p' / p`.
+//!
 //! Flow noise (s.6.4) is not a layer added afterwards.  Wherever the flow
 //! loses pressure -- through the valve seat, through an orifice, out of the
 //! tail -- that loss is turbulent and fluctuates by a few per cent of
@@ -35,6 +43,9 @@ use crate::spec::SpecError;
 
 /// How many `Control::orifice` channels there are.
 pub const ORIFICE_CHANNELS: usize = 4;
+
+/// A change the control block asks for is spread over this many samples.
+const RAMP: u32 = crate::engine::CONTROL_BLOCK as u32;
 
 /// A pipe is never shorter than this many samples (the interpolator needs
 /// the room); a shorter one is lengthened to it.
@@ -166,12 +177,25 @@ struct Line {
     w: usize,
     /// samples
     delay: f64,
+    /// a change of delay is spread over a control block: per sample, and
+    /// how many samples of it are left
+    glide: f64,
+    left: u32,
     /// age of the first of the four taps, and their weights
     first: usize,
     h: [f64; 4],
     /// the loss: one pole, gain 1 at 0 Hz
     b: f64,
     lp: f64,
+    /// steepening: the fraction a pascal of wave shortens the delay by
+    /// ((gamma + 1) / (2 gamma p), 0: a linear pipe), the steady part of
+    /// what arrives (which is flow, not wave) and what arrived last sample
+    k_nl: f64,
+    dc: f64,
+    last: f64,
+    last2: f64,
+    /// the delay the last sample was read at
+    d_now: f64,
 }
 
 impl Line {
@@ -182,44 +206,93 @@ impl Line {
             mask: n - 1,
             w: 0,
             delay: 0.0,
+            glide: 0.0,
+            left: 0,
             first: 1,
             h: [0.0, 1.0, 0.0, 0.0],
             b: 0.0,
             lp: 0.0,
+            k_nl: 0.0,
+            dc: 0.0,
+            last: 0.0,
+            last2: 0.0,
+            d_now: MIN_DELAY,
         };
         l.set_delay(MIN_DELAY);
         l
     }
 
-    fn set_delay(&mut self, d: f64) {
+    /// Move to a delay of `d` samples: at once, or gliding there over the
+    /// next `over` samples (a step every control block would be a tone at
+    /// the block rate).
+    fn aim_delay(&mut self, d: f64, over: u32) {
         let d = d.max(MIN_DELAY).min((self.buf.len() - 4) as f64);
+        if over == 0 {
+            self.left = 0;
+            self.set_delay(d);
+            self.d_now = d;
+        } else {
+            self.glide = (d - self.delay) / over as f64;
+            self.left = if self.glide != 0.0 { over } else { 0 };
+        }
+    }
+
+    fn set_delay(&mut self, d: f64) {
         if d == self.delay {
             return;
         }
         self.delay = d;
-        let whole = d.floor();
-        // taps aged whole-1, whole, whole+1, whole+2; the point is at x = 1 + f
-        self.first = whole as usize - 1;
-        let x = 1.0 + (d - whole);
-        self.h = [
-            -(x - 1.0) * (x - 2.0) * (x - 3.0) / 6.0,
-            x * (x - 2.0) * (x - 3.0) / 2.0,
-            -x * (x - 1.0) * (x - 3.0) / 2.0,
-            x * (x - 1.0) * (x - 2.0) / 6.0,
-        ];
+        (self.first, self.h) = taps(d);
     }
 
-    /// What arrives at the far end this sample.
+    /// What arrives at the far end this sample.  `k_mean`: per sample, for
+    /// the slow mean that tells flow from wave.  (Slow -- a third of a
+    /// second -- because a wave measured against a mean that follows it
+    /// would not keep its mass: with a fixed reference, a steepening
+    /// periodic wave carries exactly the mass it was sent with.)
     #[inline(always)]
-    fn read(&self) -> f64 {
+    fn read(&mut self, k_mean: f64) -> f64 {
+        if self.left > 0 {
+            self.left -= 1;
+            self.set_delay(self.delay + self.glide);
+        }
+        // How much sooner the wave now arriving got here than a small one
+        // would have: judged by the two samples before it (their mean -- a
+        // guess that alternates from sample to sample cancels in it).
+        //
+        // Where a front has steepened into a shock, "what left when" has
+        // three answers and this guess would jump between them: noise.  So
+        // the point the line is read at never moves more than `SLEW`
+        // samples a sample -- a front compresses up to that rate and no
+        // faster.  Shocks therefore form later than they should; the fix is
+        // a proper shock (equal areas), not a higher rate.
+        const SLEW: f64 = 0.7;
+        let x = self.k_nl * (0.5 * (self.last + self.last2) - self.dc);
+        let small = x.abs() * self.delay < 1.0e-4 && (self.d_now - self.delay).abs() < 1.0e-4;
+        let (first, h) = if self.k_nl == 0.0 || small {
+            self.d_now = self.delay;
+            (self.first, self.h)
+        } else {
+            let want = self.delay * (1.0 - x.clamp(-0.4, 0.4));
+            let d = want
+                .clamp(self.d_now - SLEW, self.d_now + SLEW)
+                .max(MIN_DELAY)
+                .min((self.buf.len() - 4) as f64);
+            self.d_now = d;
+            taps(d)
+        };
         // the sample written last (at w - 1) is one sample old
-        let i = self.w.wrapping_sub(self.first);
+        let i = self.w.wrapping_sub(first);
         let b = &self.buf;
         let m = self.mask;
-        self.h[0] * b[i & m]
-            + self.h[1] * b[i.wrapping_sub(1) & m]
-            + self.h[2] * b[i.wrapping_sub(2) & m]
-            + self.h[3] * b[i.wrapping_sub(3) & m]
+        let y = h[0] * b[i & m]
+            + h[1] * b[i.wrapping_sub(1) & m]
+            + h[2] * b[i.wrapping_sub(2) & m]
+            + h[3] * b[i.wrapping_sub(3) & m];
+        self.dc += k_mean * (y - self.dc);
+        self.last2 = self.last;
+        self.last = y;
+        y
     }
 
     /// Send a wave in at the near end.
@@ -233,6 +306,10 @@ impl Line {
     fn clear(&mut self) {
         self.buf.iter_mut().for_each(|v| *v = 0.0);
         self.lp = 0.0;
+        self.dc = 0.0;
+        self.last = 0.0;
+        self.last2 = 0.0;
+        self.d_now = self.delay;
     }
 
     /// What has been sent in and has not yet come out, Pa samples: tap k
@@ -253,6 +330,24 @@ impl Line {
     }
 }
 
+/// The four taps of a delay of `d` samples: the age of the first, and the
+/// cubic Lagrange weights (taps aged whole-1 .. whole+2, the point between
+/// the middle two).
+#[inline(always)]
+fn taps(d: f64) -> (usize, [f64; 4]) {
+    let whole = d.floor();
+    let x = 1.0 + (d - whole);
+    (
+        whole as usize - 1,
+        [
+            -(x - 1.0) * (x - 2.0) * (x - 3.0) / 6.0,
+            x * (x - 2.0) * (x - 3.0) / 2.0,
+            -x * (x - 1.0) * (x - 3.0) / 2.0,
+            x * (x - 1.0) * (x - 2.0) / 6.0,
+        ],
+    )
+}
+
 struct Pipe {
     spec: PipeSpec,
     /// its gas now, K
@@ -263,7 +358,7 @@ struct Pipe {
 enum Kind {
     Junction,
     Valve { cylinder: usize },
-    Orifice { r: f64, k: f64, channel: i32, r_now: f64, k_now: f64 },
+    Orifice { r: f64, k: f64, channel: i32 },
     Open { radius: f64, b0: f64, b1: f64, a1: f64, x1: f64, y1: f64, q_prev: f64 },
 }
 
@@ -291,18 +386,23 @@ struct Hiss {
 
 impl Hiss {
     /// Once a control block: the band follows the flow speed U over the
-    /// size d of the passage -- from 0.05 U/d to 0.5 U/d (the Strouhal
-    /// numbers separated flow is loudest at), never narrower than 40-150 Hz.
+    /// size d of the passage -- from 0.03 U/d to 0.2 U/d (a Strouhal
+    /// number of 0.2 is where a jet is loudest), never narrower than
+    /// 40-150 Hz.  Above the band it falls at two poles: a rush, not a hiss.
     fn retune(&mut self, rate: f64) {
         if self.amount <= 0.0 {
             return;
         }
         let d = (self.area * (4.0 / core::f64::consts::PI)).sqrt();
         let u = self.q_abs / (self.rho * self.area);
-        let hi = (0.5 * u / d + 150.0).min(0.4 * rate);
-        let lo = (0.05 * u / d + 40.0).min(0.5 * hi);
-        self.a_lp = 1.0 - math::exp(-2.0 * core::f64::consts::PI * hi / rate);
-        self.a_hp = 1.0 - math::exp(-2.0 * core::f64::consts::PI * lo / rate);
+        let hi = (0.2 * u / d + 150.0).min(0.4 * rate);
+        let lo = (0.03 * u / d + 40.0).min(0.5 * hi);
+        let a_lp = 1.0 - math::exp(-2.0 * core::f64::consts::PI * hi / rate);
+        let a_hp = 1.0 - math::exp(-2.0 * core::f64::consts::PI * lo / rate);
+        // the band follows the 20 ms mean of the flow, itself eased over
+        // some thirty blocks
+        self.a_lp += 0.03 * (a_lp - self.a_lp);
+        self.a_hp += 0.03 * (a_hp - self.a_hp);
         // white noise of unit variance through the two poles (each 1 - r
         // z^-1 below a) keeps a^4 (1 + r^2) / (1 - r^2)^3 of it
         let r2 = (1.0 - self.a_lp) * (1.0 - self.a_lp);
@@ -334,8 +434,15 @@ struct Node {
     /// an open end reflects less while gas streams out of it: (1 - M) / (1 + M)
     /// of the sound -- not of the steady part, `steady`, which stays whole
     /// (the static pressure at the end of a pipe is that of the air outside)
-    flow_loss: f64,
+    mach_per_q: f64,
     steady: f64,
+    /// an orifice's resistance now, and its change per sample while a
+    /// control block re-aims it
+    r_now: f64,
+    k_now: f64,
+    d_r: f64,
+    d_k: f64,
+    ramp: u32,
 }
 
 /// What a valve node shows its cylinder this sample.
@@ -368,6 +475,10 @@ pub struct Network {
     rng: u64,
     /// per sample, for the 20 ms flow averages
     k_mean: f64,
+    /// per sample, for the 0.3 s mean a wave is measured against
+    k_slow: f64,
+    /// do large waves steepen (they do; off only to audit the linear pipe)
+    steepening: bool,
     /// mass flow out of all open ends this sample, kg/s, and its rate of
     /// change, kg/s^2 -- the strength of the monopole they are
     pub q_out: f64,
@@ -410,9 +521,7 @@ impl Network {
                     valve_node[cylinder as usize] = i;
                     Kind::Valve { cylinder: cylinder as usize }
                 }
-                NodeSpec::Orifice { r, k, channel, .. } => {
-                    Kind::Orifice { r, k, channel, r_now: r, k_now: k }
-                }
+                NodeSpec::Orifice { r, k, channel, .. } => Kind::Orifice { r, k, channel },
                 NodeSpec::Open { radius, .. } => {
                     Kind::Open { radius, b0: -1.0, b1: 0.0, a1: 0.0, x1: 0.0, y1: 0.0, q_prev: 0.0 }
                 }
@@ -444,8 +553,13 @@ impl Network {
                 count: ends.len() - first,
                 z: 0.0,
                 hiss,
-                flow_loss: 1.0,
+                mach_per_q: 0.0,
                 steady: 0.0,
+                r_now: 0.0,
+                k_now: 0.0,
+                d_r: 0.0,
+                d_k: 0.0,
+                ramp: 0,
             });
         }
         let mut net = Network {
@@ -462,6 +576,8 @@ impl Network {
             t_port: 0.0,
             rng: 0x2545_F491_4F6C_DD1D,
             k_mean: 1.0 - math::exp(-1.0 / (0.020 * rate)),
+            k_slow: 1.0 - math::exp(-1.0 / (0.3 * rate)),
+            steepening: true,
             q_out: 0.0,
             dq_out: 0.0,
         };
@@ -485,7 +601,6 @@ impl Network {
             n.hiss.lp = 0.0;
             n.hiss.lp2 = 0.0;
             n.hiss.hp = 0.0;
-            n.flow_loss = 1.0;
             n.steady = 0.0;
         }
         self.rng = 0x2545_F491_4F6C_DD1D;
@@ -495,6 +610,23 @@ impl Network {
 
     pub fn pipes(&self) -> usize {
         self.pipes.len()
+    }
+
+    /// The wave arriving this sample at an end of pipe `i` (its downstream
+    /// end if `downstream`), Pa.
+    pub fn arriving(&self, i: usize, downstream: bool) -> f64 {
+        self.arriving[2 * i + downstream as usize]
+    }
+
+    /// Large waves steepen unless this is turned off (the audits of the
+    /// linear pipe: exact mass accounting, textbook transmission loss).
+    pub fn set_steepening(&mut self, on: bool) {
+        self.steepening = on;
+        if !on {
+            for l in &mut self.lines {
+                l.k_nl = 0.0;
+            }
+        }
     }
 
     /// Pipe `i`: its gas temperature (K), its delay (samples) and the
@@ -507,8 +639,8 @@ impl Network {
 
     /// The gas in the pipes follows the gas in the port (`t_port`, K), and
     /// the controllable orifices follow their channels.  Called once a
-    /// control block; a pipe warms or cools at most 0.2 K a call unless
-    /// `jump`.
+    /// control block; a pipe warms or cools at most 0.05 K a call (75 K/s)
+    /// unless `jump`, and its delay glides there.
     pub fn set_gas(
         &mut self,
         gas: &GasModel,
@@ -516,21 +648,35 @@ impl Network {
         orifice: &[f64; ORIFICE_CHANNELS],
         jump: bool,
     ) {
+        let over = if jump { 0 } else { RAMP };
         for n in &mut self.nodes {
-            if let Kind::Orifice { r, k, channel, r_now, k_now } = &mut n.kind {
-                let m = if *channel >= 0 { orifice[*channel as usize] } else { 1.0 };
-                *r_now = *r * m;
-                *k_now = *k * m;
+            if let Kind::Orifice { r, k, channel } = n.kind {
+                let m = if channel >= 0 { orifice[channel as usize] } else { 1.0 };
+                if jump {
+                    n.r_now = r * m;
+                    n.k_now = k * m;
+                    n.ramp = 0;
+                } else {
+                    n.d_r = (r * m - n.r_now) / RAMP as f64;
+                    n.d_k = (k * m - n.k_now) / RAMP as f64;
+                    n.ramp = if n.d_r != 0.0 || n.d_k != 0.0 { RAMP } else { 0 };
+                }
             }
             n.hiss.retune(self.rate);
-            if let Kind::Open { .. } = n.kind {
-                // Mach number of the gas streaming out, from its 20 ms mean
-                let pipe = &self.pipes[(self.ends[n.first] / 2) as usize];
-                if pipe.t > 0.0 {
-                    let u = n.hiss.q_mean.max(0.0) / (n.hiss.rho * pipe.spec.area);
-                    let m = (u / c_of(gas, pipe.t)).min(0.6);
-                    n.flow_loss = (1.0 - m) / (1.0 + m);
+        }
+        if self.steepening {
+            // (gamma + 1) / (2 gamma p) of the gas in each pipe, at the
+            // pressure it stands at now: the outside plus its two waves'
+            // steady parts
+            for (i, p) in self.pipes.iter().enumerate() {
+                if p.t <= 0.0 {
+                    continue;
                 }
+                let g = gas.gamma(p.t);
+                let stands = 101_325.0 + self.lines[2 * i].dc + self.lines[2 * i + 1].dc;
+                let k = (g + 1.0) / (2.0 * g * stands.max(30_000.0));
+                self.lines[2 * i].k_nl = k;
+                self.lines[2 * i + 1].k_nl = k;
             }
         }
         if t_port == self.t_port && !jump {
@@ -539,7 +685,7 @@ impl Network {
         let mut settled = true;
         for (i, p) in self.pipes.iter_mut().enumerate() {
             let want = self.t_ambient + p.spec.heat * (t_port - self.t_ambient).max(0.0);
-            let t = if jump { want } else { p.t + (want - p.t).clamp(-0.2, 0.2) };
+            let t = if jump { want } else { p.t + (want - p.t).clamp(-0.05, 0.05) };
             if t != want {
                 settled = false;
             }
@@ -560,7 +706,7 @@ impl Network {
             let b = loss_pole(kappa, self.rate);
             let d = p.spec.length / c * self.rate;
             for l in &mut self.lines[2 * i..2 * i + 2] {
-                l.set_delay(d);
+                l.aim_delay(d, over);
                 l.b = b;
             }
         }
@@ -571,7 +717,10 @@ impl Network {
             n.z = 1.0 / sum;
             // the gas a hiss is made in: that of the first pipe at the node,
             // at the pressure outside
-            n.hiss.rho = 101_325.0 / (R_GAS * self.pipes[(e[0] / 2) as usize].t);
+            let pipe = &self.pipes[(e[0] / 2) as usize];
+            n.hiss.rho = 101_325.0 / (R_GAS * pipe.t);
+            // Mach number of the gas in that pipe per kg/s through it
+            n.mach_per_q = 1.0 / (n.hiss.rho * pipe.spec.area * c_of(gas, pipe.t));
             if let Kind::Open { radius, b0, b1, a1, .. } = &mut n.kind {
                 // An unflanged end at low ka (Levine and Schwinger 1948): the
                 // air outside is a mass 0.6133 a long beside a resistance
@@ -598,8 +747,8 @@ impl Network {
     pub fn arrive(&mut self) {
         for i in 0..self.pipes.len() {
             // line 2i left end 2i (node a): it arrives at end 2i + 1
-            self.arriving[2 * i + 1] = self.lines[2 * i].read();
-            self.arriving[2 * i] = self.lines[2 * i + 1].read();
+            self.arriving[2 * i + 1] = self.lines[2 * i].read(self.k_slow);
+            self.arriving[2 * i] = self.lines[2 * i + 1].read(self.k_slow);
         }
         for (k, &ni) in self.valve_node.iter().enumerate() {
             let n = &self.nodes[ni];
@@ -664,7 +813,13 @@ impl Network {
                         self.lines[e as usize].write(p - self.arriving[e as usize]);
                     }
                 }
-                Kind::Orifice { r_now, k_now, .. } => {
+                Kind::Orifice { .. } => {
+                    if n.ramp > 0 {
+                        n.ramp -= 1;
+                        n.r_now += n.d_r;
+                        n.k_now += n.d_k;
+                    }
+                    let (r_now, k_now) = (n.r_now, n.k_now);
                     // flow q from end 1 to end 2:
                     //   p1 = 2 a1 - z1 q,  p2 = 2 a2 + z2 q,  p1 - p2 = r q + k q|q|
                     let (e1, e2) = (ends[0] as usize, ends[1] as usize);
@@ -707,7 +862,10 @@ impl Network {
                         *x1 = a;
                         *y1 = refl;
                         n.steady += k_mean * (refl - n.steady);
-                        let back = n.steady + n.flow_loss * (refl - n.steady) + 0.5 * s;
+                        // gas streaming out at Mach M (its 20 ms mean) takes
+                        // sound with it: (1 - M) / (1 + M) comes back
+                        let m = (n.hiss.q_mean.max(0.0) * n.mach_per_q).min(0.6);
+                        let back = n.steady + (1.0 - m) / (1.0 + m) * (refl - n.steady) + 0.5 * s;
                         self.lines[e].write(back);
                         let q = (a_in - back) * self.y[e];
                         q_out += q;
