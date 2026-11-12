@@ -60,6 +60,14 @@ const PEAK_HOLD: f64 = 1.0;
 /// and steady flow is not sound.
 const RUMBLE_HZ: f64 = 18.0;
 
+/// The ground.  Sources a third of a metre up, an ear at 1.2 m, a metre or
+/// two away: the sound also arrives off the road, 1.3 ms later and a little
+/// weaker (asphalt returns nearly all of it; the longer path and the angle
+/// take the rest).  Without it the engine plays in a void.
+const GROUND_DELAY: f64 = 0.0013;
+const GROUND_GAIN: f64 = 0.6;
+const GROUND_MAX: usize = 256;
+
 /// What the engine's valves pass in one sample, all cylinders together.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sample {
@@ -114,6 +122,14 @@ pub struct Engine {
 
     exhaust_net: Option<Network>,
     q_valve: Vec<f64>,
+    /// the intake side: its network, one port per cylinder, and what each
+    /// cylinder pushed back into its port (minus what it drew)
+    intake_net: Option<Network>,
+    intake_ports: Vec<Port>,
+    q_intake_back: Vec<f64>,
+    ground: [f64; GROUND_MAX],
+    ground_at: usize,
+    ground_lag: usize,
     q_exhaust_prev: f64,
 
     /// share of the way to the target covered in one control block
@@ -179,6 +195,15 @@ impl Engine {
             burn_len: 1.0,
             exhaust_net: None,
             q_valve: vec![0.0; spec.firing_deg.len()],
+            intake_net: None,
+            intake_ports: vec![
+                Port::new(&gas, target.p_intake, target.t_intake, 0.0);
+                spec.firing_deg.len()
+            ],
+            q_intake_back: vec![0.0; spec.firing_deg.len()],
+            ground: [0.0; GROUND_MAX],
+            ground_at: 0,
+            ground_lag: ((GROUND_DELAY * sample_rate).round() as usize).clamp(1, GROUND_MAX - 1),
             q_exhaust_prev: 0.0,
             ease: 1.0 - math::exp(-(CONTROL_BLOCK as f64) / (EASE_TIME * sample_rate)),
             orifice: target.orifice,
@@ -209,6 +234,18 @@ impl Engine {
         Ok(())
     }
 
+    /// Give the intake valves a network to draw from: runners, a plenum, a
+    /// throttle (an orifice on a control channel), an airbox, a mouth open
+    /// to the air.  With one, the pressure in the intake ports is the
+    /// network's own, about `Control::p_exhaust` (the air outside), and
+    /// `Control::p_intake` no longer feeds the valves.
+    pub fn attach_intake(&mut self, spec: &NetworkSpec) -> Result<(), SpecError> {
+        let mut net = Network::new(spec, self.firing_deg.len(), self.rate)?;
+        net.set_gas(&self.gas, self.target.t_intake, &self.target.orifice, true);
+        self.intake_net = Some(net);
+        Ok(())
+    }
+
     pub fn exhaust(&self) -> Option<&Network> {
         self.exhaust_net.as_ref()
     }
@@ -228,6 +265,10 @@ impl Engine {
         if let Some(net) = &mut self.exhaust_net {
             net.clear();
         }
+        if let Some(net) = &mut self.intake_net {
+            net.clear();
+        }
+        self.ground = [0.0; GROUND_MAX];
         self.cyl.clear();
         for k in 0..self.firing_deg.len() {
             let th = math::wrap720_near(self.crank - self.firing_deg[k]);
@@ -260,6 +301,9 @@ impl Engine {
             self.orifice = c.orifice;
             if let Some(net) = &mut self.exhaust_net {
                 net.set_gas(&self.gas, c.t_exhaust, &c.orifice, true);
+            }
+            if let Some(net) = &mut self.intake_net {
+                net.set_gas(&self.gas, c.t_intake, &c.orifice, true);
             }
             self.begin_block();
             self.d_rpm = 0.0;
@@ -339,8 +383,14 @@ impl Engine {
             p.set_temperature(&self.gas, t.t_exhaust);
         }
         self.intake_port.set_temperature(&self.gas, t.t_intake);
+        for p in &mut self.intake_ports {
+            p.set_temperature(&self.gas, t.t_intake);
+        }
         if let Some(net) = &mut self.exhaust_net {
             net.set_gas(&self.gas, t.t_exhaust, &self.orifice, false);
+        }
+        if let Some(net) = &mut self.intake_net {
+            net.set_gas(&self.gas, t.t_intake, &self.orifice, false);
         }
         // the loudness curve (s.6.6): played level = reference
         // x (physical level / reference)^dynamics
@@ -392,6 +442,23 @@ impl Engine {
                 }
             }
         }
+        match &mut self.intake_net {
+            Some(net) => {
+                net.arrive();
+                let floor = 0.05 * self.p_exhaust;
+                for (k, p) in self.intake_ports.iter_mut().enumerate() {
+                    let v = net.port(k);
+                    p.p_in = (self.p_exhaust + v.p).max(floor);
+                    p.z = v.z;
+                }
+            }
+            None => {
+                for p in &mut self.intake_ports {
+                    p.p_in = self.p_intake;
+                    p.z = self.intake_port.z;
+                }
+            }
+        }
 
         let dtheta = 6.0 * self.rpm * self.dt;
         let mut crank = self.crank + dtheta;
@@ -431,8 +498,10 @@ impl Engine {
             let (sf, cf) = self.firing_sc[k];
             let sc = (s * cf - c0 * sf, c0 * cf + s * sf);
             env.exhaust = &self.exhaust_ports[k];
+            env.intake = &self.intake_ports[k];
             let (qe, qi) = c.step(&env, th, sc, (cut >> k) & 1 == 1);
             self.q_valve[k] = qe;
+            self.q_intake_back[k] = -qi;
             out.q_exhaust += qe;
             out.q_intake += qi;
         }
@@ -449,7 +518,21 @@ impl Engine {
             }
         };
         self.q_exhaust_prev = out.q_exhaust;
-        let p = dq * (1.0 / (4.0 * core::f64::consts::PI));
+        // the intake mouth is a source too
+        let dq = match &mut self.intake_net {
+            Some(net) => {
+                net.scatter(&self.q_intake_back);
+                dq + net.dq_out
+            }
+            None => dq,
+        };
+        let direct = dq * (1.0 / (4.0 * core::f64::consts::PI));
+        // and all of it once more off the ground
+        let at = self.ground_at;
+        self.ground[at] = direct;
+        let p = direct
+            + GROUND_GAIN * self.ground[(at + GROUND_MAX - self.ground_lag) & (GROUND_MAX - 1)];
+        self.ground_at = (at + 1) & (GROUND_MAX - 1);
         // what is played: without the rumble
         self.rumble[0] += self.rumble_k * (p - self.rumble[0]);
         let p1 = p - self.rumble[0];

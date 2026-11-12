@@ -78,6 +78,8 @@ class Network:
     # bypass valves (orifices on CH_FLAP) open above this speed or load (0: none)
     flap_rpm: float = 0.0
     flap_load: float = 0.0
+    # the throttle orifice wide open (intake networks)
+    throttle_k: float = 0.0
     note: str = ""
 
     # ---- building
@@ -565,6 +567,67 @@ def ferrari_f2004_exhaust(eng=None):
         n.make(x, OPEN, radius=0.0325, noise=TAIL_NOISE,
                distance=_far(0.25 if i == 0 else -0.25))
     return n
+
+
+CH_THROTTLE = 2
+
+
+def plenum_intake(eng, runner, runner_d, plenum_l, throttle_d, throttles, airbox_l,
+                  mouth_d, distance, duct=0.35, note=""):
+    """An intake: a runner per cylinder into one plenum, the throttle (an
+    orifice on CH_THROTTLE whose resistance the operating point sets so
+    that the manifold sits at the pressure the simulator says), a duct, an
+    airbox, a mouth open to the air ``distance`` m from the listener.
+
+    The intake hardware of the five cars was not found in any source beyond
+    the facts each entry of INTAKES names; the dimensions are estimates.
+    """
+    n = Network(note=note, valve_noise=VALVE_NOISE)
+    a_run = circle(runner_d)
+    a_thr = throttles * circle(throttle_d)
+    plenum = n.node()
+    for k in range(len(eng.cylinders)):
+        n.join(n.node(VALVE, index=k), plenum, runner, a_run, 0.0, 2.0, name="runner %d" % (k + 1))
+    x = n.pipe(plenum, 0.40, plenum_l * 1.0e-3 / 0.40, 0.0, 2.0, name="plenum")
+    # a wide-open plate still costs 0.3 of a dynamic head
+    n.throttle_k = 0.3 / (2.0 * 1.18 * a_thr * a_thr)
+    n.make(x, ORIFICE, k=n.throttle_k, r=0.02 * n.throttle_k, index=CH_THROTTLE,
+           throat=a_thr, noise=LOSS_NOISE)
+    x = n.pipe(x, duct, a_thr, 0.0, name="duct")
+    if airbox_l > 0.0:
+        x = n.chamber(x, a_thr, 0.30, airbox_l * 1.0e-3 / 0.30, 0.0, 8.0,
+                      a_out=circle(mouth_d), name="airbox")
+        x = n.pipe(x, 0.25, circle(mouth_d), 0.0, name="snorkel")
+    n.make(x, OPEN, radius=0.5 * mouth_d, noise=TAIL_NOISE, distance=distance)
+    return n
+
+
+# What is known of each intake, and the estimates around it.
+INTAKES = {
+    # Murcielago: three-stage variable intake (press release); side intakes
+    "6": dict(runner=0.35, runner_d=0.048, plenum_l=12.0, throttle_d=0.070, throttles=2,
+              airbox_l=14.0, mouth_d=0.110, distance=2.2),
+    # 458: four-stage variable-resonance manifold (not modelled: one state)
+    "4": dict(runner=0.30, runner_d=0.046, plenum_l=9.0, throttle_d=0.080, throttles=2,
+              airbox_l=12.0, mouth_d=0.110, distance=2.2),
+    # R8 4.2: fixed manifold, one 90 mm throttle (SSP 377, RS4)
+    "audiv8": dict(runner=0.32, runner_d=0.042, plenum_l=8.0, throttle_d=0.090, throttles=1,
+                   airbox_l=12.0, mouth_d=0.100, distance=2.2),
+    # LFA: ten throttles, a surge tank built to radiate (the radiating wall
+    # itself is not modelled); front-mid engine
+    "lfax": dict(runner=0.30, runner_d=0.042, plenum_l=8.0, throttle_d=0.045, throttles=10,
+                 airbox_l=12.0, mouth_d=0.100, distance=4.5),
+    # F2004: trumpets in an airbox fed from above the head of the driver
+    "7": dict(runner=0.10, runner_d=0.050, plenum_l=30.0, throttle_d=0.050, throttles=10,
+              airbox_l=0.0, mouth_d=0.150, distance=1.8, duct=0.45),
+}
+INTAKES["5"] = INTAKES["lfax"]
+
+
+def intake_for(key, eng):
+    """The intake network of preset ``key``, or None where none is written."""
+    kw = INTAKES.get(key)
+    return plenum_intake(eng, note="intake of %s (dimensions estimated)" % key, **kw) if kw else None
 
 
 _BY_HAND = {"a3": a3_exhaust, "6": murcielago_exhaust, "4": ferrari_458_exhaust,

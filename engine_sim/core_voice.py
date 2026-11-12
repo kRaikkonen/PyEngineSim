@@ -8,8 +8,10 @@ Nothing of the old sound chain (audio.py) runs while this voice is on: no
 drawn pulse, no reverb, no AGC.  What the phone will play is this same
 library given the same record (docs/REDESIGN_V2.md s.4, s.6).
 
-What it is NOT yet: only the exhaust speaks.  No intake, no engine block, no
-turbo whistle, no cabin -- the listener stands 1 m from the tailpipe.
+What speaks: the exhaust, the intake mouth (where a car has an intake
+written), and both once more off the ground.  NOT yet: the engine block and
+its mechanical noise, a turbo whistle, the cabin.  The listener stands 1 m
+behind the car, half a metre off its centre line.
 """
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ def available():
     return os.path.exists(corelib.library_path())
 
 
-def operating_point(sim, net=None, state=None):
+def operating_point(sim, net=None, intake=None):
     """The simulator's state as the core's record: a dict of
     corelib.control() arguments.
 
@@ -77,6 +79,12 @@ def operating_point(sim, net=None, state=None):
         dp = max(back - 1.0, 0.0) * P_ATM * 0.85     # the rest is cat and pipe
         want = dp / max(q * q, 1.0e-9) / net.turbine_k
         orifice[core_exhaust.CH_TURBINE] = min(max(want, 0.3), 30.0)
+    if intake is not None and intake.throttle_k > 0.0 and rpm > 50.0:
+        # the throttle plate stands where it holds the manifold at the
+        # pressure the simulator has: that drop at the air flow of this moment
+        q_air = n * charge * rpm / 120.0
+        want = max(P_ATM - p_man, 0.0) / max(q_air * q_air, 1.0e-9) / intake.throttle_k
+        orifice[core_exhaust.CH_THROTTLE] = min(max(want, 1.0), 1.0e6)
     if net is not None and net.flap_rpm > 0.0:
         # a shut bypass valve passes next to nothing (its loss x 3000)
         is_open = rpm >= net.flap_rpm or load >= net.flap_load
@@ -116,6 +124,9 @@ class CoreVoice:
         self.net = core_exhaust.exhaust_for(key, eng)
         self.core = corelib.Core(self.spec, self.rate)
         self.core.attach_exhaust(self.net)
+        self.intake = core_exhaust.intake_for(key, eng)
+        if self.intake is not None:
+            self.core.attach_intake(self.intake)
         # how much of the real dynamic range is played (s.6.6): 1 = idle is
         # 30-40 dB below full load, as outside the car; 0 = constant level
         self.dynamics = 0.5
@@ -143,7 +154,7 @@ class CoreVoice:
         return float(max(self.core.level, 1.0e-3))
 
     def _control(self):
-        kw = operating_point(self.sim, self.net)
+        kw = operating_point(self.sim, self.net, self.intake)
         return corelib.control(level_ref=self.level_ref, dynamics=self.dynamics,
                                volume=self.volume, **kw)
 

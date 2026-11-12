@@ -14,7 +14,7 @@ use std::sync::Arc;
 use es_sound::{Control, Engine, EngineSpec, Inbox, NetworkSpec, NodeSpec, PipeSpec, ValveCurve};
 
 /// Bumped whenever a struct below or a function's meaning changes.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// A valve's effective flow area against crank angle (see `ValveCurve`).
 #[repr(C)]
@@ -409,6 +409,84 @@ pub unsafe extern "C" fn es_attach_exhaust(
         Ok(()) => 1,
         Err(_) => 0,
     }
+}
+
+/// Give the intake valves a network to draw from (as `es_attach_exhaust`).
+///
+/// # Safety
+/// As `es_attach_exhaust`.
+#[no_mangle]
+pub unsafe extern "C" fn es_attach_intake(
+    e: *mut EsEngine,
+    pipes: *const EsPipe,
+    n_pipes: i32,
+    nodes: *const EsNode,
+    n_nodes: i32,
+    t_ambient: f64,
+    valve_noise: f64,
+) -> i32 {
+    // SAFETY: by contract.
+    let Some(spec) = (unsafe { network_spec(pipes, n_pipes, nodes, n_nodes, t_ambient, valve_noise) })
+    else {
+        return 0;
+    };
+    if e.is_null() {
+        return 0;
+    }
+    // SAFETY: by contract.
+    match unsafe { (*e).engine.attach_intake(&spec) } {
+        Ok(()) => 1,
+        Err(_) => 0,
+    }
+}
+
+/// # Safety
+/// The arrays readable for their counts.
+unsafe fn network_spec(
+    pipes: *const EsPipe,
+    n_pipes: i32,
+    nodes: *const EsNode,
+    n_nodes: i32,
+    t_ambient: f64,
+    valve_noise: f64,
+) -> Option<NetworkSpec> {
+    if pipes.is_null() || nodes.is_null() || n_pipes <= 0 || n_nodes <= 0 {
+        return None;
+    }
+    // SAFETY: by contract.
+    let (pipes, nodes) = unsafe {
+        (
+            core::slice::from_raw_parts(pipes, n_pipes as usize),
+            core::slice::from_raw_parts(nodes, n_nodes as usize),
+        )
+    };
+    let mut spec = NetworkSpec { pipes: Vec::new(), nodes: Vec::new(), t_ambient, valve_noise };
+    for p in pipes {
+        spec.pipes.push(PipeSpec {
+            length: p.length,
+            area: p.area,
+            heat: p.heat,
+            loss_db: p.loss_db,
+            a: p.a,
+            b: p.b,
+        });
+    }
+    for n in nodes {
+        spec.nodes.push(match n.kind {
+            0 => NodeSpec::Junction,
+            1 if n.index >= 0 => NodeSpec::Valve { cylinder: n.index as u32 },
+            2 => NodeSpec::Orifice {
+                r: n.r,
+                k: n.k,
+                channel: n.index.max(-1),
+                throat: n.throat,
+                noise: n.noise,
+            },
+            3 => NodeSpec::Open { radius: n.radius, noise: n.noise, distance: n.distance },
+            _ => return None,
+        });
+    }
+    Some(spec)
 }
 
 /// The instrument tap on the exhaust: advance `n` samples exactly as

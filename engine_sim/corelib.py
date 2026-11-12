@@ -18,7 +18,7 @@ from ctypes import POINTER, Structure, c_double, c_float, c_int, c_uint32, c_uin
 
 import numpy as np
 
-ABI_VERSION = 3
+ABI_VERSION = 4
 P_ATM = 101325.0
 
 
@@ -125,6 +125,8 @@ def lib():
     L.es_attach_exhaust.restype = c_int
     L.es_attach_exhaust.argtypes = [c_void_p, POINTER(EsPipe), c_int,
                                     POINTER(EsNode), c_int, c_double, c_double]
+    L.es_attach_intake.restype = c_int
+    L.es_attach_intake.argtypes = L.es_attach_exhaust.argtypes
     L.es_listen.argtypes = [c_void_p, c_int, c_int] + [POINTER(c_double)] * 4
     L.es_level.restype = c_double
     L.es_level.argtypes = [c_void_p]
@@ -212,6 +214,18 @@ class Core:
 
     def set_port_impedance(self, exhaust_z, intake_z=0.0):
         lib().es_set_port_impedance(self._h, float(exhaust_z), float(intake_z))
+
+    def attach_intake(self, net):
+        """The same for the intake valves (engine_sim.core_exhaust.Network)."""
+        pipes = (EsPipe * len(net.pipes))(*[
+            EsPipe(p.length, p.area, p.heat, p.loss_db, p.a, p.b) for p in net.pipes])
+        nodes = (EsNode * len(net.nodes))(*[
+            EsNode(n.kind, n.index, n.r, n.k, n.radius, n.throat, n.noise, n.distance)
+            for n in net.nodes])
+        if not lib().es_attach_intake(self._h, pipes, len(pipes), nodes, len(nodes),
+                                      float(net.t_ambient), float(net.valve_noise)):
+            raise ValueError("the core refused this intake network")
+        self.intake = net
 
     def attach_exhaust(self, net):
         """``net``: an engine_sim.core_exhaust.Network -- the pipes the exhaust

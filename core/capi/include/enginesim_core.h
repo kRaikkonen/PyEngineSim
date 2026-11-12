@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-#define ES_ABI_VERSION 3u
+#define ES_ABI_VERSION 4u
 
 typedef struct es_engine es_engine;
 
@@ -128,6 +128,12 @@ int32_t es_control(const es_engine *e, const es_control_t *c);
 int32_t es_attach_exhaust(es_engine *e, const es_pipe_t *pipes, int32_t n_pipes,
                           const es_node_t *nodes, int32_t n_nodes,
                           double t_ambient, double valve_noise);
+
+/* The same for the intake valves: runners, plenum, throttle (an orifice on a
+ * control channel), airbox, a mouth open to the air. */
+int32_t es_attach_intake(es_engine *e, const es_pipe_t *pipes, int32_t n_pipes,
+                         const es_node_t *nodes, int32_t n_nodes,
+                         double t_ambient, double valve_noise);
 
 /* Render n frames.  No allocation, no lock, no system call.
  * The sound pressure 1 m from the open ends of the exhaust (with no network:
