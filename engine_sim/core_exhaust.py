@@ -75,6 +75,9 @@ class Network:
     # the flow (kg/s) the turbine orifice was sized at, if there is one
     rated_flow: float = 0.0
     turbine_k: float = 0.0
+    # bypass valves (orifices on CH_FLAP) open above this speed or load (0: none)
+    flap_rpm: float = 0.0
+    flap_load: float = 0.0
     note: str = ""
 
     # ---- building
@@ -299,62 +302,284 @@ def exhaust_from_engine(eng):
     return n
 
 
-def murcielago_exhaust(primaries=(0.30, 0.50, 0.78, 0.42, 0.66, 0.95), box=0.036, lining=14.0,
-                        runner_loss=8.0):
-    """Lamborghini Murcielago (L539 6.5 V12): per bank two unequal 3-into-1
-    groups into one collector, a catalyst per bank, both banks into ONE
-    transverse rear box, one central outlet.
+def murcielago_exhaust():
+    """Lamborghini Murcielago LP640 / LP670-4 SV (6.5 V12, 60 degrees,
+    firing 1-7-4-10-2-8-6-12-3-9-5-11).
 
-    NOT measured from the car.  The layout (two banks into a shared box and
-    a single central outlet) is the car's; the primary lengths are CHOSEN:
-    unequal, as its compact manifolds are, and set against the order table
-    of the ear-approved classic voice (tools/v2_gate.py 6), whose character
-    is low orders (0.5-2) under the sixth.  Equal primaries give an even
-    V12 only its sixth order and multiples -- the howl without the growl.
-    The right bank is the left one mirrored, so the banks do not cancel
-    each other's third order exactly.
-
-    Where it stands against the classic (2026-11-13, tools/v2_gate.py):
-    band shares within 8-10 dB and spectral centroid 180-600 Hz against
-    120-250 Hz; main orders within 13-21 dB.  With the guessed equal-length
-    topology it was 22 dB and 34 dB, centroid up to 2200 Hz.  Not yet inside
-    the plan's tolerances (6 points, 3 dB).
+    FROM THE CAR (factory parts catalogue 251.01-251.04, Supersprint notes):
+      * four tubular manifolds, front and rear on each bank: two 3-into-1
+        per bank (cylinders 1-3 / 4-6, 7-9 / 10-12), outlet joint 51 mm;
+        each group of three fires evenly, 240 degrees apart;
+      * the two manifolds of a bank join at that bank's catalyst (one per
+        bank);
+      * each catalyst has two outlets: one, 62 mm, to the ONE shared rear
+        silencer; one through a vacuum bypass valve straight on;
+        both rejoin, 2-into-1, at a single central tailpipe.
+    ESTIMATED (no source gives them; marked so they can be replaced):
+      * primaries 41 mm bore, 0.42 m, equal within a manifold;
+      * the front manifold reaches the catalyst 0.30 m later than the rear
+        one (three bore spacings of about 0.1 m): this, not unequal
+        primaries, is what the car has to break its symmetry;
+      * catalyst brick 0.12 m long; silencer 30 l, lined; link lengths;
+      * the bypass valves open above 3500 rpm or 60 % load (the factory
+        logic is not published).
     """
-    n = Network(note="Murcielago: real layout, primary lengths set against the classic voice")
-    a_run, a_col, a_pipe = circle(0.042), circle(0.060), circle(0.063)
-    box_in = []
+    n = Network(note="Murcielago: layout from the parts catalogue, lengths estimated")
+    n.flap_rpm, n.flap_load = 3500.0, 0.6
+    a_pri, a_out, a_link = circle(0.041), circle(0.051), circle(0.062)
+    box_in, straight = [], []
     for bank in range(2):
-        lens = primaries if bank == 0 else primaries[::-1]
-        col = n.node()
-        for g in range(2):
+        cat_in = n.node()
+        for g in range(2):                      # 0: front manifold, 1: rear
             y = n.node()
             for j in range(3):
                 k = bank * 6 + g * 3 + j
                 v = n.node(VALVE, index=k)
-                n.join(v, y, lens[g * 3 + j], a_run, 1.0, runner_loss, name="runner %d" % (k + 1))
-            n.join(y, col, 0.18 + 0.10 * g, circle(0.050), 0.95, name="secondary %d%s" % (bank + 1, "ab"[g]))
-        x = n.pipe(col, 0.20 + 0.06 * bank, a_col, 0.90, name="downpipe %d" % (bank + 1))
-        x = n.pipe(x, 0.12, 3.0 * a_col, 0.86, 40.0, name="catalyst %d" % (bank + 1))
+                n.join(v, y, 0.42, a_pri, 1.0, 4.0, name="primary %d" % (k + 1))
+            n.join(y, cat_in, 0.50 if g == 0 else 0.20, a_out, 0.95,
+                   name="manifold %d%s" % (bank + 1, "fr"[g]))
+        x = n.pipe(cat_in, 0.12, 3.0 * a_link, 0.86, 40.0, name="catalyst %d" % (bank + 1))
         n.make(x, ORIFICE, r=2.0e4)
-        x = n.pipe(x, 0.35 + 0.08 * bank, a_col, 0.75, name="link %d" % (bank + 1))
-        n.loss(x, (1.0 - a_col / 0.05) ** 2, a_col, 0.6)
-        box_in.append(x)
-    # the shared box: 16 l across the car, lightly packed
+        split = n.pipe(x, 0.10, a_link, 0.80, name="cat out %d" % (bank + 1))
+        # to the silencer
+        y = n.pipe(split, 0.35, a_link, 0.70, name="to silencer %d" % (bank + 1))
+        n.loss(y, (1.0 - a_link / 0.06) ** 2, a_link, 0.6)
+        box_in.append(y)
+        # the bypass: a valve, then straight to the tail
+        y = n.pipe(split, 0.12, a_link, 0.75, name="bypass in %d" % (bank + 1))
+        n.loss(y, 0.4, a_link, 0.7)
+        n.nodes[y].index = CH_FLAP
+        straight.append(n.pipe(y, 0.40, a_link, 0.65, name="bypass %d" % (bank + 1)))
+    # the shared silencer: 30 l across the car, lined
     mid = n.node()
-    for i, x in enumerate(box_in):
-        n.join(x, mid, 0.22, 0.5 * box / 0.22, 0.55, lining, name="box %d" % (i + 1))
-    a_tail = 1.6 * a_pipe
-    x = n.pipe(mid, 0.06, a_tail, 0.50, name="box outlet")
-    n.loss(x, 0.5, a_tail, 0.5)
-    x = n.pipe(x, 0.30, a_tail, 0.45, name="tailpipe")
-    n.make(x, OPEN, radius=math.sqrt(a_tail / math.pi), noise=TAIL_NOISE)
+    for i, y in enumerate(box_in):
+        n.join(y, mid, 0.25, 0.015 / 0.25, 0.55, 12.0, name="silencer %d" % (i + 1))
+    y = n.pipe(mid, 0.06, a_link, 0.50, name="silencer out")
+    n.loss(y, 0.5, a_link, 0.5)
+    tail = n.node()
+    n.join(y, tail, 0.25, a_link, 0.48, name="silencer pipe")
+    for i, y in enumerate(straight):
+        n.join(y, tail, 0.05, a_link, 0.55, name="bypass join %d" % (i + 1))
+    a_tail = circle(0.10)
+    x = n.pipe(tail, 0.25, a_tail, 0.45, name="tailpipe")
+    n.make(x, OPEN, radius=0.05, noise=TAIL_NOISE, distance=_far(0.0))
     return n
 
 
-_BY_HAND = {"a3": a3_exhaust, "6": murcielago_exhaust}
+# The listener stands 1 m behind the car and half a metre off its centre
+# line.  ON the centre line the two banks of a symmetrical exhaust cancel
+# each other's odd orders exactly -- a place nobody listens from for long.
+LISTENER_OFFSET = 0.5
 
 
-def exhaust_for(key, eng):
-    """The network of preset ``key``: by hand where one was written."""
+def _far(x):
+    """Metres from the listener to an outlet ``x`` m left of the centre line."""
+    return math.hypot(1.0, x - LISTENER_OFFSET)
+
+
+def _banks(eng):
+    """Cylinder indices by bank (negative bank angle first)."""
+    left = [k for k, c in enumerate(eng.cylinders) if c.bank_angle_deg < 0.0]
+    right = [k for k, c in enumerate(eng.cylinders) if c.bank_angle_deg >= 0.0]
+    return [left, right]
+
+
+def _manifold(n, cyls, length, a_pri, loss=4.0, pairs=None, a_sec=None, sec_len=0.25):
+    """Primaries of ``cyls`` into one collector node (returned): n-into-1,
+    or with ``pairs`` (lists of positions) n-into-2-into-1."""
+    col = n.node()
+    if pairs is None:
+        for k in cyls:
+            n.join(n.node(VALVE, index=k), col, length, a_pri, 1.0, loss, name="primary %d" % (k + 1))
+        return col
+    for pr in pairs:
+        y = n.node()
+        for j in pr:
+            k = cyls[j]
+            n.join(n.node(VALVE, index=k), y, length, a_pri, 1.0, loss, name="primary %d" % (k + 1))
+        n.join(y, col, sec_len, a_sec, 0.95, name="secondary")
+    return col
+
+
+def _flap(n, x, area, heat, name):
+    """A bypass valve after node ``x`` (control channel CH_FLAP); returns
+    the node behind it."""
+    y = n.pipe(x, 0.10, area, heat, name=name)
+    n.loss(y, 0.4, area, heat)
+    n.nodes[y].index = CH_FLAP
+    return y
+
+
+def ferrari_458_exhaust(eng=None):
+    """Ferrari 458 Italia (F136 FB, flat-plane V8; each bank fires every 180
+    degrees, the banks alternate).
+
+    FROM THE CAR (Ferrari press release; descriptions by owners and makers):
+      * 4-into-1 tubular manifold per bank; stock primary about 1.5 in,
+        manifold outlet about 45 mm;
+      * three tailpipes: the centre one works at low speed, the outer two
+        join in higher up; one on/off vacuum valve per bank routes the gas
+        of that bank through or past the main silencer; owners report
+        about 3000 rpm at full throttle in Race.
+    ESTIMATED: primary length 0.45 m (equal); one catalyst per bank; the
+    silencer as one shared 20 l lined box feeding the centre pipe; link
+    lengths; outer pipes 0.30 m either side of the centre one.
+    """
+    from . import presets
+    eng = eng or presets.ALL["4"]()
+    n = Network(note="458: layout from Ferrari and owners, lengths estimated")
+    n.flap_rpm, n.flap_load = 3000.0, 0.5
+    a_pri, a_out, a_pipe = circle(0.036), circle(0.045), circle(0.060)
+    mid = n.node()
+    for i, cyls in enumerate(_banks(eng)):
+        col = _manifold(n, cyls, 0.45, a_pri)
+        x = n.pipe(col, 0.15, a_out, 0.92, name="collector %d" % (i + 1))
+        x = n.pipe(x, 0.12, 3.0 * a_pipe, 0.86, 40.0, name="catalyst %d" % (i + 1))
+        n.make(x, ORIFICE, r=2.5e4)
+        split = n.pipe(x, 0.20, a_pipe, 0.78, name="cat out %d" % (i + 1))
+        y = _flap(n, split, a_pipe, 0.72, "valve in %d" % (i + 1))
+        y = n.pipe(y, 0.45, a_pipe, 0.60, name="outer pipe %d" % (i + 1))
+        n.make(y, OPEN, radius=0.035, noise=TAIL_NOISE, distance=_far(0.30 if i == 0 else -0.30))
+        y = n.pipe(split, 0.25, a_pipe, 0.68, name="to silencer %d" % (i + 1))
+        n.loss(y, (1.0 - a_pipe / 0.04) ** 2, a_pipe, 0.6)
+        n.join(y, mid, 0.25, 0.010 / 0.25, 0.52, 12.0, name="silencer %d" % (i + 1))
+    y = n.pipe(mid, 0.06, a_pipe, 0.48, name="silencer out")
+    n.loss(y, 0.5, a_pipe, 0.5)
+    y = n.pipe(y, 0.35, a_pipe, 0.44, name="centre pipe")
+    n.make(y, OPEN, radius=0.035, noise=TAIL_NOISE, distance=_far(0.0))
+    return n
+
+
+def audi_r8_42_exhaust(eng=None):
+    """Audi R8 4.2 FSI (BYH; cross-plane V8, firing 1-5-4-8-6-3-7-2).
+
+    FROM THE CAR (Audi SSP 377 for the sister RS4 engine; R8 parts lists
+    and an exhaust installation guide):
+      * fan-type air-gap manifold per bank, 4-into-2-into-1, equal-length
+        pipes (R8 press text), in one unit with a primary catalyst;
+      * a main catalyst per bank; one transverse rear silencer assembly;
+        in the RS4 the banks stay SEPARATE inside it (absorption type, no
+        crossover) -- assumed for the R8 too;
+      * two vacuum flaps, shut at idle, low load and low speed.
+    Each bank of this engine fires at 90-180-270-180 degrees: with the
+    banks kept apart, each tailpipe carries the half orders.
+    ESTIMATED: primaries 38 mm x 0.35 m, the pairing (the two front and
+    the two rear cylinders of a bank), all lengths behind the manifold,
+    silencer 9 l a side, flap thresholds 3500 rpm / 50 % load, outlets
+    1.1 m apart.
+    """
+    from . import presets
+    eng = eng or presets.ALL["audiv8"]()
+    n = Network(note="R8 4.2: layout from Audi SSP 377 / parts lists, lengths estimated")
+    n.flap_rpm, n.flap_load = 3500.0, 0.5
+    a_pri, a_sec, a_pipe = circle(0.038), circle(0.045), circle(0.060)
+    for i, cyls in enumerate(_banks(eng)):
+        col = _manifold(n, cyls, 0.35, a_pri, pairs=[[0, 1], [2, 3]], a_sec=a_sec, sec_len=0.22)
+        x = n.pipe(col, 0.08, 2.5 * a_pipe, 0.92, 40.0, name="primary cat %d" % (i + 1))
+        n.make(x, ORIFICE, r=1.5e4)
+        x = n.pipe(x, 0.45, a_pipe, 0.80, name="pipe %d" % (i + 1))
+        x = n.pipe(x, 0.10, 3.0 * a_pipe, 0.72, 40.0, name="main cat %d" % (i + 1))
+        n.make(x, ORIFICE, r=2.0e4)
+        split = n.pipe(x, 0.10, a_pipe, 0.66, name="cat out %d" % (i + 1))
+        end = n.node()
+        y = _flap(n, split, a_pipe, 0.62, "flap in %d" % (i + 1))
+        n.join(y, end, 0.30, a_pipe, 0.55, name="flap pipe %d" % (i + 1))
+        y = n.pipe(split, 0.08, a_pipe, 0.58, name="silencer in %d" % (i + 1))
+        y = n.chamber(y, a_pipe, 0.35, 0.009 / 0.35, 0.55, 25.0, name="silencer %d" % (i + 1))
+        n.join(y, end, 0.15, a_pipe, 0.50, name="silencer pipe %d" % (i + 1))
+        x = n.pipe(end, 0.25, circle(0.075), 0.45, name="tailpipe %d" % (i + 1))
+        n.make(x, OPEN, radius=0.0375, noise=TAIL_NOISE,
+               distance=_far(0.55 if i == 0 else -0.55))
+    return n
+
+
+def lexus_lfa_exhaust(eng=None):
+    """Lexus LFA (1LR-GUE, 72 degree V10, even firing).
+
+    FROM THE CAR (Toyota and Lexus releases):
+      * equal-length manifolds into an equal-length dual exhaust;
+      * a titanium rear silencer in two stages with a valve: below
+        3000 rpm the gas goes through several chambers; above, it passes
+        them by into ONE resonance chamber; three stacked tailpipes (by a
+        secondary account the valve brings in the upper two, and the
+        lower one is the long, quiet path).
+    ESTIMATED: 5-into-1 per bank (implied by "equal length" and 144 degree
+    firing in a bank), primaries 40 mm x 0.50 m, 3.2 m of 60 mm pipe to
+    the rear (front-mid engine), one catalyst per bank, chamber volumes.
+    NOT HERE: the intake side -- the surge tank built as a sound radiator
+    and its ducts into the cabin -- which is half of the voice of this car.
+    """
+    from . import presets
+    eng = eng or presets.ALL["lfax"]()
+    n = Network(note="LFA: layout from Toyota/Lexus, dimensions estimated")
+    n.flap_rpm, n.flap_load = 3000.0, 2.0          # by speed alone
+    a_pri, a_pipe = circle(0.040), circle(0.060)
+    loud, quiet = n.node(), n.node()
+    for i, cyls in enumerate(_banks(eng)):
+        col = _manifold(n, cyls, 0.50, a_pri)
+        x = n.pipe(col, 0.20, a_pipe, 0.92, name="collector %d" % (i + 1))
+        x = n.pipe(x, 0.12, 3.0 * a_pipe, 0.85, 40.0, name="catalyst %d" % (i + 1))
+        n.make(x, ORIFICE, r=2.0e4)
+        x = n.pipe(x, 1.60, a_pipe, 0.68, name="tunnel pipe %da" % (i + 1))
+        split = n.pipe(x, 1.60, a_pipe, 0.52, name="tunnel pipe %db" % (i + 1))
+        y = _flap(n, split, a_pipe, 0.46, "valve in %d" % (i + 1))
+        n.join(y, loud, 0.20, 0.006 / 0.20, 0.42, 4.0, name="resonance chamber %d" % (i + 1))
+        y = n.pipe(split, 0.08, a_pipe, 0.44, name="chamber in %d" % (i + 1))
+        y = n.chamber(y, a_pipe, 0.25, 0.008 / 0.25, 0.42, 10.0, a_out=circle(0.045),
+                      name="chamber %da" % (i + 1))
+        y = n.pipe(y, 0.15, circle(0.045), 0.40, name="chamber tube %d" % (i + 1))
+        n.join(y, quiet, 0.25, 0.008 / 0.25, 0.38, 10.0, name="chamber %db" % (i + 1))
+    for j in range(2):                               # the two upper tailpipes
+        y = n.pipe(loud, 0.30, a_pipe, 0.40, name="upper tailpipe %d" % (j + 1))
+        n.make(y, OPEN, radius=0.03, noise=TAIL_NOISE, distance=_far(0.0))
+    y = n.pipe(quiet, 0.55, a_pipe, 0.36, name="lower tailpipe")
+    n.make(y, OPEN, radius=0.03, noise=TAIL_NOISE, distance=_far(0.0))
+    return n
+
+
+def ferrari_f2004_exhaust(eng=None):
+    """Ferrari F2004 (Tipo 053, 90 degree V10 on shared crankpins: the
+    cylinders fire 90 and 54 degrees apart, not evenly).
+
+    FROM THE CAR AND ITS CONTEMPORARIES (Honda and BMW papers on their 2004
+    90 degree V10s; nothing dimensional is published for the 053):
+      * 5-into-1 per bank: stepped primaries, a collector, a tailpipe, in
+        0.7 mm Inconel (Honda); no catalyst, no silencer;
+      * the two tailpipes leave through the top of the bodywork, close to
+        the centre line.
+    ESTIMATED: primaries 0.32 m stepping 38 -> 44 mm, collector 0.10 m,
+    tailpipe 0.30 m x 65 mm, outlets 0.5 m apart; the listener 1 m from
+    one of them.
+    """
+    from . import presets
+    eng = eng or presets.ALL["7"]()
+    n = Network(note="F2004: 5-into-1 per bank as its contemporaries; dimensions estimated")
+    for i, cyls in enumerate(_banks(eng)):
+        col = n.node()
+        for k in cyls:
+            v = n.node(VALVE, index=k)
+            y = n.pipe(v, 0.16, circle(0.038), 1.0, 2.0, name="primary %da" % (k + 1))
+            n.join(y, col, 0.16, circle(0.044), 0.98, 2.0, name="primary %db" % (k + 1))
+        x = n.pipe(col, 0.10, circle(0.060), 0.92, name="collector %d" % (i + 1))
+        x = n.pipe(x, 0.30, circle(0.065), 0.85, name="tailpipe %d" % (i + 1))
+        n.make(x, OPEN, radius=0.0325, noise=TAIL_NOISE,
+               distance=_far(0.25 if i == 0 else -0.25))
+    return n
+
+
+_BY_HAND = {"a3": a3_exhaust, "6": murcielago_exhaust, "4": ferrari_458_exhaust,
+            "audiv8": audi_r8_42_exhaust, "lfax": lexus_lfa_exhaust, "5": lexus_lfa_exhaust,
+            "7": ferrari_f2004_exhaust}
+
+
+def exhaust_for(key, eng, guess=False):
+    """The network of preset ``key`` -- only where one was written from the
+    car.  ``guess=True`` falls back to `exhaust_from_engine` (experiments
+    only: Leo, 2026-11-13: no guessed fleet; do the named cars from real
+    data first)."""
     f = _BY_HAND.get(key)
-    return f() if f else exhaust_from_engine(eng)
+    if f:
+        return f()
+    if guess:
+        return exhaust_from_engine(eng)
+    raise KeyError("no v2 exhaust has been written for %r yet" % (key,))

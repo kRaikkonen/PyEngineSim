@@ -77,6 +77,10 @@ def operating_point(sim, net=None, state=None):
         dp = max(back - 1.0, 0.0) * P_ATM * 0.85     # the rest is cat and pipe
         want = dp / max(q * q, 1.0e-9) / net.turbine_k
         orifice[core_exhaust.CH_TURBINE] = min(max(want, 0.3), 30.0)
+    if net is not None and net.flap_rpm > 0.0:
+        # a shut bypass valve passes next to nothing (its loss x 3000)
+        is_open = rpm >= net.flap_rpm or load >= net.flap_load
+        orifice[core_exhaust.CH_FLAP] = 1.0 if is_open else 3000.0
     return dict(rpm=rpm, p_intake=p_man, t_intake=315.0, p_exhaust=P_ATM,
                 t_exhaust=min(max(t_ex, 400.0), 1400.0), charge=charge,
                 lam=afr / 14.7, ca50_deg=ca50, burn_deg=burn_deg,
