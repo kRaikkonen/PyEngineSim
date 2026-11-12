@@ -141,9 +141,12 @@ public final class OBDTelemetry {
     /// projecting after a quarter second.
     public var rpm: Double {
         guard lastRPMTime > 0 else { return rawRPM }
-        let now = Date().timeIntervalSinceReferenceDate
+        let now = Clock.now()
+        // from when the car took the reading (the middle of its request) to
+        // when the sound plays; a stalled link stops projecting after 0.25 s
         let age = min(max(now - lastRPMTime, 0.0), 0.25)
-        let ahead = min(age + 0.5 * rtt + outLatency + CarMode.liveGlide, 0.45)
+        let ahead = min(age + max(lastRPMTime - rpmSampleT, 0.0) + outLatency
+                        + CarMode.liveGlide, 0.45)
         var d = max(min(dRPM * ahead, 800.0), -800.0)
         if predictFromPedal && rpmSampleT > 0 {
             // the pedal's head start: what its change since that rpm sample
@@ -161,6 +164,7 @@ public final class OBDTelemetry {
     public var predictFromPedal = false
     let predictor = PedalPredictor()
     var rpmSampleT: TimeInterval = 0
+    var wild = false
     /// How much each new rate difference moves the smoothed rate (dRPM).
     static let rateSmoothing = 0.35
     /// The current gear's gains, kept as plain numbers by the poll thread so
@@ -268,8 +272,12 @@ public final class OBDTelemetry {
 
     // ------------------------------------------------------------ commands
     @discardableResult
+    /// The drive's record (TripLog): every request and its reply, stamped.
+    public var tripLog: TripLog?
+
     func command(_ s: String, _ timeout: TimeInterval) -> String {
         (link as? FlushableLink)?.flushInput()
+        let sent = Clock.now()
         do {
             try link.write(s)
         } catch {
@@ -277,9 +285,13 @@ public final class OBDTelemetry {
             // so the app can reconnect instead of polling a dead socket
             status = "link lost"
             running = false
+            tripLog?.line("E", Clock.now(), "link lost writing " + s)
             return ""
         }
-        return link.readPrompt(timeout)
+        let r = link.readPrompt(timeout)
+        tripLog?.line("O", Clock.now(), String(format: "%.4f,", sent) + s + ","
+                      + TripLog.field(r))
+        return r
     }
 
     /// ATZ plus the usual quiet-mode setup, then find out what the car offers.
@@ -513,7 +525,7 @@ public final class OBDTelemetry {
     }
 
     func pollOnce() {
-        let t0 = Date().timeIntervalSinceReferenceDate
+        let t0 = Clock.now()
         let req: String
         if multiPID {
             // rpm EVERY poll with one other channel riding along: two
@@ -537,7 +549,7 @@ public final class OBDTelemetry {
         }
         let raw = command(req, protocolUsed.isEmpty ? 3.0 : 1.0)
         let got = parse(raw)
-        let t1 = Date().timeIntervalSinceReferenceDate
+        let t1 = Clock.now()
         guard !got.isEmpty else {
             silent += 1
             lastCarReply = OBDTelemetry.firstLine(raw)
@@ -563,9 +575,10 @@ public final class OBDTelemetry {
             let dt = max(t1 - lastPacket, 1e-3)
             hz += (1.0 / dt - hz) * 0.2
         }
-        ingest(got, now: t1)
+        ingest(got, now: t1, sent: t0)
         lastPacket = t1
-        let left = pollInterval - (Date().timeIntervalSinceReferenceDate - t0)
+        record(got, sent: t0, arrived: t1)
+        let left = pollInterval - (Clock.now() - t0)
         if left > 0 { usleep(useconds_t(left * 1e6)) }
     }
 
@@ -579,16 +592,82 @@ public final class OBDTelemetry {
         return rest.flatMap { [p, $0] }
     }
 
-    func ingest(_ got: [Int: [Int]], now: TimeInterval) {
-        // the car took these readings about half a round trip ago
-        let taken = now - 0.5 * rtt
+    // ----------------------------------------------------- trace and stats
+    /// The last minute of the real link, one line per reply: when it arrived
+    /// (ms since the link opened), its round trip (ms), the rpm and the pedal
+    /// (%), and whether the rpm was a stale repeat -- copied out of the app
+    /// and replayed offline, the lag and the smoothing are tuned on the car's
+    /// own timing instead of a guess at it.
+    let traceLock = NSLock()
+    var traceLines = [String]()
+    let tOpen = Clock.now()
+    var lastStale = false
+    var statT = 0.0, statN = 0, statRtt = 0.0, statMin = 9.0, statMax = 0.0, statStale = 0
+
+    public var traceText: String {
+        traceLock.lock(); defer { traceLock.unlock() }
+        return (["t_ms,rtt_ms,rpm,pedal_pct,stale"] + traceLines).joined(separator: "\n")
+    }
+
+    func record(_ got: [Int: [Int]], sent t0: TimeInterval, arrived t1: TimeInterval) {
+        var rpmS = "", pedS = ""
+        if let v = got[pidRPM], v.count >= 2 {
+            rpmS = String(format: "%.2f", Double(v[0] * 256 + v[1]) / 4.0)
+        }
+        if let p = pedalSource, let v = got[p]?.first {
+            pedS = String(format: "%.1f", Double(v) / 2.55)
+        }
+        let line = String(format: "%.0f,%.0f,", (t1 - tOpen) * 1000.0, (t1 - t0) * 1000.0)
+            + rpmS + "," + pedS + "," + (lastStale ? "1" : "0")
+        traceLock.lock()
+        traceLines.append(line)
+        if traceLines.count > 1500 { traceLines.removeFirst(traceLines.count - 1500) }
+        traceLock.unlock()
+        // every 5 s, what the link is really doing, into the link log
+        let r = t1 - t0
+        statN += 1; statRtt += r
+        statMin = min(statMin, r); statMax = max(statMax, r)
+        if lastStale { statStale += 1 }
+        if statT == 0 { statT = t1 }
+        if t1 - statT >= 5.0 {
+            note(String(format: "link: %.1f replies/s, round trip %.0f ms (%.0f-%.0f), "
+                        + "%d stale repeats, out latency %.0f ms",
+                        Double(statN) / (t1 - statT), statRtt / Double(statN) * 1000.0,
+                        statMin * 1000.0, statMax * 1000.0, statStale, outLatency * 1000.0))
+            statT = t1; statN = 0; statRtt = 0; statMin = 9.0; statMax = 0; statStale = 0
+        }
+    }
+
+    func ingest(_ got: [Int: [Int]], now: TimeInterval, sent: TimeInterval? = nil) {
+        // the car took these readings in the middle of THIS request's round
+        // trip (its own, not the average: Bluetooth's wander is per request)
+        let taken = sent.map { 0.5 * ($0 + now) } ?? now - 0.5 * rtt
+        lastStale = false
         if let p = pedalSource, let v = got[p]?.first {
             throttle = min(max(Double(v) / 255.0, 0.0), 1.0)
             predictor.pedalSample(throttle, at: taken)
         }
         if let v = got[pidRPM], v.count >= 2 {
             let r = Double(v[0] * 256 + v[1]) / 4.0
-            let dt = lastRPMTime > 0 ? now - lastRPMTime : 0.0
+            let dt = rpmSampleT > 0 ? taken - rpmSampleT : 0.0
+            // the SAME value again while the revs are clearly moving is the
+            // ECU's buffer not yet refreshed, not a stop: read as a reading it
+            // drags the rate to zero and the next one throws it back -- the
+            // wobble (an ECU refreshing at 200 ms: twice the jitter, offline)
+            if r == rawRPM && abs(dRPM) > 150.0 && dt > 0.0 && dt < 0.25 {
+                lastStale = true
+                return ingestOthers(got)
+            }
+            // ONE wild value (a corrupted frame, another module's reply read
+            // as the engine's) is not played and not learned from: a jump no
+            // engine makes waits for the next reading to agree with it
+            if dt > 0.0 && dt < 0.5 && !wild
+                && abs(r - rawRPM) > max(25000.0 * dt, 800.0) {
+                wild = true
+                tripLog?.line("E", now, String(format: "rpm outlier %.0f after %.0f", r, rawRPM))
+                return ingestOthers(got)
+            }
+            wild = false
             let rate0 = dRPM
             let fresh = dt > 0.0 && dt < 0.5
             if fresh {
@@ -609,6 +688,10 @@ public final class OBDTelemetry {
             rawRPM = r                 // projected continuously by `rpm`
             if r > maxRPM { maxRPM = r }
         }
+        ingestOthers(got)
+    }
+
+    func ingestOthers(_ got: [Int: [Int]]) {
         if let v = got[pidSpeed]?.first {
             let kmh = Double(v)
             speed = kmh / 3.6

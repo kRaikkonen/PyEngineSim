@@ -78,6 +78,12 @@ public final class AppModel: ObservableObject {
     @Published public var linkLog: [String] = []
     var retryTask: Task<Void, Never>?
     var lastLogPull = 0.0
+    /// The drive's record: OBD traffic, phone sensors, the audio path, what
+    /// was played (TripRecorder / TripLog).  On whenever the car is the source.
+    let trips = TripRecorder()
+    var lastTripStat = 0.0
+    @Published public var tripInfo = ""
+    @Published public var tripURL: URL?
     public var bleDeviceName = ""
     var bleDeviceID = ""
     /// What the audio session actually handed over, which is not always what
@@ -205,6 +211,7 @@ public final class AppModel: ObservableObject {
             mode.start()
             turboValve = car?.synth?.turboValveDefault ?? "recirc"
             applyTurbo()
+            applyEQ()            // a saved EQ was shown but never applied at start
             // The synth's own idea of how much lag is downstream: the OBD
             // extrapolation uses it to project the crank forward, so getting
             // it from the actual buffer rather than a guess is the difference
@@ -260,6 +267,9 @@ public final class AppModel: ObservableObject {
         let dt = min(now - lastTick, 0.1)
         lastTick = now
         guard let car else { return }
+        // the queue may have deepened: the projection aims at the real lag
+        if let a = audio, let t = obd { t.outLatency = a.latencySeconds }
+        logTrip()
         // the pedal car is stepped BEFORE the chain reads it, so a press and
         // the note that answers it belong to the same frame
         pedalSource?.update(dt: dt)
@@ -544,10 +554,13 @@ public final class AppModel: ObservableObject {
             linkState = "demo"
             // demo drives the engine itself, so there is no second car to
             // stretch from: anything but direct would distort a number this
-            // app invented in the first place
-            setMapMode(.direct)
+            // app invented in the first place.  The CHOSEN mode is kept for
+            // the car (it used to be overwritten, and saved that way).
+            car?.rpmMap.mode = .direct
+            finishTrip()
         case .live:
             pedalSource = nil
+            car?.rpmMap.mode = mapMode
             connect()
         }
         applyPops()
@@ -694,6 +707,58 @@ public final class AppModel: ObservableObject {
         #endif
     }
 
+    /// The last minute of the live link (OBDTelemetry.traceText), for tuning
+    /// the lag and the smoothing on the car's real timing.
+    // ------------------------------------------------------------- trips
+    func startTrip() {
+        guard !trips.recording else { return }
+        let meta = "engine=\(engineKey);map=\(mapMode.rawValue)"
+            + ";lift=\(lowRevLift);predict=\(pedalPredict);realvol=\(realLoudness)"
+            + ";block=\(audio?.blockFrames ?? 0);rate=\(audio?.renderRate ?? 0)"
+        trips.start(meta: meta)
+        tripURL = nil
+    }
+
+    /// Close the trip file; it can then be shared.
+    public func finishTrip() {
+        guard trips.recording else { return }
+        trips.stop()
+        tripURL = trips.log.url
+        tripInfo = "trip saved, " + AppModel.megabytes(trips.log.bytes)
+    }
+
+    static func megabytes(_ n: Int) -> String {
+        String(format: "%.1f MB", Double(n) / 1_048_576.0)
+    }
+
+    /// 50 times a second: what was played; every 5 s: the audio path.
+    func logTrip() {
+        guard trips.recording, let car else { return }
+        let t = Clock.now()
+        let o = obd
+        trips.log.line("P", t, String(
+            format: "%.1f,%.2f,%.1f,%.3f,%.3f,%d,%.2f",
+            car.rpmOut, o?.rawRPM ?? 0, o?.rpm ?? 0, o?.throttle ?? 0,
+            car.synth?.physics.boost ?? 0, o?.gear ?? 0, o?.speed ?? 0))
+        if t - lastTripStat >= 5.0, let a = audio {
+            lastTripStat = t
+            trips.log.line("A", t, String(
+                format: "%.1f,%.1f,%d,%d,%d,%.3f,%.0f,", a.routeLatency * 1000.0,
+                a.ioBufferSeconds * 1000.0, a.depth, a.underruns, a.starvations,
+                a.renderLoad, a.hardwareRate) + TripLog.field(a.routeName))
+            tripInfo = String(format: "recording %.0f s, ", t - trips.started)
+                + AppModel.megabytes(trips.log.bytes)
+                + String(format: " · out %.0f ms via ", a.latencySeconds * 1000.0)
+                + a.routeName
+        }
+    }
+
+    public func copyTrace() {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = obd?.traceText ?? ""
+        #endif
+    }
+
     public func setLinkKind(_ k: String) {
         linkKind = k
         persist()
@@ -761,9 +826,10 @@ public final class AppModel: ObservableObject {
                     // tell the extrapolator how much audio lag is downstream,
                     // so the crank is projected over the REAL pipeline, not a
                     // guess at it
-                    t.outLatency = Double(self.audio?.blockFrames ?? 512)
-                        / (self.audio?.renderRate ?? 32000) * 3.0
+                    t.outLatency = self.audio?.latencySeconds ?? 0.06
                     t.predictFromPedal = self.pedalPredict
+                    self.startTrip()
+                    t.tripLog = self.trips.log
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live
@@ -801,9 +867,10 @@ public final class AppModel: ObservableObject {
                 let t = OBDTelemetry(link: l)
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    t.outLatency = Double(self.audio?.blockFrames ?? 512)
-                        / (self.audio?.renderRate ?? 32000) * 3.0
+                    t.outLatency = self.audio?.latencySeconds ?? 0.06
                     t.predictFromPedal = self.pedalPredict
+                    self.startTrip()
+                    t.tripLog = self.trips.log
                     self.obd = t
                     self.car?.telemetry = t
                     self.source = .live

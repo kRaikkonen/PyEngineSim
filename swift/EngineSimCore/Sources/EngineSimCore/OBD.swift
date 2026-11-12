@@ -340,4 +340,23 @@ public final class ShiftDetector {
         }
         return false
     }
+
+    /// A NEW reading, `dt` seconds after the previous one on the link's own
+    /// clock (a telemetry link: readings arrive slower than the control tick).
+    public func sample(dt: Double, rpm: Double, pedal: Double, speed: Double) {
+        let p = prev
+        prev = rpm
+        guard timer <= 0.0, let prevRpm = p, dt > 0.0, dt < 0.5 else { return }
+        if (rpm - prevRpm) / dt < dropRate && pedal > minPedal && speed > minSpeed {
+            timer = cut
+            shifts += 1
+        }
+    }
+
+    /// Run the cut's timer between readings; true while it is cutting.
+    public func hold(dt: Double) -> Bool {
+        guard timer > 0.0 else { return false }
+        timer -= dt
+        return true
+    }
 }

@@ -693,10 +693,12 @@ public struct ContentView: View {
                      + "be a BLE one.")
                     .font(.system(size: 10)).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                tripRow
                 if !model.linkLog.isEmpty {
                     HStack {
                         Text("link log").font(.caption2).foregroundColor(.secondary)
                         Spacer()
+                        Button("copy trace") { model.copyTrace() }.font(.caption2)
                         Button("copy") { model.copyLinkLog() }.font(.caption2)
                     }
                     Text(model.linkLog.suffix(16).joined(separator: "\n"))
@@ -803,6 +805,23 @@ public struct ContentView: View {
                 Text(String(Int((model.bladeVol * 100).rounded())) + "%")
                     .font(.system(size: 10, design: .monospaced))
                     .frame(width: 44, alignment: .trailing)
+            }
+        }
+    }
+
+    /// The drive's record: recording while the car is the source; stop it
+    /// and the file can be shared (AirDrop, Files).
+    @ViewBuilder private var tripRow: some View {
+        if !model.tripInfo.isEmpty || model.tripURL != nil {
+            HStack(spacing: 8) {
+                Text(model.tripInfo).font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if let u = model.tripURL {
+                    ShareLink(item: u) { Text("share trip").font(.caption2) }
+                } else {
+                    Button("stop & save") { model.finishTrip() }.font(.caption2)
+                }
             }
         }
     }

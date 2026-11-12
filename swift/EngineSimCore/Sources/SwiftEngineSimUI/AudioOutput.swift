@@ -28,9 +28,36 @@ public final class AudioOutput {
     let format: AVAudioFormat
 
     /// How many buffers to keep in flight.  Deep enough to ride out a slow
-    /// block, shallow enough that the note is not late.
-    let queueDepth = 6
+    /// block, shallow enough that the note is not late -- every buffer is
+    /// 16 ms of lag between the car and the sound.  It starts at THREE (it
+    /// was six: 96 ms of queue alone) and deepens by one whenever the player
+    /// actually runs dry, up to six.
+    public private(set) var depth = 3
+    let maxDepth = 6
+    var inFlight = 0
+    public private(set) var starvations = 0
     let semaphore: DispatchSemaphore
+
+    /// What the sound lags its render by: the queue, the hardware buffer and
+    /// the ROUTE -- the session's outputLatency, which nothing read before:
+    /// a few ms on the phone's speaker, far more on CarPlay or Bluetooth.
+    public var latencySeconds: Double {
+        Double(depth) * Double(blockFrames) / renderRate + ioBufferSeconds + routeLatency
+    }
+    /// The audio route's own latency (s) and what the route is.
+    public private(set) var routeLatency = 0.0
+    public private(set) var routeName = ""
+
+    /// Read the route again: it changes when the car connects.
+    public func refreshRoute() {
+        #if os(iOS)
+        let s = AVAudioSession.sharedInstance()
+        routeLatency = s.outputLatency
+        ioBufferSeconds = s.ioBufferDuration
+        routeName = s.currentRoute.outputs
+            .map { $0.portType.rawValue + ":" + $0.portName }.joined(separator: "+")
+        #endif
+    }
     /// The render thread and the hand that signals it run at the SAME quality
     /// of service.  A user-interactive thread blocking on a semaphore signalled
     /// from a default-QoS completion handler is a priority inversion, and the
@@ -60,7 +87,7 @@ public final class AudioOutput {
     public init(renderRate: Double = 32000, blockFrames: Int = 512) throws {
         self.renderRate = renderRate
         self.blockFrames = blockFrames
-        semaphore = DispatchSemaphore(value: queueDepth)
+        semaphore = DispatchSemaphore(value: 3)
 
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
@@ -87,6 +114,9 @@ public final class AudioOutput {
             sessionNote = "buffer request refused: \(error.localizedDescription)"
         }
         ioBufferSeconds = session.ioBufferDuration
+        routeLatency = session.outputLatency
+        routeName = session.currentRoute.outputs
+            .map { $0.portType.rawValue + ":" + $0.portName }.joined(separator: "+")
         #else
         hardwareRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
         #endif
@@ -150,6 +180,10 @@ public final class AudioOutput {
                                         object: nil, queue: .main) { [weak self] _ in
             self?.resume()
         })
+        observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            self?.refreshRoute()
+        })
     }
 
     func resume() {
@@ -159,6 +193,7 @@ public final class AudioOutput {
             try AVAudioSession.sharedInstance().setActive(true)
             if !engine.isRunning { try engine.start() }
             if !player.isPlaying { player.play() }
+            refreshRoute()
             sessionNote = nil
         } catch {
             sessionNote = "could not resume audio: \(error.localizedDescription)"
@@ -190,9 +225,19 @@ public final class AudioOutput {
                 buf.floatChannelData![0].update(from: src.baseAddress!,
                                                 count: out.count)
             }
+            signalQueue.sync { inFlight += 1 }
             player.scheduleBuffer(buf) { [weak self] in
                 guard let self else { return }
-                self.signalQueue.async { self.semaphore.signal() }
+                self.signalQueue.async {
+                    self.inFlight -= 1
+                    // the player ran dry: one more buffer of headroom
+                    if self.inFlight == 0 && self.running && self.depth < self.maxDepth {
+                        self.depth += 1
+                        self.starvations += 1
+                        self.semaphore.signal()
+                    }
+                    self.semaphore.signal()
+                }
             }
         }
     }

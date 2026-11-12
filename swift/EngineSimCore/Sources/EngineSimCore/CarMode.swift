@@ -33,7 +33,11 @@ public protocol TelemetrySource: AnyObject {
 }
 
 extension OBDTelemetry: TelemetrySource {
-    public func isLive() -> Bool { status == "live" && lastPacket > 0 }
+    /// Live means ANSWERING: a link that has gone quiet for a second and a
+    /// half is not (the projected rpm used to be held for up to ~8 s).
+    public func isLive() -> Bool {
+        status == "live" && lastPacket > 0 && Clock.now() - lastPacket < 1.5
+    }
 }
 
 /// A hand-driven source: the sliders, for setting the thing up without a car.
@@ -93,6 +97,7 @@ public final class CarMode {
     let makeSynth: (EnginePreset, EngineTables, VoicingSetup) -> Synthesizer
 
     var omega = 0.0       // rad/s
+    var shiftSampleT = 0.0
     var boost = 0.0
 
     public init(engineKey: String, library: EngineLibrary,
@@ -155,9 +160,22 @@ public final class CarMode {
             rpmOut = rpmMap(tm.rpm, engIdle: engine.idleRpm,
                             engRedline: engine.redlineRpm)
 
-            shifting = shiftPop && shifter.update(dt: dt, rpm: tm.rawRPM,
-                                                  pedal: tm.throttle,
-                                                  speed: tm.speed)
+            if let o = tm as? OBDTelemetry {
+                // the rate of a drop is taken between READINGS, on their own
+                // clock: divided by this tick (20 ms) a reading that changes
+                // every 100 ms made any -600 rpm/s decay look like -3000
+                if o.rpmSampleT != shiftSampleT {
+                    let d = shiftSampleT > 0 ? o.rpmSampleT - shiftSampleT : 0.0
+                    shiftSampleT = o.rpmSampleT
+                    shifter.sample(dt: d, rpm: o.rawRPM, pedal: o.throttle,
+                                   speed: o.speed)
+                }
+                shifting = shifter.hold(dt: dt) && shiftPop
+            } else {
+                shifting = shiftPop && shifter.update(dt: dt, rpm: tm.rawRPM,
+                                                      pedal: tm.throttle,
+                                                      speed: tm.speed)
+            }
             // an ignition cut IS a closed throttle as far as the exhaust is
             // concerned -- that is the bang
             let throttle = shifting ? 0.0 : tm.throttle

@@ -235,7 +235,21 @@ def main():
                  '\t<key>UIBackgroundModes</key>\n\t<array>\n'
                  '\t\t<string>audio</string>\n'
                  '\t\t<string>bluetooth-central</string>\n'
-                 '\t</array>\n</dict>\n</plist>\n')
+                 # the trip recorder's GPS keeps logging with the screen off
+                 '\t\t<string>location</string>\n'
+                 '\t</array>\n'
+                 # the trip recorder (docs/REDESIGN_V2.md, phase 0): GPS speed
+                 # and the motion sensors beside the OBD data
+                 '\t<key>NSLocationWhenInUseUsageDescription</key>\n'
+                 '\t<string>Records your speed next to the engine data while a '
+                 'trip is being logged.</string>\n'
+                 '\t<key>NSMotionUsageDescription</key>\n'
+                 '\t<string>Records the car\'s acceleration next to the engine '
+                 'data while a trip is being logged.</string>\n'
+                 # Documents/trips shows up in the Files app and in Finder
+                 '\t<key>UIFileSharingEnabled</key>\n\t<true/>\n'
+                 '\t<key>LSSupportsOpeningDocumentsInPlace</key>\n\t<true/>\n'
+                 '</dict>\n</plist>\n')
 
     # ---- the scheme, set to RUN IN RELEASE ---------------------------------
     # Xcode's default scheme runs Debug, and an unoptimised build of this chain

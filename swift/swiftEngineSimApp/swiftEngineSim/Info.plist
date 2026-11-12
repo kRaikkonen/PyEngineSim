@@ -6,6 +6,15 @@
 	<array>
 		<string>audio</string>
 		<string>bluetooth-central</string>
+		<string>location</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Records your speed next to the engine data while a trip is being logged.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Records the car's acceleration next to the engine data while a trip is being logged.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>
