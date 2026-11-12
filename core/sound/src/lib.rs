@@ -18,10 +18,12 @@ pub mod cylinder;
 pub mod engine;
 pub mod gas;
 pub mod math;
+pub mod network;
 pub mod nozzle_fit;
 pub mod spec;
 
 pub use control::{Control, Inbox};
 pub use cylinder::Cylinder;
 pub use engine::{Engine, Sample, CONTROL_BLOCK};
+pub use network::{Network, NetworkSpec, NodeSpec, PipeSpec, ORIFICE_CHANNELS};
 pub use spec::{EngineSpec, SpecError, ValveCurve};

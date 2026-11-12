@@ -10,6 +10,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::gas::P_ATM;
+use crate::network::ORIFICE_CHANNELS;
 
 /// One operating point.  Plain numbers, SI units, crank degrees.
 #[repr(C)]
@@ -38,6 +39,21 @@ pub struct Control {
     /// cam phasing: degrees the intake / exhaust events are moved LATER
     pub intake_phase_deg: f64,
     pub exhaust_phase_deg: f64,
+    /// multipliers of the flow resistance of the network orifices that name
+    /// a channel (a turbine with moving vanes, an exhaust flap): 1 = as built
+    pub orifice: [f64; ORIFICE_CHANNELS],
+    /// cycle-to-cycle variation of the burn, about the coefficient of
+    /// variation of the indicated work: 0.01-0.03 at full load, 0.05-0.15
+    /// idling.  0: every cycle the same.
+    pub ccv: f64,
+    /// sound pressure (Pa rms at 1 m) that plays at the reference level,
+    /// 0.2 rms of full scale.  <= 0: a fixed 200 Pa = full scale.
+    pub level_ref: f64,
+    /// how much of the real dynamic range is played: 1 = all of it, 0 = a
+    /// constant level (s.6.6)
+    pub dynamics: f64,
+    /// the listener's volume knob, linear
+    pub volume: f64,
     /// bit k set: cylinder k gets no fuel (overrun, limiter, deactivation)
     pub fuel_cut: u64,
 }
@@ -56,6 +72,11 @@ impl Default for Control {
             burn_deg: 25.0,
             intake_phase_deg: 0.0,
             exhaust_phase_deg: 0.0,
+            orifice: [1.0; ORIFICE_CHANNELS],
+            ccv: 0.0,
+            level_ref: 0.0,
+            dynamics: 1.0,
+            volume: 1.0,
             fuel_cut: 0,
         }
     }
@@ -77,9 +98,17 @@ impl Control {
             self.burn_deg,
             self.intake_phase_deg,
             self.exhaust_phase_deg,
+            self.ccv,
+            self.level_ref,
+            self.dynamics,
+            self.volume,
         ];
-        if all.iter().any(|v| !v.is_finite()) {
+        if all.iter().chain(self.orifice.iter()).any(|v| !v.is_finite()) {
             return None;
+        }
+        let mut orifice = self.orifice;
+        for m in &mut orifice {
+            *m = m.clamp(1.0e-3, 1.0e6);
         }
         Some(Control {
             rpm: self.rpm.clamp(0.0, 30_000.0),
@@ -93,6 +122,11 @@ impl Control {
             burn_deg: self.burn_deg.clamp(8.0, 120.0),
             intake_phase_deg: self.intake_phase_deg.clamp(-90.0, 90.0),
             exhaust_phase_deg: self.exhaust_phase_deg.clamp(-90.0, 90.0),
+            orifice,
+            ccv: self.ccv.clamp(0.0, 0.3),
+            level_ref: self.level_ref.max(0.0),
+            dynamics: self.dynamics.clamp(0.0, 1.0),
+            volume: self.volume.clamp(0.0, 8.0),
             fuel_cut: self.fuel_cut,
         })
     }

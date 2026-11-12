@@ -780,8 +780,12 @@ class App:
         # opens on the new car's own voice)
         saved_voice = (self.synth.vx.get("phys_voice")
                        if (self.synth and keep_engine_flags) else None)
+        was_v2 = bool(self.synth and self.synth.v2_on)
         if self.synth:
             self.synth.stop()
+            if self.synth.v2 is not None:
+                self.synth.v2.close()
+                self.synth.v2 = None
         device = self.devices[self.device_idx][1]
         rate = SAMPLE_RATES[self.rate_idx]
         self.synth = Synthesizer(self.sim, sample_rate=rate, device=device)
@@ -802,8 +806,37 @@ class App:
             # rather than a decision.
             self.synth.pops_on = True
             self.synth.sustain_on_lift = 0.85
+        if was_v2:
+            self.toggle_v2(True)        # the v2 voice stays chosen across cars
         if start:
             self.synth.start()
+
+    def toggle_v2(self, on=None):
+        """The v2 voice on / off: the compiled core (core/, Rust) plays the
+        car instead of the old sound chain.  Exhaust only so far -- see
+        engine_sim/core_voice.py."""
+        from . import core_voice
+        sy = self.synth
+        if sy is None:
+            return
+        on = (not sy.v2_on) if on is None else on
+        if not on:
+            sy.v2_on = False
+            self._flash("声音：旧链" if self.lang == "zh" else "voice: classic")
+            return
+        if not core_voice.available():
+            self._flash("v2 core not built:  cd core && cargo build --release")
+            return
+        try:
+            if sy.v2 is None or sy.v2.key != self.current_key:
+                sy.v2 = core_voice.CoreVoice(self.sim, self.current_key, sy.sample_rate)
+        except Exception as exc:                 # a refused spec, an old DLL
+            sy.v2 = None
+            self._flash("v2: %s" % exc)
+            return
+        sy.v2_on = True
+        self._flash("声音：v2 新核心（目前只有排气）[N]" if self.lang == "zh"
+                    else "voice: V2 core (exhaust only)  [N]")
 
     def cycle_device(self, step=1):
         if len(self.devices) > 1:
@@ -1545,6 +1578,8 @@ class App:
                                 + ("PHYSICAL (gas solver, no synth layers)"
                                    if self.synth.vx["phys_voice"]
                                    else "CLASSIC"))
+                elif e.key == pygame.K_n:      # the v2 voice (A/B)
+                    self.toggle_v2()
                 elif e.key == pygame.K_F12:    # the LAYERS panel
                     self.flow_dbg = not getattr(self, "flow_dbg", False)
                     self._flash("layers " + ("open" if self.flow_dbg else "closed"))

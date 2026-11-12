@@ -11,10 +11,10 @@
 
 use std::sync::Arc;
 
-use es_sound::{Control, Engine, EngineSpec, Inbox, ValveCurve};
+use es_sound::{Control, Engine, EngineSpec, Inbox, NetworkSpec, NodeSpec, PipeSpec, ValveCurve};
 
 /// Bumped whenever a struct below or a function's meaning changes.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// A valve's effective flow area against crank angle (see `ValveCurve`).
 #[repr(C)]
@@ -320,4 +320,152 @@ pub unsafe extern "C" fn es_set_port_impedance(e: *mut EsEngine, exhaust_z: f64,
     }
     // SAFETY: by contract.
     unsafe { (*e).engine.set_port_impedance(exhaust_z, intake_z) };
+}
+
+/// A pipe of an exhaust network (see `PipeSpec`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EsPipe {
+    pub length: f64,
+    pub area: f64,
+    pub heat: f64,
+    pub loss_db: f64,
+    pub a: u32,
+    pub b: u32,
+}
+
+/// A node of an exhaust network (see `NodeSpec`).  `kind`: 0 junction,
+/// 1 valve (`index` = cylinder), 2 orifice (`index` = control channel, or
+/// -1; `r`, `k`), 3 open end (`radius`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct EsNode {
+    pub kind: i32,
+    pub index: i32,
+    pub r: f64,
+    pub k: f64,
+    pub radius: f64,
+    /// orifice: the passage whose speed sets the band of its flow noise, m^2
+    pub throat: f64,
+    /// orifice, open end: rms fluctuation of the turbulent loss, as a fraction
+    pub noise: f64,
+}
+
+/// Give the exhaust valves a network to discharge into.  Returns 1, or 0 if
+/// the network is refused (the engine is then unchanged).
+///
+/// # Safety
+/// `e` from `es_open`; the arrays readable for their counts; no render running.
+#[no_mangle]
+pub unsafe extern "C" fn es_attach_exhaust(
+    e: *mut EsEngine,
+    pipes: *const EsPipe,
+    n_pipes: i32,
+    nodes: *const EsNode,
+    n_nodes: i32,
+    t_ambient: f64,
+    valve_noise: f64,
+) -> i32 {
+    if e.is_null() || pipes.is_null() || nodes.is_null() || n_pipes <= 0 || n_nodes <= 0 {
+        return 0;
+    }
+    // SAFETY: by contract.
+    let (pipes, nodes) = unsafe {
+        (
+            core::slice::from_raw_parts(pipes, n_pipes as usize),
+            core::slice::from_raw_parts(nodes, n_nodes as usize),
+        )
+    };
+    let mut spec = NetworkSpec { pipes: Vec::new(), nodes: Vec::new(), t_ambient, valve_noise };
+    for p in pipes {
+        spec.pipes.push(PipeSpec {
+            length: p.length,
+            area: p.area,
+            heat: p.heat,
+            loss_db: p.loss_db,
+            a: p.a,
+            b: p.b,
+        });
+    }
+    for n in nodes {
+        spec.nodes.push(match n.kind {
+            0 => NodeSpec::Junction,
+            1 if n.index >= 0 => NodeSpec::Valve { cylinder: n.index as u32 },
+            2 => NodeSpec::Orifice {
+                r: n.r,
+                k: n.k,
+                channel: n.index.max(-1),
+                throat: n.throat,
+                noise: n.noise,
+            },
+            3 => NodeSpec::Open { radius: n.radius, noise: n.noise },
+            _ => return 0,
+        });
+    }
+    // SAFETY: by contract.
+    match unsafe { (*e).engine.attach_exhaust(&spec) } {
+        Ok(()) => 1,
+        Err(_) => 0,
+    }
+}
+
+/// The instrument tap on the exhaust: advance `n` samples exactly as
+/// `es_render` does and write the flow through the exhaust valves and out
+/// of the open ends (kg/s), the sound pressure 1 m from the open ends (Pa)
+/// and the pressure at the upstream end of pipe `pipe` (Pa about the
+/// outside).  Any output may be null.
+///
+/// # Safety
+/// `e` from `es_open`; each non-null output writable for `n` doubles.
+#[no_mangle]
+pub unsafe extern "C" fn es_listen(
+    e: *mut EsEngine,
+    n: i32,
+    pipe: i32,
+    q_exhaust: *mut f64,
+    q_tail: *mut f64,
+    p_far: *mut f64,
+    p_pipe: *mut f64,
+) {
+    if e.is_null() || n <= 0 {
+        return;
+    }
+    // SAFETY: by contract.
+    let engine = unsafe { &mut (*e).engine };
+    for i in 0..n as usize {
+        let s = engine.tick();
+        // SAFETY: each non-null output is writable for n doubles.
+        unsafe {
+            if !q_exhaust.is_null() {
+                *q_exhaust.add(i) = s.q_exhaust;
+            }
+            if !q_tail.is_null() {
+                *q_tail.add(i) = s.q_tail;
+            }
+            if !p_far.is_null() {
+                *p_far.add(i) = s.p_far;
+            }
+            if !p_pipe.is_null() {
+                *p_pipe.add(i) = match engine.exhaust() {
+                    Some(net) if pipe >= 0 && (pipe as usize) < net.pipes() => {
+                        net.pipe_state(pipe as usize).2
+                    }
+                    _ => 0.0,
+                };
+            }
+        }
+    }
+}
+
+/// The level the loudness curve reads now: Pa rms, 1 m from the open ends.
+///
+/// # Safety
+/// `e` from `es_open`.
+#[no_mangle]
+pub unsafe extern "C" fn es_level(e: *const EsEngine) -> f64 {
+    if e.is_null() {
+        return 0.0;
+    }
+    // SAFETY: by contract.
+    unsafe { (*e).engine.level() }
 }

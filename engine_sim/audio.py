@@ -1791,6 +1791,9 @@ class Synthesizer:
         self._seq_surge = 0.0     # decaying surge whoosh when the big turbo joins
         self._was_on_gas = 0.0    # recent on-throttle memory (fuels the crackle)
         self.pops_on = False      # overrun pops on/off (default off)
+        # the v2 voice (core_voice.CoreVoice), made on first use, and its switch
+        self.v2 = None
+        self.v2_on = False
         self.time_scale = 1.0     # 1.0 normal .. <1 slow motion
         self._pop_age = 10 ** 9   # samples since the current pop started
         self._pop_len = 1         # length of the current pop (samples)
@@ -2792,6 +2795,18 @@ class Synthesizer:
     def _render_block(self, frames: int) -> np.ndarray:
         sim = self.sim
         omega = sim.omega
+        # THE V2 VOICE (docs/REDESIGN_V2.md): the compiled core plays instead
+        # of everything below -- cylinders solved live, an exhaust network,
+        # no drawn pulse, no reverb, no AGC.  Off unless asked for (app: N).
+        v2 = self.v2
+        if v2 is not None and self.v2_on:
+            v2.volume = self.volume * self.params["master"] / 0.6
+            out = v2.block(frames)
+            self._stereo = None
+            dps = math.degrees(omega) / self.sample_rate * self.time_scale
+            self._update_lights(self._audio_crank, dps, frames)
+            self._audio_crank = (self._audio_crank + dps * frames) % 720.0
+            return out
         # layers kept at the classic voice's scale meet the physical engine at
         # the classic's balance: x 1/_PHYS_MAKEUP (exactly 1.0 in the classic)
         self._cl = (1.0 / _PHYS_MAKEUP) if self.vx.get("phys_voice", False) \

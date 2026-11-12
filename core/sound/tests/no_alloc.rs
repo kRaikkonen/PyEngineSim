@@ -7,6 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::*;
+use es_sound::Control;
 
 struct Counting;
 
@@ -36,9 +37,24 @@ static A: Counting = Counting;
 
 #[test]
 fn rendering_and_publishing_never_allocate() {
-    let mut e = running(&a3(4), 48_000.0, &cruise(1500.0, 0.4 * P_ATM), 3.0);
+    // the whole chain: cylinders, the exhaust network with its flow noise,
+    // the loudness curve; the operating points move the gas temperature (so
+    // every delay retunes) and the turbine vanes
+    let mut e = running_a3_noisy(48_000.0, &cruise(1500.0, 0.4 * P_ATM), 3.0);
     let inbox = e.inbox();
-    let points = [wot(4000.0, 1.8 * P_ATM), cruise(900.0, 0.3 * P_ATM), wot(6400.0, 1.5 * P_ATM)];
+    let shape = |c: Control, vanes: f64| Control {
+        p_exhaust: P_ATM,
+        orifice: [vanes, 1.0, 1.0, 1.0],
+        ccv: 0.05,
+        level_ref: 0.5,
+        dynamics: 0.5,
+        ..c
+    };
+    let points = [
+        shape(wot(4000.0, 1.8 * P_ATM), 2.0),
+        shape(cruise(900.0, 0.3 * P_ATM), 8.0),
+        shape(wot(6400.0, 1.5 * P_ATM), 1.0),
+    ];
     let mut l = vec![0.0f32; 512];
     let mut r = vec![0.0f32; 512];
 

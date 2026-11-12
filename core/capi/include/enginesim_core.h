@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-#define ES_ABI_VERSION 1u
+#define ES_ABI_VERSION 2u
 
 typedef struct es_engine es_engine;
 
@@ -55,7 +55,8 @@ typedef struct {
     double rpm;
     double p_intake;            /* Pa, in the intake port (the manifold) */
     double t_intake;            /* K */
-    double p_exhaust;           /* Pa, what the exhaust port discharges into */
+    double p_exhaust;           /* Pa, what the exhaust port discharges into; with an
+                                   exhaust network: the air at its open ends */
     double t_exhaust;           /* K, the gas standing in the exhaust port */
     double charge;              /* kg of air trapped per cylinder per cycle; <= 0: breathe */
     double lambda;              /* relative air/fuel ratio */
@@ -63,8 +64,43 @@ typedef struct {
     double burn_deg;            /* 10-90 % burn duration, degrees */
     double intake_phase_deg;    /* cam phasing: degrees LATER */
     double exhaust_phase_deg;
+    double orifice[4];          /* multipliers of the network orifices that name a
+                                   channel (turbine vanes, a flap): 1 = as built */
+    double ccv;                 /* cycle-to-cycle variation of the burn, about the
+                                   coefficient of variation of the indicated work */
+    double level_ref;           /* Pa rms at 1 m (ear-weighted) that plays at 0.2 rms
+                                   of full scale; <= 0: a fixed 200 Pa = full scale */
+    double dynamics;            /* 1 = the real dynamic range, 0 = a constant level */
+    double volume;              /* linear */
     uint64_t fuel_cut;          /* bit k: cylinder k gets no fuel */
 } es_control_t;
+
+/* An exhaust network: pipes between nodes.  A chamber is a fat pipe, a side
+ * branch a pipe with one end closed. */
+typedef struct {
+    double length;              /* m */
+    double area;                /* m^2 */
+    double heat;                /* 0 = the air outside .. 1 = the gas in the port */
+    double loss_db;             /* absorption beyond a bare wall, dB/m at 1 kHz */
+    uint32_t a, b;              /* the nodes at its ends */
+} es_pipe_t;
+
+enum { ES_JUNCTION = 0, ES_VALVE = 1, ES_ORIFICE = 2, ES_OPEN = 3 };
+
+typedef struct {
+    int32_t kind;               /* ES_JUNCTION: pipe ends at one pressure (one: closed)
+                                   ES_VALVE:    where cylinder `index` discharges
+                                   ES_ORIFICE:  dp = r q + k q|q|; `index` = control
+                                                channel that scales it, or -1
+                                   ES_OPEN:     an end of `radius` radiating */
+    int32_t index;
+    double r;                   /* Pa s/kg */
+    double k;                   /* Pa s^2/kg^2 */
+    double radius;              /* m */
+    double throat;              /* orifice: the passage its flow noise is made in, m^2 */
+    double noise;               /* orifice, open end: rms fluctuation of the turbulent
+                                   loss, as a fraction of it */
+} es_node_t;
 
 /* One cylinder's state and running totals. */
 typedef struct {
@@ -85,9 +121,17 @@ void es_close(es_engine *e);
  * Returns 1, or 0 if another thread was publishing at that very moment. */
 int32_t es_control(const es_engine *e, const es_control_t *c);
 
+/* Give the exhaust valves a network to discharge into.  Returns 1, or 0 if
+ * it is refused (the engine is then unchanged).  `valve_noise`: rms
+ * fluctuation of the flow through a valve seat, as a fraction. */
+int32_t es_attach_exhaust(es_engine *e, const es_pipe_t *pipes, int32_t n_pipes,
+                          const es_node_t *nodes, int32_t n_nodes,
+                          double t_ambient, double valve_noise);
+
 /* Render n frames.  No allocation, no lock, no system call.
- * PROVISIONAL until the exhaust network exists (stage S2): the exhaust
- * valves' flow radiated as a bare monopole at 1 m, 200 Pa = full scale. */
+ * The sound pressure 1 m from the open ends of the exhaust (with no network:
+ * from the bare exhaust valves), through the loudness curve and a limiter
+ * that only protects.  Exhaust only so far: no intake, no engine block. */
 void es_render(es_engine *e, float *left, float *right, int32_t n);
 
 /* Jump to an operating point and run `cycles` engine cycles silently. */
@@ -98,6 +142,16 @@ void es_prime(es_engine *e, const es_control_t *c, double cycles);
  * temperature and mass.  Any output may be NULL. */
 void es_run(es_engine *e, int32_t n, int32_t cyl,
             double *q_exhaust, double *q_intake, double *p, double *t, double *m);
+
+/* The tap on the exhaust: as es_run, writing the flow through the exhaust
+ * valves and out of the open ends (kg/s), the sound pressure 1 m from the
+ * open ends (Pa) and the pressure at the upstream end of pipe `pipe` (Pa
+ * about the outside).  Any output may be NULL. */
+void es_listen(es_engine *e, int32_t n, int32_t pipe,
+               double *q_exhaust, double *q_tail, double *p_far, double *p_pipe);
+
+/* The level the loudness curve reads now: Pa rms at 1 m, ear-weighted. */
+double es_level(const es_engine *e);
 
 int32_t es_cylinder(const es_engine *e, int32_t cyl, es_cylinder_t *out);
 void es_clear_ledgers(es_engine *e);

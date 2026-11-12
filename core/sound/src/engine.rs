@@ -1,9 +1,10 @@
 //! The engine: a crankshaft turning at the speed it is told, and the
 //! cylinders hanging on it.
 //!
-//! Stage S1 of docs/REDESIGN_V2.md: the cylinders and their valve flows are
-//! here; the pipes they discharge into (S2) are not yet -- each port is a
-//! plenum at the pressure the operating point names.
+//! docs/REDESIGN_V2.md.  Stage S1: the cylinders and their valve flows.
+//! Stage S2: the exhaust they discharge into, a waveguide network
+//! (`attach_exhaust`); without one each exhaust port is a plenum at the
+//! pressure the operating point names.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::control::{Control, Inbox};
 use crate::cylinder::{burn_window, Cylinder, Port, StepEnv};
 use crate::gas::{GasModel, P_ATM};
 use crate::math;
+use crate::network::{Network, NetworkSpec};
 use crate::spec::{EngineSpec, Geom, SpecError, ValveCurve};
 
 /// The operating point is read, and its ramps re-aimed, every so many
@@ -18,9 +20,34 @@ use crate::spec::{EngineSpec, Geom, SpecError, ValveCurve};
 /// not of the block length the host renders in.
 pub const CONTROL_BLOCK: usize = 32;
 
-/// PROVISIONAL (until the exhaust network of S2): sound pressure in Pa that
-/// maps to full scale, for the bare-port monopole `render` writes.
+/// Sound pressure in Pa that maps to full scale when the operating point
+/// names no reference level.
 pub const FULL_SCALE_PA: f64 = 200.0;
+
+/// The level the reference sound pressure plays at, rms of full scale.
+pub const REFERENCE_LEVEL: f64 = 0.2;
+
+/// The loudness curve never lifts a sound more than this far below the
+/// reference (silence is not amplified into noise): -60 dB.
+const LEVEL_FLOOR: f64 = 1.0e-3;
+
+/// Time constant of the level the loudness curve reads, s.
+const LEVEL_TIME: f64 = 0.25;
+
+/// The loudness curve reads the level as an ear would, not as a microphone:
+/// two high-pass poles here stand for the A weighting below 1 kHz (-28 dB
+/// at 50 Hz, -17 at 100, -8 at 200, -2 at 500).  An idling four makes most
+/// of its sound pressure at 30 Hz, where nobody hears it.
+const EAR_HZ: f64 = 250.0;
+
+/// Whatever the loudness curve asks, the sound as a microphone hears it is
+/// not played above this rms of full scale: a low engine speed at full load
+/// is mostly bass, quiet to the ear and huge to the loudspeaker.
+const HEADROOM_RMS: f64 = 0.25;
+
+/// Nothing below this is played (two poles): no loudspeaker moves there,
+/// and steady flow is not sound.
+const RUMBLE_HZ: f64 = 18.0;
 
 /// What the engine's valves pass in one sample, all cylinders together.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -29,6 +56,10 @@ pub struct Sample {
     pub q_exhaust: f64,
     /// in through the intake valves, kg/s
     pub q_intake: f64,
+    /// out of the open ends of the exhaust, kg/s (no network: `q_exhaust`)
+    pub q_tail: f64,
+    /// what that radiates: sound pressure 1 m from the open ends, Pa
+    pub p_far: f64,
 }
 
 pub struct Engine {
@@ -61,7 +92,8 @@ pub struct Engine {
     p_exhaust: f64,
     d_p_exhaust: f64,
     // constant inside a control block
-    exhaust_port: Port,
+    /// one exhaust port per cylinder
+    exhaust_ports: Vec<Port>,
     intake_port: Port,
     exhaust_open: f64,
     intake_open: f64,
@@ -69,7 +101,20 @@ pub struct Engine {
     burn_start: f64,
     burn_len: f64,
 
+    exhaust_net: Option<Network>,
+    q_valve: Vec<f64>,
     q_exhaust_prev: f64,
+
+    // the output stage
+    level_ms: f64,
+    raw_ms: f64,
+    level_k: f64,
+    ear_k: f64,
+    ear: [f64; 2],
+    rumble_k: f64,
+    rumble: [f64; 2],
+    gain: f64,
+    d_gain: f64,
 }
 
 impl Engine {
@@ -105,17 +150,46 @@ impl Engine {
             d_p_intake: 0.0,
             p_exhaust: target.p_exhaust,
             d_p_exhaust: 0.0,
-            exhaust_port: Port::new(&gas, target.p_exhaust, target.t_exhaust, 0.0),
+            exhaust_ports: vec![
+                Port::new(&gas, target.p_exhaust, target.t_exhaust, 0.0);
+                spec.firing_deg.len()
+            ],
             intake_port: Port::new(&gas, target.p_intake, target.t_intake, 0.0),
             exhaust_open: spec.exhaust.open_deg,
             intake_open: spec.intake.open_deg,
             speed_term: 1.0,
             burn_start: 0.0,
             burn_len: 1.0,
+            exhaust_net: None,
+            q_valve: vec![0.0; spec.firing_deg.len()],
             q_exhaust_prev: 0.0,
+            level_ms: 0.0,
+            raw_ms: 0.0,
+            level_k: 1.0 - math::exp(-1.0 / (LEVEL_TIME * sample_rate)),
+            ear_k: 1.0 - math::exp(-2.0 * core::f64::consts::PI * EAR_HZ / sample_rate),
+            ear: [0.0; 2],
+            rumble_k: 1.0 - math::exp(-2.0 * core::f64::consts::PI * RUMBLE_HZ / sample_rate),
+            rumble: [0.0; 2],
+            gain: 1.0 / FULL_SCALE_PA,
+            d_gain: 0.0,
         };
         e.reset();
         Ok(e)
+    }
+
+    /// Give the exhaust valves a network of pipes to discharge into.  With
+    /// one, `Control::p_exhaust` is the pressure at its open ends (the air
+    /// outside) and the pressure in the ports is the network's own.
+    /// Allocates: not for the audio thread.
+    pub fn attach_exhaust(&mut self, spec: &NetworkSpec) -> Result<(), SpecError> {
+        let mut net = Network::new(spec, self.firing_deg.len(), self.rate)?;
+        net.set_gas(&self.gas, self.target.t_exhaust, &self.target.orifice, true);
+        self.exhaust_net = Some(net);
+        Ok(())
+    }
+
+    pub fn exhaust(&self) -> Option<&Network> {
+        self.exhaust_net.as_ref()
     }
 
     /// Back to a stopped, cold engine at crank angle 0 (the operating point
@@ -125,11 +199,20 @@ impl Engine {
         self.samples = 0;
         self.pos = 0;
         self.q_exhaust_prev = 0.0;
+        self.level_ms = 0.0;
+        self.raw_ms = 0.0;
+        self.ear = [0.0; 2];
+        self.rumble = [0.0; 2];
+        if let Some(net) = &mut self.exhaust_net {
+            net.clear();
+        }
         self.cyl.clear();
         for k in 0..self.firing_deg.len() {
             let th = math::wrap720_near(self.crank - self.firing_deg[k]);
             let a_in = self.intake_curve.area_after(math::wrap720_near(th - self.intake_open));
-            self.cyl.push(Cylinder::new(&self.geom, th, P_ATM, 400.0, a_in));
+            let mut c = Cylinder::new(&self.geom, th, P_ATM, 400.0, a_in);
+            c.seed(0x0123_4567_89AB_CDEF_u64.wrapping_mul(2 * k as u64 + 1));
+            self.cyl.push(c);
         }
     }
 
@@ -152,10 +235,15 @@ impl Engine {
             self.p_intake = c.p_intake;
             self.p_exhaust = c.p_exhaust;
             self.pos = 0;
+            if let Some(net) = &mut self.exhaust_net {
+                net.set_gas(&self.gas, c.t_exhaust, &c.orifice, true);
+            }
             self.begin_block();
             self.d_rpm = 0.0;
             self.d_p_intake = 0.0;
             self.d_p_exhaust = 0.0;
+            self.gain += self.d_gain * CONTROL_BLOCK as f64;
+            self.d_gain = 0.0;
         }
     }
 
@@ -204,7 +292,9 @@ impl Engine {
     /// its pressure rises per kg/s pushed in (0: a plenum).  The seam the
     /// exhaust network of S2 attaches to.
     pub fn set_port_impedance(&mut self, exhaust_z: f64, intake_z: f64) {
-        self.exhaust_port.z = exhaust_z.max(0.0);
+        for p in &mut self.exhaust_ports {
+            p.z = exhaust_z.max(0.0);
+        }
         self.intake_port.z = intake_z.max(0.0);
     }
 
@@ -218,8 +308,24 @@ impl Engine {
         self.d_rpm = (t.rpm - self.rpm) / n;
         self.d_p_intake = (t.p_intake - self.p_intake) / n;
         self.d_p_exhaust = (t.p_exhaust - self.p_exhaust) / n;
-        self.exhaust_port.set_temperature(&self.gas, t.t_exhaust);
+        for p in &mut self.exhaust_ports {
+            p.set_temperature(&self.gas, t.t_exhaust);
+        }
         self.intake_port.set_temperature(&self.gas, t.t_intake);
+        if let Some(net) = &mut self.exhaust_net {
+            net.set_gas(&self.gas, t.t_exhaust, &t.orifice, false);
+        }
+        // the loudness curve (s.6.6): played level = reference
+        // x (physical level / reference)^dynamics
+        let want = if t.level_ref > 0.0 {
+            let rel = (self.level_ms.sqrt() / t.level_ref).max(LEVEL_FLOOR);
+            let g = REFERENCE_LEVEL / t.level_ref * math::powf(rel, t.dynamics - 1.0);
+            let raw = self.raw_ms.sqrt();
+            t.volume * if g * raw > HEADROOM_RMS { HEADROOM_RMS / raw } else { g }
+        } else {
+            t.volume / FULL_SCALE_PA
+        };
+        self.d_gain = (want - self.gain) / n;
         self.exhaust_open = math::wrap720(self.exhaust_curve.open_deg + t.exhaust_phase_deg);
         self.intake_open = math::wrap720(self.intake_curve.open_deg + t.intake_phase_deg);
         let piston_speed = 2.0 * self.geom.stroke * t.rpm / 60.0;
@@ -240,8 +346,24 @@ impl Engine {
         self.rpm += self.d_rpm;
         self.p_intake += self.d_p_intake;
         self.p_exhaust += self.d_p_exhaust;
-        self.exhaust_port.p_in = self.p_exhaust;
+        self.gain += self.d_gain;
         self.intake_port.p_in = self.p_intake;
+        match &mut self.exhaust_net {
+            Some(net) => {
+                net.arrive();
+                let floor = 0.2 * self.p_exhaust;
+                for (k, p) in self.exhaust_ports.iter_mut().enumerate() {
+                    let v = net.port(k);
+                    p.p_in = (self.p_exhaust + v.p).max(floor);
+                    p.z = v.z;
+                }
+            }
+            None => {
+                for p in &mut self.exhaust_ports {
+                    p.p_in = self.p_exhaust;
+                }
+            }
+        }
 
         let dtheta = 6.0 * self.rpm * self.dt;
         let mut crank = self.crank + dtheta;
@@ -251,14 +373,14 @@ impl Engine {
         self.crank = crank;
         self.samples += 1;
 
-        let env = StepEnv {
+        let mut env = StepEnv {
             geom: &self.geom,
             gas: &self.gas,
             exhaust_curve: &self.exhaust_curve,
             intake_curve: &self.intake_curve,
             exhaust_open: self.exhaust_open,
             intake_open: self.intake_open,
-            exhaust: &self.exhaust_port,
+            exhaust: &self.exhaust_ports[0],
             intake: &self.intake_port,
             dt: self.dt,
             dtheta,
@@ -270,6 +392,7 @@ impl Engine {
             lambda: self.target.lambda,
             burn_start: self.burn_start,
             burn_len: self.burn_len,
+            ccv: self.target.ccv,
         };
         let cut = self.target.fuel_cut;
         let mut out = Sample::default();
@@ -279,10 +402,38 @@ impl Engine {
             // sin and cos of (crank - firing angle)
             let (sf, cf) = self.firing_sc[k];
             let sc = (s * cf - c0 * sf, c0 * cf + s * sf);
+            env.exhaust = &self.exhaust_ports[k];
             let (qe, qi) = c.step(&env, th, sc, (cut >> k) & 1 == 1);
+            self.q_valve[k] = qe;
             out.q_exhaust += qe;
             out.q_intake += qi;
         }
+        // what leaves the open ends is a monopole: p = (dq/dt) / (4 pi r)
+        let dq = match &mut self.exhaust_net {
+            Some(net) => {
+                net.scatter(&self.q_valve);
+                out.q_tail = net.q_out;
+                net.dq_out
+            }
+            None => {
+                out.q_tail = out.q_exhaust;
+                (out.q_exhaust - self.q_exhaust_prev) * self.rate
+            }
+        };
+        self.q_exhaust_prev = out.q_exhaust;
+        let p = dq * (1.0 / (4.0 * core::f64::consts::PI));
+        // what is played: without the rumble
+        self.rumble[0] += self.rumble_k * (p - self.rumble[0]);
+        let p1 = p - self.rumble[0];
+        self.rumble[1] += self.rumble_k * (p1 - self.rumble[1]);
+        out.p_far = p1 - self.rumble[1];
+        // what the loudness curve reads: as an ear weights it
+        self.ear[0] += self.ear_k * (out.p_far - self.ear[0]);
+        let e1 = out.p_far - self.ear[0];
+        self.ear[1] += self.ear_k * (e1 - self.ear[1]);
+        let e = e1 - self.ear[1];
+        self.level_ms += self.level_k * (e * e - self.level_ms);
+        self.raw_ms += self.level_k * (out.p_far * out.p_far - self.raw_ms);
         out
     }
 
@@ -290,26 +441,45 @@ impl Engine {
     /// so the gas in the cylinders is that of a running engine.  Not for the
     /// audio thread.
     pub fn prime(&mut self, cycles: f64) {
+        // (a crank that is barely turning: no more than ten seconds of it)
         let rpm = self.target.rpm.max(1.0);
-        let n = (cycles * 120.0 / rpm * self.rate).ceil() as u64;
+        let n = (cycles * 120.0 / rpm).min(10.0) * self.rate;
+        let n = n.ceil() as u64;
         for _ in 0..n {
             self.tick();
         }
-        self.q_exhaust_prev = self.cyl.iter().map(|c| c.q_exhaust).sum();
     }
 
-    /// Render audio.  PROVISIONAL until the exhaust network exists: the
-    /// exhaust valves' flow radiated as a bare monopole at 1 m,
-    /// p = (dq/dt) / (4 pi r), on both channels.
+    /// The level the loudness curve reads now: Pa rms at 1 m, weighted as
+    /// an ear weights it (`EAR_HZ`).
+    pub fn level(&self) -> f64 {
+        self.level_ms.sqrt()
+    }
+
+    /// Render audio: the sound pressure 1 m from the open ends of the
+    /// exhaust (with no network: from the bare exhaust valves), through the
+    /// loudness curve and a limiter that only protects, on both channels.
     pub fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
         let n = left.len().min(right.len());
-        let k = self.rate / (4.0 * core::f64::consts::PI) / FULL_SCALE_PA;
         for i in 0..n {
             let s = self.tick();
-            let v = ((s.q_exhaust - self.q_exhaust_prev) * k) as f32;
-            self.q_exhaust_prev = s.q_exhaust;
+            let v = limit(s.p_far * self.gain) as f32;
             left[i] = v;
             right[i] = v;
         }
     }
+}
+
+/// Straight up to 0.7 of full scale, then bending so that nothing passes 1.
+#[inline(always)]
+fn limit(x: f64) -> f64 {
+    const KNEE: f64 = 0.7;
+    let a = x.abs();
+    if a <= KNEE {
+        return x;
+    }
+    // KNEE + (1 - KNEE) tanh((a - KNEE) / (1 - KNEE))
+    let u = (a - KNEE) * (1.0 / (1.0 - KNEE));
+    let th = if u > 20.0 { 1.0 } else { 1.0 - 2.0 / (math::exp(2.0 * u) + 1.0) };
+    (KNEE + (1.0 - KNEE) * th).copysign(x)
 }

@@ -112,6 +112,8 @@ pub struct StepEnv<'a> {
     /// where a burn starting now begins, [0, 720), and how long it lasts
     pub burn_start: f64,
     pub burn_len: f64,
+    /// cycle-to-cycle variation (`Control::ccv`)
+    pub ccv: f64,
 }
 
 /// (start, length) in crank degrees of the Wiebe burn whose 50 % point is at
@@ -160,6 +162,12 @@ pub struct Cylinder {
     burn_start: f64,
     burn_len: f64,
     x_prev: f64,
+    // this cycle's own burn: starts so many degrees late, lasts so many
+    // times as long, releases this fraction of the heat
+    rng: u64,
+    shift: f64,
+    stretch: f64,
+    weak: f64,
 
     // the walls
     h_wall: f64,
@@ -337,6 +345,10 @@ impl Cylinder {
             burn_start: 0.0,
             burn_len: 1.0,
             x_prev: 0.0,
+            rng: 0x9E37_79B9_7F4A_7C15,
+            shift: 0.0,
+            stretch: 1.0,
+            weak: 1.0,
             h_wall: 0.0,
             h_since: f64::INFINITY,
             intake_area_prev: intake_area,
@@ -381,18 +393,18 @@ impl Cylinder {
 
         // ---- 2a. the burn
         let mut dq = 0.0;
-        if self.armed && math::wrap720_near(theta - e.burn_start) < 180.0 {
+        if self.armed && math::wrap720(theta - e.burn_start - self.shift) < 180.0 {
             self.armed = false;
             self.cut = cut;
             if !cut {
                 self.burning = true;
-                self.burn_start = e.burn_start;
-                self.burn_len = e.burn_len;
+                self.burn_start = math::wrap720(e.burn_start + self.shift);
+                self.burn_len = e.burn_len * self.stretch;
                 self.x_prev = 0.0;
                 let fresh = (self.m - self.m_burned).max(0.0);
                 let fuel = fresh / (e.lambda * AFR_STOICH);
                 // rich: the oxygen, not the fuel, limits what burns
-                self.q_total = fuel * FUEL_LHV * COMBUSTION_EFF * e.lambda.min(1.0);
+                self.q_total = fuel * FUEL_LHV * COMBUSTION_EFF * e.lambda.min(1.0) * self.weak;
             }
         }
         if self.burning {
@@ -562,6 +574,7 @@ impl Cylinder {
                 p = self.m * R_GAS * t / v1;
             }
             self.armed = true;
+            self.vary(e.ccv);
         }
         self.intake_area_prev = a_in;
 
@@ -571,6 +584,47 @@ impl Cylinder {
         self.q_exhaust = q_ex;
         self.q_intake = -q_in;
         (q_ex, -q_in)
+    }
+
+    /// Give this cylinder its own random sequence.
+    pub fn seed(&mut self, s: u64) {
+        self.rng = (s ^ 0x9E37_79B9_7F4A_7C15).max(1);
+    }
+
+    /// A number from a bell curve of unit variance (four uniforms summed).
+    fn bell(&mut self) -> f64 {
+        let mut s = 0.0;
+        for _ in 0..4 {
+            // xorshift64*
+            let mut x = self.rng;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.rng = x;
+            let u = (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 * (1.0 / 9007199254740992.0);
+            s += u;
+        }
+        (s - 2.0) * 1.732_050_807_568_877_2
+    }
+
+    /// The burn of the cycle now trapped: no two alike (s.6.3).  The early
+    /// flame kernel is what varies -- it sets when the burn gets going
+    /// (`shift`) and how fast it then runs (`stretch`), and a slow burn is
+    /// also a less complete one.  With `ccv` about the coefficient of
+    /// variation of the indicated work: at 0.02 the 50 % point wanders 1.3
+    /// degrees and the duration 5 %; at 0.10, 4.5 degrees and 25 %.
+    fn vary(&mut self, ccv: f64) {
+        if ccv <= 0.0 {
+            self.shift = 0.0;
+            self.stretch = 1.0;
+            self.weak = 1.0;
+            return;
+        }
+        let n1 = self.bell();
+        let n2 = self.bell();
+        self.stretch = math::exp(2.5 * ccv * n1).clamp(0.6, 2.5);
+        self.shift = ((0.5 + 40.0 * ccv) * (0.6 * n2 + 0.4 * n1)).clamp(-15.0, 25.0);
+        self.weak = (1.0 - 1.2 * ccv * n1.max(0.0)).max(0.5);
     }
 
     /// The most iterations any one sample has needed, of either solve.

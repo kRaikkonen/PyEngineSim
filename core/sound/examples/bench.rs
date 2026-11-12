@@ -30,6 +30,21 @@ fn share(spec: &es_sound::EngineSpec, c: &Control, z: f64) -> (f64, u32, u32) {
     (took / (blocks as f64 * 512.0 / rate), k.worst_outer, k.worst_inner)
 }
 
+/// The A3 with its whole exhaust and flow noise.
+fn share_a3(c: &Control) -> f64 {
+    let rate = 48_000.0;
+    let c = Control { p_exhaust: P_ATM, ccv: 0.03, level_ref: 0.5, dynamics: 0.5, ..*c };
+    let mut e = running_a3_noisy(rate, &c, 20.0);
+    let mut l = vec![0.0f32; 512];
+    let mut r = vec![0.0f32; 512];
+    let blocks = (10.0 * rate / 512.0) as usize;
+    let t = Instant::now();
+    for _ in 0..blocks {
+        e.render(&mut l, &mut r);
+    }
+    t.elapsed().as_secs_f64() / (blocks as f64 * 512.0 / rate)
+}
+
 fn main() {
     let z = 600.0 / (core::f64::consts::FRAC_PI_4 * 0.028 * 0.028);
     println!("{:<34} {:>10} {:>10}   worst iterations", "", "plenum", "pipe");
@@ -53,5 +68,14 @@ fn main() {
             i1,
             i2
         );
+    }
+    println!();
+    println!("with the exhaust network (15 pipes) and its flow noise:");
+    for (name, c) in [
+        ("A3 4 cyl, 800 rpm idle", cruise(800.0, 0.32 * P_ATM)),
+        ("A3 4 cyl, 2000 rpm cruise", cruise(2000.0, 0.45 * P_ATM)),
+        ("A3 4 cyl, 6000 rpm full load", wot(6000.0, 1.8 * P_ATM)),
+    ] {
+        println!("{:<34} {:>9.2}%", name, share_a3(&c) * 100.0);
     }
 }
