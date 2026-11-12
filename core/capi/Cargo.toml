@@ -1,0 +1,12 @@
+[package]
+name = "es-capi"
+version.workspace = true
+edition.workspace = true
+description = "EngineSim v2: the C ABI of the core"
+
+[lib]
+name = "enginesim_core"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+es-sound = { path = "../sound" }

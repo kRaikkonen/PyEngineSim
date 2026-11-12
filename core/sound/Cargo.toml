@@ -1,0 +1,8 @@
+[package]
+name = "es-sound"
+version.workspace = true
+edition.workspace = true
+description = "EngineSim v2: the real-time sound model"
+
+[lib]
+name = "es_sound"

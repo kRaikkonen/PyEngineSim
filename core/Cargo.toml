@@ -1,0 +1,23 @@
+# EngineSim v2 core (docs/REDESIGN_V2.md s.4-5): one compiled core, written once,
+# used by the iOS shell, the desktop studio and the tests alike.
+#
+#   sound   the real-time sound model (s.6)
+#   capi    the C ABI the shells link (s.5.3)
+#
+# No external crates: the build needs nothing but the toolchain.
+[workspace]
+resolver = "2"
+members = ["sound", "capi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
