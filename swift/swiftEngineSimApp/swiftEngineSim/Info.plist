@@ -10,6 +10,8 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Records your speed next to the engine data while a trip is being logged.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Records your car's real engine sound, to calibrate the simulated one against it.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Records the car's acceleration next to the engine data while a trip is being logged.</string>
 	<key>UIFileSharingEnabled</key>

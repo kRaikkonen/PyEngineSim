@@ -84,6 +84,11 @@ public final class AppModel: ObservableObject {
     var lastTripStat = 0.0
     @Published public var tripInfo = ""
     @Published public var tripURL: URL?
+    /// CALIBRATION: play nothing, record the car's own sound next to its OBD
+    /// data (MicRecorder; docs/REDESIGN_V2.md s.6.8).
+    let mic = MicRecorder()
+    @Published public var calibrating = false
+    @Published public var micURL: URL?
     public var bleDeviceName = ""
     var bleDeviceID = ""
     /// What the audio session actually handed over, which is not always what
@@ -717,6 +722,52 @@ public final class AppModel: ObservableObject {
             + ";block=\(audio?.blockFrames ?? 0);rate=\(audio?.renderRate ?? 0)"
         trips.start(meta: meta)
         tripURL = nil
+    }
+
+    /// Start or stop recording the car's own sound.  While it runs the synth
+    /// is silent and stopped -- the recording must hold the real car only.
+    public func toggleCalibration() {
+        if calibrating {
+            mic.stop()
+            trips.log.line("E", Clock.now(), "mic stopped")
+            calibrating = false
+            micURL = mic.url
+            do {
+                try audio?.start()               // back to playing (.playback)
+            } catch {
+                errorText = "audio did not restart: \(error.localizedDescription)"
+            }
+            return
+        }
+        mic.ensurePermission { [weak self] ok in
+            Task { @MainActor in
+                guard let self else { return }
+                if ok {
+                    self.beginCalibration()
+                } else {
+                    self.errorText = "microphone access is off (Settings > Privacy > Microphone)"
+                }
+            }
+        }
+    }
+
+    func beginCalibration() {
+        guard !calibrating else { return }
+        startTrip()                              // the OBD data it is paired with
+        let name = (trips.log.url?.deletingPathExtension().lastPathComponent ?? "trip")
+            + String(format: "-mic-%.0f.wav", Clock.now())
+        let u = TripRecorder.directory.appendingPathComponent(name)
+        audio?.stop()
+        do {
+            let t0 = try mic.start(url: u)
+            trips.log.line("E", t0, "mic started file=" + name + " input="
+                           + TripLog.field(mic.inputName))
+            calibrating = true
+            micURL = nil
+        } catch {
+            errorText = "could not record: \(error.localizedDescription)"
+            try? audio?.start()
+        }
     }
 
     /// Close the trip file; it can then be shared.

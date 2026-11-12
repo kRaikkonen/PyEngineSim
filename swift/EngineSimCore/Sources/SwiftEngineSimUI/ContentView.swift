@@ -824,6 +824,23 @@ public struct ContentView: View {
                 }
             }
         }
+        // calibration: the car's own sound, nothing played
+        HStack(spacing: 8) {
+            Button(model.calibrating ? "stop recording the car"
+                                     : "record the car's own sound") {
+                model.toggleCalibration()
+            }
+            .font(.caption2)
+            .foregroundColor(model.calibrating ? .red : .accentColor)
+            Spacer()
+            if let u = model.micURL {
+                ShareLink(item: u) { Text("share audio").font(.caption2) }
+            }
+        }
+        if model.calibrating {
+            Text("recording through the phone's microphone · the app is silent")
+                .font(.system(size: 10)).foregroundColor(.secondary)
+        }
     }
 
     private var sourceSwitch: some View {

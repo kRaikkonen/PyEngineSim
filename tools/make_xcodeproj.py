@@ -243,6 +243,10 @@ def main():
                  '\t<key>NSLocationWhenInUseUsageDescription</key>\n'
                  '\t<string>Records your speed next to the engine data while a '
                  'trip is being logged.</string>\n'
+                 # the calibration mode records the car's own sound (s.6.8)
+                 '\t<key>NSMicrophoneUsageDescription</key>\n'
+                 '\t<string>Records your car\'s real engine sound, to calibrate '
+                 'the simulated one against it.</string>\n'
                  '\t<key>NSMotionUsageDescription</key>\n'
                  '\t<string>Records the car\'s acceleration next to the engine '
                  'data while a trip is being logged.</string>\n'

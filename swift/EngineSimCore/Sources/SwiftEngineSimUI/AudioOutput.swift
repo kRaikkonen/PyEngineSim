@@ -134,6 +134,12 @@ public final class AudioOutput {
 
     public func start() throws {
         guard !running else { return }
+        #if os(iOS)
+        // (again, after a calibration recording had the session)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try AVAudioSession.sharedInstance().setActive(true)
+        refreshRoute()
+        #endif
         try engine.start()
         player.play()
         running = true
