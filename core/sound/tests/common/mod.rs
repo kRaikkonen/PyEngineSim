@@ -234,7 +234,7 @@ pub fn a3_exhaust_with(noise: f64) -> NetworkSpec {
     // rear silencer: 10 l across the car, wool-lined
     let n = p.chamber(n, a, 0.45, 0.022, 0.34, 15.0, circle(0.050), 0.008 * noise);
     let n = p.pipe(n, 0.45, circle(0.050), 0.30, 0.0);
-    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.008 * noise });
+    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.008 * noise, distance: 0.0 });
     p.spec
 }
 

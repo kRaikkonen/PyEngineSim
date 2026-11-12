@@ -18,7 +18,7 @@ from ctypes import POINTER, Structure, c_double, c_float, c_int, c_uint32, c_uin
 
 import numpy as np
 
-ABI_VERSION = 2
+ABI_VERSION = 3
 P_ATM = 101325.0
 
 
@@ -56,7 +56,8 @@ class EsPipe(Structure):
 
 class EsNode(Structure):
     _fields_ = [("kind", c_int), ("index", c_int), ("r", c_double), ("k", c_double),
-                ("radius", c_double), ("throat", c_double), ("noise", c_double)]
+                ("radius", c_double), ("throat", c_double), ("noise", c_double),
+                ("distance", c_double)]
 
 
 class EsCylinder(Structure):
@@ -219,7 +220,8 @@ class Core:
         pipes = (EsPipe * len(net.pipes))(*[
             EsPipe(p.length, p.area, p.heat, p.loss_db, p.a, p.b) for p in net.pipes])
         nodes = (EsNode * len(net.nodes))(*[
-            EsNode(n.kind, n.index, n.r, n.k, n.radius, n.throat, n.noise) for n in net.nodes])
+            EsNode(n.kind, n.index, n.r, n.k, n.radius, n.throat, n.noise, n.distance)
+            for n in net.nodes])
         if not lib().es_attach_exhaust(self._h, pipes, len(pipes), nodes, len(nodes),
                                        float(net.t_ambient), float(net.valve_noise)):
             raise ValueError("the core refused this exhaust network")

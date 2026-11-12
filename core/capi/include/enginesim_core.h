@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-#define ES_ABI_VERSION 2u
+#define ES_ABI_VERSION 3u
 
 typedef struct es_engine es_engine;
 
@@ -100,6 +100,7 @@ typedef struct {
     double throat;              /* orifice: the passage its flow noise is made in, m^2 */
     double noise;               /* orifice, open end: rms fluctuation of the turbulent
                                    loss, as a fraction of it */
+    double distance;            /* open end: metres from the listener (<= 0: 1 m) */
 } es_node_t;
 
 /* One cylinder's state and running totals. */

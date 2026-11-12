@@ -63,6 +63,7 @@ class Node:
     radius: float = 0.0
     throat: float = 0.0       # orifice: the passage its flow noise is made in, m^2
     noise: float = 0.0        # rms fluctuation of the turbulent loss, as a fraction
+    distance: float = 0.0     # open end: metres from the listener (0: 1 m)
 
 
 @dataclass
@@ -290,11 +291,67 @@ def exhaust_from_engine(eng):
                 x = n.chamber(x, 0.7 * a_pipe, 0.25, big, heat * 0.42, 8.0, a_out=a_pipe,
                               name="chamber 2" + tag)
         x = n.pipe(x, tail, a_pipe, heat * 0.40, name="tailpipe" + tag)
-        n.make(x, OPEN, radius=math.sqrt(a_pipe / math.pi), noise=TAIL_NOISE)
+        # two tailpipes are 0.8 m apart and the listener stands 1 m behind
+        # the left one: 1 m and 1.28 m.  (On the centre line the two banks
+        # would cancel each other's odd orders exactly -- nowhere else.)
+        far = 1.0 if (len(collectors) == 1 or i == 0) else math.hypot(1.0, 0.8)
+        n.make(x, OPEN, radius=math.sqrt(a_pipe / math.pi), noise=TAIL_NOISE, distance=far)
     return n
 
 
-_BY_HAND = {"a3": a3_exhaust}
+def murcielago_exhaust(primaries=(0.30, 0.50, 0.78, 0.42, 0.66, 0.95), box=0.036, lining=14.0,
+                        runner_loss=8.0):
+    """Lamborghini Murcielago (L539 6.5 V12): per bank two unequal 3-into-1
+    groups into one collector, a catalyst per bank, both banks into ONE
+    transverse rear box, one central outlet.
+
+    NOT measured from the car.  The layout (two banks into a shared box and
+    a single central outlet) is the car's; the primary lengths are CHOSEN:
+    unequal, as its compact manifolds are, and set against the order table
+    of the ear-approved classic voice (tools/v2_gate.py 6), whose character
+    is low orders (0.5-2) under the sixth.  Equal primaries give an even
+    V12 only its sixth order and multiples -- the howl without the growl.
+    The right bank is the left one mirrored, so the banks do not cancel
+    each other's third order exactly.
+
+    Where it stands against the classic (2026-11-13, tools/v2_gate.py):
+    band shares within 8-10 dB and spectral centroid 180-600 Hz against
+    120-250 Hz; main orders within 13-21 dB.  With the guessed equal-length
+    topology it was 22 dB and 34 dB, centroid up to 2200 Hz.  Not yet inside
+    the plan's tolerances (6 points, 3 dB).
+    """
+    n = Network(note="Murcielago: real layout, primary lengths set against the classic voice")
+    a_run, a_col, a_pipe = circle(0.042), circle(0.060), circle(0.063)
+    box_in = []
+    for bank in range(2):
+        lens = primaries if bank == 0 else primaries[::-1]
+        col = n.node()
+        for g in range(2):
+            y = n.node()
+            for j in range(3):
+                k = bank * 6 + g * 3 + j
+                v = n.node(VALVE, index=k)
+                n.join(v, y, lens[g * 3 + j], a_run, 1.0, runner_loss, name="runner %d" % (k + 1))
+            n.join(y, col, 0.18 + 0.10 * g, circle(0.050), 0.95, name="secondary %d%s" % (bank + 1, "ab"[g]))
+        x = n.pipe(col, 0.20 + 0.06 * bank, a_col, 0.90, name="downpipe %d" % (bank + 1))
+        x = n.pipe(x, 0.12, 3.0 * a_col, 0.86, 40.0, name="catalyst %d" % (bank + 1))
+        n.make(x, ORIFICE, r=2.0e4)
+        x = n.pipe(x, 0.35 + 0.08 * bank, a_col, 0.75, name="link %d" % (bank + 1))
+        n.loss(x, (1.0 - a_col / 0.05) ** 2, a_col, 0.6)
+        box_in.append(x)
+    # the shared box: 16 l across the car, lightly packed
+    mid = n.node()
+    for i, x in enumerate(box_in):
+        n.join(x, mid, 0.22, 0.5 * box / 0.22, 0.55, lining, name="box %d" % (i + 1))
+    a_tail = 1.6 * a_pipe
+    x = n.pipe(mid, 0.06, a_tail, 0.50, name="box outlet")
+    n.loss(x, 0.5, a_tail, 0.5)
+    x = n.pipe(x, 0.30, a_tail, 0.45, name="tailpipe")
+    n.make(x, OPEN, radius=math.sqrt(a_tail / math.pi), noise=TAIL_NOISE)
+    return n
+
+
+_BY_HAND = {"a3": a3_exhaust, "6": murcielago_exhaust}
 
 
 def exhaust_for(key, eng):

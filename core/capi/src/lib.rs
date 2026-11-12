@@ -14,7 +14,7 @@ use std::sync::Arc;
 use es_sound::{Control, Engine, EngineSpec, Inbox, NetworkSpec, NodeSpec, PipeSpec, ValveCurve};
 
 /// Bumped whenever a struct below or a function's meaning changes.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// A valve's effective flow area against crank angle (see `ValveCurve`).
 #[repr(C)]
@@ -349,6 +349,8 @@ pub struct EsNode {
     pub throat: f64,
     /// orifice, open end: rms fluctuation of the turbulent loss, as a fraction
     pub noise: f64,
+    /// open end: its distance from the listener, m (<= 0: 1 m)
+    pub distance: f64,
 }
 
 /// Give the exhaust valves a network to discharge into.  Returns 1, or 0 if
@@ -398,7 +400,7 @@ pub unsafe extern "C" fn es_attach_exhaust(
                 throat: n.throat,
                 noise: n.noise,
             },
-            3 => NodeSpec::Open { radius: n.radius, noise: n.noise },
+            3 => NodeSpec::Open { radius: n.radius, noise: n.noise, distance: n.distance },
             _ => return 0,
         });
     }

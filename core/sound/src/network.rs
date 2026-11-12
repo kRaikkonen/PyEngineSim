@@ -47,6 +47,10 @@ pub const ORIFICE_CHANNELS: usize = 4;
 /// A change the control block asks for is spread over this many samples.
 const RAMP: u32 = crate::engine::CONTROL_BLOCK as u32;
 
+/// The farthest an open end may be heard after the nearest, samples (a
+/// power of two).
+const LATE_MAX: usize = 4096;
+
 /// A pipe is never shorter than this many samples (the interpolator needs
 /// the room); a shorter one is lengthened to it.
 pub const MIN_DELAY: f64 = 2.0;
@@ -79,8 +83,11 @@ pub enum NodeSpec {
     /// passage whose speed and size set its band (0: silent).
     Orifice { r: f64, k: f64, channel: i32, throat: f64, noise: f64 },
     /// an open end of this radius, m; `noise` is the rms fluctuation of the
-    /// dynamic head of the gas leaving it, as a fraction
-    Open { radius: f64, noise: f64 },
+    /// dynamic head of the gas leaving it, as a fraction; `distance` is how
+    /// far it is from the listener, m (<= 0: 1 m).  Two tailpipes are two
+    /// sources: what cancels between them where they are equally far does
+    /// not cancel anywhere else.
+    Open { radius: f64, noise: f64, distance: f64 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -148,8 +155,13 @@ impl NetworkSpec {
                         && (0.0..=10.0).contains(&throat)
                         && (0.0..=0.5).contains(&noise)
                 }
-                NodeSpec::Open { radius, noise } => {
-                    c == 1 && radius.is_finite() && radius > 1.0e-4 && (0.0..=0.5).contains(&noise)
+                NodeSpec::Open { radius, noise, distance } => {
+                    c == 1
+                        && radius.is_finite()
+                        && radius > 1.0e-4
+                        && (0.0..=0.5).contains(&noise)
+                        && distance.is_finite()
+                        && distance <= 30.0
                 }
             };
             if !ok {
@@ -442,6 +454,10 @@ struct Node {
     /// pole at c / (2 pi a) of the air outside, and its state.
     rad_k: f64,
     rad: f64,
+    /// an open end as the listener has it: 1 / distance, and the samples
+    /// its sound takes to arrive after the nearest end's
+    near: f64,
+    late: usize,
     /// an orifice's resistance now, and its change per sample while a
     /// control block re-aims it
     r_now: f64,
@@ -485,10 +501,14 @@ pub struct Network {
     k_slow: f64,
     /// do large waves steepen (they do; off only to audit the linear pipe)
     steepening: bool,
-    /// mass flow out of all open ends this sample, kg/s, and its rate of
-    /// change, kg/s^2 -- the strength of the monopole they are
+    /// mass flow out of all open ends this sample, kg/s, and what the
+    /// listener gets of its rate of change: the sum over the open ends of
+    /// (dq/dt) / distance, each as late as it is farther, kg/s^2/m
     pub q_out: f64,
     pub dq_out: f64,
+    /// that sum, by the sample it arrives in
+    later: [f64; LATE_MAX],
+    later_at: usize,
 }
 
 /// The speed of sound, m/s.
@@ -544,7 +564,7 @@ impl Network {
                     hiss.amount = noise;
                     hiss.area = throat;
                 }
-                NodeSpec::Open { radius, noise } => {
+                NodeSpec::Open { radius, noise, .. } => {
                     hiss.amount = noise;
                     hiss.area = core::f64::consts::PI * radius * radius;
                 }
@@ -569,12 +589,29 @@ impl Network {
                     _ => 1.0,
                 },
                 rad: 0.0,
+                near: match *n {
+                    NodeSpec::Open { distance, .. } if distance > 0.0 => 1.0 / distance.max(0.05),
+                    _ => 1.0,
+                },
+                late: 0,
                 r_now: 0.0,
                 k_now: 0.0,
                 d_r: 0.0,
                 d_k: 0.0,
                 ramp: 0,
             });
+        }
+        // the nearest open end is heard first; the others so many samples later
+        let far = |n: &NodeSpec| match *n {
+            NodeSpec::Open { distance, .. } => Some(if distance > 0.0 { distance.max(0.05) } else { 1.0 }),
+            _ => None,
+        };
+        let nearest = spec.nodes.iter().filter_map(far).fold(f64::INFINITY, f64::min);
+        let c_air = c_of(&gas, spec.t_ambient);
+        for (node, n) in nodes.iter_mut().zip(spec.nodes.iter()) {
+            if let Some(d) = far(n) {
+                node.late = (((d - nearest) / c_air * rate).round() as usize).min(LATE_MAX - 1);
+            }
         }
         let mut net = Network {
             rate,
@@ -594,6 +631,8 @@ impl Network {
             steepening: true,
             q_out: 0.0,
             dq_out: 0.0,
+            later: [0.0; LATE_MAX],
+            later_at: 0,
         };
         net.set_gas(&gas, 700.0, &[1.0; ORIFICE_CHANNELS], true);
         Ok(net)
@@ -619,6 +658,7 @@ impl Network {
             n.rad = 0.0;
         }
         self.rng = 0x2545_F491_4F6C_DD1D;
+        self.later = [0.0; LATE_MAX];
         self.q_out = 0.0;
         self.dq_out = 0.0;
     }
@@ -785,8 +825,8 @@ impl Network {
     #[inline]
     pub fn scatter(&mut self, q_valve: &[f64]) {
         let mut q_out = 0.0;
-        let mut dq_out = 0.0;
         let k_mean = self.k_mean;
+        let at = self.later_at;
         for n in self.nodes.iter_mut() {
             let ends = &self.ends[n.first..n.first + n.count];
             // this place's turbulence, if it has any
@@ -885,14 +925,16 @@ impl Network {
                         let q = (a_in - back) * self.y[e];
                         q_out += q;
                         n.rad += n.rad_k * ((q - *q_prev) * self.rate - n.rad);
-                        dq_out += n.rad;
+                        self.later[(at + n.late) & (LATE_MAX - 1)] += n.rad * n.near;
                         *q_prev = q;
                     }
                 }
             }
         }
         self.q_out = q_out;
-        self.dq_out = dq_out;
+        self.dq_out = self.later[at];
+        self.later[at] = 0.0;
+        self.later_at = (at + 1) & (LATE_MAX - 1);
     }
 
     /// Mass of gas the waves hold above the resting state, kg (for the

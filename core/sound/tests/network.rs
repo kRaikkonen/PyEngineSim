@@ -38,7 +38,7 @@ fn organ_pipe(length: f64, d: f64) -> NetworkSpec {
     let mut p = Plumber::new();
     let v = p.node(NodeSpec::Valve { cylinder: 0 });
     let n = p.pipe(v, length, circle(d), 0.0, 0.0);
-    p.make(n, NodeSpec::Open { radius: 0.5 * d, noise: 0.0 });
+    p.make(n, NodeSpec::Open { radius: 0.5 * d, noise: 0.0, distance: 0.0 });
     p.spec
 }
 
@@ -83,7 +83,7 @@ fn what_goes_in_comes_out() {
     let _ = p.pipe(n, 0.2, circle(0.04), 0.5, 0.0);
     let n = p.pipe(n, 0.3, 0.02, 0.5, 10.0);
     let n = p.pipe(n, 0.6, circle(0.05), 0.4, 0.0);
-    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.0 });
+    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.0, distance: 0.0 });
     let mut net = Network::new(&p.spec, 1, RATE).unwrap();
     // (exact to the last digit only in the linear pipe: a steepening wave
     //  keeps its mass over a cycle, not sample by sample)
@@ -123,7 +123,7 @@ fn an_orifice_holds_back_its_pressure_drop() {
     let n = p.pipe(v, 0.4, circle(0.04), 0.5, 0.0);
     p.make(n, NodeSpec::Orifice { r, k, channel: 1, throat: 0.0, noise: 0.0 });
     let n = p.pipe(n, 0.8, circle(0.05), 0.5, 0.0);
-    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.0 });
+    p.make(n, NodeSpec::Open { radius: 0.025, noise: 0.0, distance: 0.0 });
     let mut net = Network::new(&p.spec, 1, RATE).unwrap();
     let gas = GasModel { gamma_const: 0.0 };
     for (q, vanes) in [(0.02, 1.0), (0.10, 1.0), (0.10, 2.5), (-0.05, 1.0)] {
@@ -150,7 +150,7 @@ fn through_chamber(chamber: Option<(f64, f64)>, s: f64) -> Vec<f64> {
     }
     let tail = p.spec.pipes.len();
     let n = p.pipe(n, 12.0, s, 0.0, 0.0);
-    p.make(n, NodeSpec::Open { radius: 0.02, noise: 0.0 });
+    p.make(n, NodeSpec::Open { radius: 0.02, noise: 0.0, distance: 0.0 });
     let mut net = Network::new(&p.spec, 1, RATE).unwrap();
     net.set_steepening(false);
     // before anything has come back from either far end
@@ -327,7 +327,7 @@ fn a_loud_wave_leans_forward() {
         // wide, so its walls take next to nothing
         let n = p.pipe(v, len, circle(0.2), 0.0, 0.0);
         let n = p.pipe(n, 40.0, circle(0.2), 0.0, 0.0);
-        p.make(n, NodeSpec::Open { radius: 0.1, noise: 0.0 });
+        p.make(n, NodeSpec::Open { radius: 0.1, noise: 0.0, distance: 0.0 });
         let mut net = Network::new(&p.spec, 1, RATE).unwrap();
         net.set_steepening(steepening);
         net.set_gas(&gas, 293.0, &[1.0; 4], true);
