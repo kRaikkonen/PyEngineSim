@@ -68,6 +68,17 @@ const GROUND_DELAY: f64 = 0.0013;
 const GROUND_GAIN: f64 = 0.6;
 const GROUND_MAX: usize = 256;
 
+/// The block.  The pressure in the cylinders shakes the structure, and the
+/// structure radiates: "combustion noise".  Engine structures pass a band
+/// of roughly 0.5-3 kHz and attenuate cylinder pressure by some 95 dB on
+/// the way to a microphone at 1 m (the range of the classical structure
+/// attenuation curves; a stiff racing block and a road car differ by
+/// several dB either way -- one figure here, an estimate).  The listener is
+/// taken 1.5 m from the block.
+const BLOCK_LOW_HZ: f64 = 500.0;
+const BLOCK_HIGH_HZ: f64 = 3000.0;
+const BLOCK_GAIN: f64 = 1.8e-5 / 1.5;
+
 /// What the engine's valves pass in one sample, all cylinders together.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sample {
@@ -127,6 +138,9 @@ pub struct Engine {
     intake_net: Option<Network>,
     intake_ports: Vec<Port>,
     q_intake_back: Vec<f64>,
+    block_hp: [f64; 2],
+    block_lp: [f64; 2],
+    block_k: (f64, f64),
     ground: [f64; GROUND_MAX],
     ground_at: usize,
     ground_lag: usize,
@@ -201,6 +215,12 @@ impl Engine {
                 spec.firing_deg.len()
             ],
             q_intake_back: vec![0.0; spec.firing_deg.len()],
+            block_hp: [0.0; 2],
+            block_lp: [0.0; 2],
+            block_k: (
+                1.0 - math::exp(-2.0 * core::f64::consts::PI * BLOCK_LOW_HZ / sample_rate),
+                1.0 - math::exp(-2.0 * core::f64::consts::PI * BLOCK_HIGH_HZ / sample_rate),
+            ),
             ground: [0.0; GROUND_MAX],
             ground_at: 0,
             ground_lag: ((GROUND_DELAY * sample_rate).round() as usize).clamp(1, GROUND_MAX - 1),
@@ -269,6 +289,8 @@ impl Engine {
             net.clear();
         }
         self.ground = [0.0; GROUND_MAX];
+        self.block_hp = [0.0; 2];
+        self.block_lp = [0.0; 2];
         self.cyl.clear();
         for k in 0..self.firing_deg.len() {
             let th = math::wrap720_near(self.crank - self.firing_deg[k]);
@@ -526,7 +548,20 @@ impl Engine {
             }
             None => dq,
         };
-        let direct = dq * (1.0 / (4.0 * core::f64::consts::PI));
+        // the block: all the cylinder pressures, through the band the
+        // structure passes
+        let mut pc = 0.0;
+        for c in &self.cyl {
+            pc += c.p;
+        }
+        let (kh, kl) = self.block_k;
+        self.block_hp[0] += kh * (pc - self.block_hp[0]);
+        let h1 = pc - self.block_hp[0];
+        self.block_hp[1] += kh * (h1 - self.block_hp[1]);
+        let h2 = h1 - self.block_hp[1];
+        self.block_lp[0] += kl * (h2 - self.block_lp[0]);
+        self.block_lp[1] += kl * (self.block_lp[0] - self.block_lp[1]);
+        let direct = dq * (1.0 / (4.0 * core::f64::consts::PI)) + BLOCK_GAIN * self.block_lp[1];
         // and all of it once more off the ground
         let at = self.ground_at;
         self.ground[at] = direct;

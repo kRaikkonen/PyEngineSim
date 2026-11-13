@@ -116,6 +116,10 @@ pub struct StepEnv<'a> {
     pub ccv: f64,
 }
 
+/// Standard deviation of the cylinders of one engine about their mean
+/// charge (see `Cylinder::seed`).
+pub const CYLINDER_SPREAD: f64 = 0.03;
+
 /// (start, length) in crank degrees of the Wiebe burn whose 50 % point is at
 /// `ca50_deg` after firing TDC and whose 10-90 % takes `burn_deg`.
 pub fn burn_window(ca50_deg: f64, burn_deg: f64) -> (f64, f64) {
@@ -168,6 +172,11 @@ pub struct Cylinder {
     shift: f64,
     stretch: f64,
     weak: f64,
+    /// this cylinder against the others, for the life of the engine: its
+    /// share of the charge, how late and how slowly it burns (`seed`)
+    own_charge: f64,
+    own_shift: f64,
+    own_stretch: f64,
 
     // the walls
     h_wall: f64,
@@ -349,6 +358,9 @@ impl Cylinder {
             shift: 0.0,
             stretch: 1.0,
             weak: 1.0,
+            own_charge: 1.0,
+            own_shift: 0.0,
+            own_stretch: 1.0,
             h_wall: 0.0,
             h_since: f64::INFINITY,
             intake_area_prev: intake_area,
@@ -570,7 +582,7 @@ impl Cylinder {
         if self.intake_area_prev > 0.0 && a_in <= 0.0 {
             if e.charge > 0.0 {
                 // the breathing tables' charge, not this model's own
-                self.m = self.m_burned + e.charge;
+                self.m = self.m_burned + e.charge * self.own_charge;
                 p = self.m * R_GAS * t / v1;
             }
             self.armed = true;
@@ -589,6 +601,15 @@ impl Cylinder {
     /// Give this cylinder its own random sequence.
     pub fn seed(&mut self, s: u64) {
         self.rng = (s ^ 0x9E37_79B9_7F4A_7C15).max(1);
+        // No two cylinders of an engine are alike: runner and port castings,
+        // injector flow, where the cylinder sits in the plenum and the water
+        // jacket.  Measured engines spread 2-5 % in the work of their
+        // cylinders.  Here: 3 % in the charge, 1.5 degrees in the burn, 5 %
+        // in its speed (standard deviations), fixed per cylinder.  It is
+        // what gives an even-firing engine its orders below the firing one.
+        self.own_charge = 1.0 + CYLINDER_SPREAD * self.bell().clamp(-2.0, 2.0);
+        self.own_shift = 50.0 * CYLINDER_SPREAD * self.bell().clamp(-2.0, 2.0);
+        self.own_stretch = math::exp(1.7 * CYLINDER_SPREAD * self.bell().clamp(-2.0, 2.0));
     }
 
     /// A number from a bell curve of unit variance (four uniforms summed).
@@ -615,15 +636,15 @@ impl Cylinder {
     /// degrees and the duration 5 %; at 0.10, 4.5 degrees and 25 %.
     fn vary(&mut self, ccv: f64) {
         if ccv <= 0.0 {
-            self.shift = 0.0;
-            self.stretch = 1.0;
+            self.shift = self.own_shift;
+            self.stretch = self.own_stretch;
             self.weak = 1.0;
             return;
         }
         let n1 = self.bell();
         let n2 = self.bell();
-        self.stretch = math::exp(2.5 * ccv * n1).clamp(0.6, 2.5);
-        self.shift = ((0.5 + 40.0 * ccv) * (0.6 * n2 + 0.4 * n1)).clamp(-15.0, 25.0);
+        self.stretch = self.own_stretch * math::exp(2.5 * ccv * n1).clamp(0.6, 2.5);
+        self.shift = self.own_shift + ((0.5 + 40.0 * ccv) * (0.6 * n2 + 0.4 * n1)).clamp(-15.0, 25.0);
         self.weak = (1.0 - 1.2 * ccv * n1.max(0.0)).max(0.5);
     }
 
