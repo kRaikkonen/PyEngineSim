@@ -77,7 +77,10 @@ const GROUND_MAX: usize = 256;
 /// taken 1.5 m from the block.
 const BLOCK_LOW_HZ: f64 = 500.0;
 const BLOCK_HIGH_HZ: f64 = 3000.0;
-const BLOCK_GAIN: f64 = 1.8e-5 / 1.5;
+/// (A bare engine on a test bed is that loud -- louder than its exhaust.  In
+/// a car the bay, the undertray and the body stand between it and someone
+/// behind the car: a further 20 dB, again an estimate.)
+const BLOCK_GAIN: f64 = 1.8e-6 / 1.5;
 
 /// What the engine's valves pass in one sample, all cylinders together.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
